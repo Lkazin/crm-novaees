@@ -22,20 +22,20 @@ if (!$key -or $key -match '^(YOUR_|REPLACE|COLE_AQUI)') {
 $instance = "novaesweb-ia-teste"
 # Consultar e validar sem exibir payloads que possam incluir tokens.
 try {
-  $response = Invoke-RestMethod -Uri "http://127.0.0.1:8080/instance/fetchInstances" -Headers @{apikey=$key} -TimeoutSec 12
+  # Same collection pattern as configure-evolution-key-local.ps1 (already validated on Windows).
+  $items = @(Invoke-RestMethod -Uri "http://127.0.0.1:8080/instance/fetchInstances" -Headers @{apikey=$key} -TimeoutSec 12)
 } catch {
   $code = "indisponivel"
   if ($_.Exception.Response) { $code = [string][int]$_.Exception.Response.StatusCode }
   Write-Host "[ERRO] Nao consegui consultar a Evolution (HTTP: $code). Nada alterado." -ForegroundColor Red
   exit 1
 }
-# Evolution pode retornar array diretamente ou objeto com campo instances.
-if ($null -ne $response -and $null -ne $response.instances) { $items = @($response.instances) }
-else { $items = @($response) }
+# Invoke-RestMethod already enumerates returned JSON arrays; do not rewrap the array.
 $found = @($items | Where-Object {
   $name = if ($_.name) { [string]$_.name }
           elseif ($_.instance -and $_.instance.instanceName) { [string]$_.instance.instanceName }
           elseif ($_.instanceName) { [string]$_.instanceName }
+          elseif ($_.instance -is [string]) { [string]$_.instance }
           else { "" }
   $name -eq $instance
 })
@@ -46,6 +46,11 @@ if ($found.Count -ne 1) {
     if ($item.name) { Write-Host (" - " + [string]$item.name) }
     elseif ($item.instance -and $item.instance.instanceName) { Write-Host (" - " + [string]$item.instance.instanceName) }
     elseif ($item.instanceName) { Write-Host (" - " + [string]$item.instanceName) }
+    elseif ($item.instance -is [string]) { Write-Host (" - " + [string]$item.instance) }
+  }
+  if ($items.Count -gt 0) {
+    $fieldNames = @($items[0].PSObject.Properties.Name | Where-Object { $_ -match "^(name|instance|instanceName|connectionStatus|status|state|id)$" })
+    Write-Host ("Campos reconhecidos no primeiro registro: " + ($fieldNames -join ", "))
   }
   Write-Host "Nenhum arquivo foi alterado."
   exit 1
