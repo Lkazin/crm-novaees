@@ -40,7 +40,7 @@ export async function captureIncoming(incoming: Incoming): Promise<void> {
       'redis.call("ZADD", KEYS[4], ARGV[6], ARGV[7])',
       'redis.call("EXPIRE", KEYS[4], ARGV[1])',
       'return 1',
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
     await r.eval(lua, 4, dedup, key, key + ":messages", namespace + "recent",
       String(ttl), incoming.number, now, incoming.text.slice(0, 200),
       JSON.stringify(msg), String(Date.now()), hash);
