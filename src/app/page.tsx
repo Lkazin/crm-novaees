@@ -4,20 +4,25 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot, Building2, ChevronDown, Clock3, LayoutDashboard, LockKeyhole, Menu,
   MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, UsersRound,
-  AlertCircle, CheckCircle2, Headphones, BarChart3, ClipboardCheck
+  AlertCircle, CheckCircle2, Headphones, BarChart3, ClipboardCheck,
+  BookOpen, Users, Megaphone, Workflow
 } from "lucide-react";
 
 type Msg = { id: string; from: "contact"; text: string; at: string };
 type Conversation = { id: string; number: string; name: string; preview: string; updatedAt: string; messages: Msg[] };
 type InboxResponse = { conversations: Conversation[]; captureEnabled: boolean; repliesEnabled: boolean };
 type StatusResponse = { instance: string | null; channel: "connected"|"disconnected"|"unknown"; captureEnabled: boolean; repliesEnabled: boolean; modelRoute: string|null; fallbackRoutes: string[]; fallbackConfigured: boolean; webhook: "configured"|"absent"|"unknown"; webhookSecretHeader: "present"|"absent"|"unknown" };
-type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações" | "Preparação";
+type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações" | "Preparação" | "Base de Conhecimento" | "Equipe" | "Campanhas" | "Automações";
 
 const sections: { name: Tab; icon: typeof MessageCircle }[] = [
   { name: "Dashboard", icon: LayoutDashboard },
   { name: "Atendimentos", icon: MessageCircle },
   { name: "Contatos", icon: UsersRound },
   { name: "Agentes de IA", icon: Bot },
+  { name: "Base de Conhecimento", icon: BookOpen },
+  { name: "Equipe", icon: Users },
+  { name: "Campanhas", icon: Megaphone },
+  { name: "Automações", icon: Workflow },
   { name: "Conexões WhatsApp", icon: Smartphone },
   { name: "Relatórios", icon: BarChart3 },
   { name: "Configurações", icon: Settings2 },
@@ -154,6 +159,26 @@ export default function Dashboard() {
         </section> : nav==="Configurações" ? <section className="crm-details-grid">
           <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança operacional</h2><dl><dt>Acesso à caixa de entrada</dt><dd>Token administrativo local</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
           <div className="crm-info-card"><LockKeyhole size={25}/><h2>Configuração protegida</h2><p>Credenciais, parâmetros de privacidade e ativação de canais são gerenciados no servidor. Ainda falta autenticação de operadores por usuário para uso público.</p></div>
+        </section> : (nav==="Base de Conhecimento" || nav==="Equipe" || nav==="Campanhas" || nav==="Automações") ? <section className="crm-details-grid" aria-label={nav}>
+          <div className="crm-info-card">
+            {nav==="Base de Conhecimento" ? <BookOpen size={26}/> : nav==="Equipe" ? <Users size={26}/> : nav==="Campanhas" ? <Megaphone size={26}/> : <Workflow size={26}/>}
+            <h2>{nav}</h2>
+            <p>{nav==="Base de Conhecimento" ? "Estrutura de artigos e respostas aprovadas no banco de dados. Somente material publicado pela própria empresa deverá alimentar a IA."
+              : nav==="Equipe" ? "A estrutura de membros e papéis por empresa já existe no Supabase. Convites e permissões administrativas dependem da autenticação individual."
+              : nav==="Campanhas" ? "Estrutura de rascunhos e consentimentos preparada. Não há campanhas ou disparos habilitados; qualquer envio exige consentimento e revisão."
+              : "Estrutura para regras e gatilhos preparada. A execução de automações está intencionalmente bloqueada até existir motor de regras auditável."}</p>
+            <div className="crm-module-state"><LockKeyhole size={16}/> Integração de dados deste módulo pendente · nenhuma ação simulada</div>
+            <button className="crm-module-disabled" type="button" disabled aria-disabled="true">
+              {nav==="Base de Conhecimento" ? "Novo artigo" : nav==="Equipe" ? "Convidar membro" : nav==="Campanhas" ? "Criar campanha" : "Criar automação"}
+            </button>
+          </div>
+          <div className="crm-info-card"><ShieldCheck size={26}/><h2>Requisitos de liberação</h2>
+            <p>{nav==="Base de Conhecimento" ? "Conectar sessão e empresa ao Supabase; validar autor, publicação, histórico de versões e instruções seguras para a IA."
+              : nav==="Equipe" ? "Adicionar login por operador, convite seguro, revogação de sessões, papéis e auditoria."
+              : nav==="Campanhas" ? "Implementar gestão de opt-in/opt-out, revisão humana, regras do WhatsApp, fila limitada e histórico de entregas."
+              : "Implementar validador de gatilhos, simulação segura, limites por empresa, logs e botão de desligamento."}</p>
+            <p>Enquanto não houver backend testado, os dados não são inventados e nenhuma operação é executada pelo navegador.</p>
+          </div>
         </section> : nav==="Preparação" ? <section className="crm-details-grid" aria-label="Preparação operacional">
           <div className="crm-info-card"><ClipboardCheck size={26}/><h2>Verificação antes de atender clientes</h2>
             <p>O estado abaixo é consultado no servidor. Não substitui os testes ponta a ponta no seu Docker.</p>
