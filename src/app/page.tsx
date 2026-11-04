@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot, Building2, ChevronDown, Clock3, LayoutDashboard, LockKeyhole, Menu,
   MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, UsersRound,
-  X, AlertCircle, CheckCircle2, Headphones, BarChart3
+  AlertCircle, CheckCircle2, Headphones, BarChart3
 } from "lucide-react";
 
 type Msg = { id: string; from: "contact"; text: string; at: string };
