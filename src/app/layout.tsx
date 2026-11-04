@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "NovaesWeb CRM AI | Dashboard",
-  description: "Demonstração visual do futuro painel de atendimento e agentes de IA da NovaesWeb.",
+  description: "Painel de atendimento NovaesWeb CRM AI com caixa de entrada privada.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
