@@ -20,15 +20,52 @@ if (!$key -or $key -match '^(YOUR_|REPLACE|COLE_AQUI)') {
   Write-Host "[ERRO] Chave da Evolution ainda nao configurada."; exit 1
 }
 $instance = "novaesweb-ia-teste"
+# Consultar e validar sem exibir payloads que possam incluir tokens.
 try {
-  $items = @(Invoke-RestMethod -Uri "http://127.0.0.1:8080/instance/fetchInstances" -Headers @{apikey=$key} -TimeoutSec 12)
-  $found = @($items | Where-Object { $_.name -eq $instance -or ($_.instance -and $_.instance.instanceName -eq $instance) })
-  if ($found.Count -ne 1) { throw "Instancia nao foi identificada unicamente" }
-  $state = if($found[0].connectionStatus){[string]$found[0].connectionStatus}else{[string]$found[0].instance.status}
-  if ($state -ne "open") { throw "Instancia nao conectada (estado: $state)" }
+  $response = Invoke-RestMethod -Uri "http://127.0.0.1:8080/instance/fetchInstances" -Headers @{apikey=$key} -TimeoutSec 12
 } catch {
-  Write-Host "[ERRO] Nao foi possivel confirmar a instancia conectada. Nada alterado." -ForegroundColor Red
+  $code = "indisponivel"
+  if ($_.Exception.Response) { $code = [string][int]$_.Exception.Response.StatusCode }
+  Write-Host "[ERRO] Nao consegui consultar a Evolution (HTTP: $code). Nada alterado." -ForegroundColor Red
   exit 1
+}
+# Evolution pode retornar array diretamente ou objeto com campo instances.
+if ($null -ne $response -and $null -ne $response.instances) { $items = @($response.instances) }
+else { $items = @($response) }
+$found = @($items | Where-Object {
+  $name = if ($_.name) { [string]$_.name }
+          elseif ($_.instance -and $_.instance.instanceName) { [string]$_.instance.instanceName }
+          elseif ($_.instanceName) { [string]$_.instanceName }
+          else { "" }
+  $name -eq $instance
+})
+if ($found.Count -ne 1) {
+  Write-Host "[ERRO] Instancia esperada nao encontrada de forma unica (ocorrencias: $($found.Count))." -ForegroundColor Red
+  Write-Host "A Evolution retornou $($items.Count) registro(s). Nomes disponiveis:" -ForegroundColor Yellow
+  foreach ($item in $items) {
+    if ($item.name) { Write-Host (" - " + [string]$item.name) }
+    elseif ($item.instance -and $item.instance.instanceName) { Write-Host (" - " + [string]$item.instance.instanceName) }
+    elseif ($item.instanceName) { Write-Host (" - " + [string]$item.instanceName) }
+  }
+  Write-Host "Nenhum arquivo foi alterado."
+  exit 1
+}
+$state = if($found[0].connectionStatus){[string]$found[0].connectionStatus}
+  elseif($found[0].instance -and $found[0].instance.status){[string]$found[0].instance.status}
+  elseif($found[0].status){[string]$found[0].status}
+  else { "" }
+if ($state -ne "open") {
+  Write-Host "[ATENCAO] Status da instancia pela listagem: '$state'. Confirmando pelo endpoint proprio..." -ForegroundColor Yellow
+  try {
+    $detail = Invoke-RestMethod -Uri ("http://127.0.0.1:8080/instance/connectionState/" + $instance) -Headers @{apikey=$key} -TimeoutSec 12
+    $confirmed = if ($detail.instance -and $detail.instance.state) {[string]$detail.instance.state}
+      elseif($detail.state){[string]$detail.state}
+      else { "" }
+    if ($confirmed -eq "open") { $state = "open" }
+    else { Write-Host "[ERRO] Estado nao confirmado como open (obtido: '$confirmed'). Nada alterado."; exit 1 }
+  } catch {
+    Write-Host "[ERRO] Nao foi possivel confirmar conexao pelo endpoint proprio. Nada alterado."; exit 1
+  }
 }
 Write-Host "[OK] Instancia escolhida conectada: novaesweb-ia-teste" -ForegroundColor Green
 $old = EnvVal "EVOLUTION_INSTANCE"
