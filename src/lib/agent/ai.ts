@@ -1,6 +1,6 @@
-import type { AgentConfig } from "./config";
+import type { AiConfig } from "./config";
 
-export async function generateAnswer(prompt: string, cfg: AgentConfig): Promise<string> {
+export async function generateAnswer(prompt: string, cfg: AiConfig): Promise<string> {
   const url = cfg.aiUrl.replace(/\/$/, "") + "/chat/completions";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
