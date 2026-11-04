@@ -2,6 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getAgentConfig } from "@/lib/agent/config";
 import { processWebhook } from "@/lib/agent/processor";
+import { parseIncoming } from "@/lib/agent/parse";
+import { captureIncoming } from "@/lib/crm/inbox";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +27,8 @@ export async function POST(request: NextRequest) {
   try { payload = JSON.parse(raw); } catch { return json({ error: "invalid_json" }, 400); }
   try {
     const cfg = getAgentConfig();
+    const incoming = parseIncoming(payload);
+    if (incoming && incoming.instance === cfg.instance) await captureIncoming(incoming);
     const result = await processWebhook(payload, cfg);
     return json(result);
   } catch (err) {
