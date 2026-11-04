@@ -1,6 +1,6 @@
 import "server-only";
 
-export type AgentConfig = {
+export type AiConfig = { aiUrl: string; aiKey: string; aiModel: string; systemPrompt: string };\n\nexport type AgentConfig = AiConfig & {
   evolutionUrl: string;
   evolutionKey: string;
   instance: string;
@@ -23,7 +23,7 @@ function validUrl(name: string, value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-export function getAgentConfig(): AgentConfig {
+export function getAiConfig(): AiConfig {\n  const read = (key: string) => {\n    const value = process.env[key]?.trim();\n    if (!value) throw new Error(`Variável não configurada: ${key}`);\n    return value;\n  };\n  return {\n    aiUrl: validUrl("AI_OPENAI_BASE_URL", read("AI_OPENAI_BASE_URL")),\n    aiKey: read("AI_API_KEY"),\n    aiModel: read("AI_MODEL"),\n    systemPrompt: read("AI_BUSINESS_CONTEXT"),\n  };\n}\n\nexport function getAgentConfig(): AgentConfig {
   const read = (key: string) => {
     const value = process.env[key]?.trim();
     if (!value) throw new Error(`Variável não configurada: ${key}`);
