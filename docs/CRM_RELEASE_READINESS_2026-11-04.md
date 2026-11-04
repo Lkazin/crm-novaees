@@ -22,7 +22,7 @@ Primeiro descobrir os IDs reais permitidos pelo próprio OmniRoute. Configurar l
 
 ## Banco Supabase
 
-Projeto isolado: `mpteambmrlflllfqtkmq` (nome `novaesweb-crm-ai`). Migration `20261104194500_crm_tenant_operational_foundation.sql` foi aplicada e 10 tabelas com RLS foram confirmadas via consulta. As tabelas estão vazias, sem cliente, empresa ou membro criado automaticamente. Banco operacional ainda NÃO está ligado à caixa de entrada temporária Redis. O uso de um token único do laboratório não substitui autenticação de usuários para vender a outras empresas.
+Projeto isolado: `mpteambmrlflllfqtkmq` (nome `novaesweb-crm-ai`). Migration `20261104224506_crm_tenant_operational_foundation.sql` foi aplicada e 10 tabelas com RLS foram confirmadas via consulta. As tabelas estão vazias, sem cliente, empresa ou membro criado automaticamente. Banco operacional ainda NÃO está ligado à caixa de entrada temporária Redis. O uso de um token único do laboratório não substitui autenticação de usuários para vender a outras empresas.
 
 ## Painel e módulos
 
