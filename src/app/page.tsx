@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot, Building2, ChevronDown, Clock3, LayoutDashboard, LockKeyhole, Menu,
   MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, UsersRound,
-  AlertCircle, CheckCircle2, Headphones, BarChart3
+  AlertCircle, CheckCircle2, Headphones, BarChart3, ClipboardCheck
 } from "lucide-react";
 
 type Msg = { id: string; from: "contact"; text: string; at: string };
 type Conversation = { id: string; number: string; name: string; preview: string; updatedAt: string; messages: Msg[] };
 type InboxResponse = { conversations: Conversation[]; captureEnabled: boolean; repliesEnabled: boolean };
-type StatusResponse = { instance: string | null; channel: "connected"|"disconnected"|"unknown"; captureEnabled: boolean; repliesEnabled: boolean; modelRoute: string|null; fallbackRoutes: string[]; fallbackConfigured: boolean };
-type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações";
+type StatusResponse = { instance: string | null; channel: "connected"|"disconnected"|"unknown"; captureEnabled: boolean; repliesEnabled: boolean; modelRoute: string|null; fallbackRoutes: string[]; fallbackConfigured: boolean; webhook: "configured"|"absent"|"unknown"; webhookSecretHeader: "present"|"absent"|"unknown" };
+type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações" | "Preparação";
 
 const sections: { name: Tab; icon: typeof MessageCircle }[] = [
   { name: "Dashboard", icon: LayoutDashboard },
@@ -21,6 +21,7 @@ const sections: { name: Tab; icon: typeof MessageCircle }[] = [
   { name: "Conexões WhatsApp", icon: Smartphone },
   { name: "Relatórios", icon: BarChart3 },
   { name: "Configurações", icon: Settings2 },
+  { name: "Preparação", icon: ClipboardCheck },
 ];
 const displayTime = (value: string) => {
   const d = new Date(value);
@@ -153,6 +154,25 @@ export default function Dashboard() {
         </section> : nav==="Configurações" ? <section className="crm-details-grid">
           <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança operacional</h2><dl><dt>Acesso à caixa de entrada</dt><dd>Token administrativo local</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
           <div className="crm-info-card"><LockKeyhole size={25}/><h2>Configuração protegida</h2><p>Credenciais, parâmetros de privacidade e ativação de canais são gerenciados no servidor. Ainda falta autenticação de operadores por usuário para uso público.</p></div>
+        </section> : nav==="Preparação" ? <section className="crm-details-grid" aria-label="Preparação operacional">
+          <div className="crm-info-card"><ClipboardCheck size={26}/><h2>Verificação antes de atender clientes</h2>
+            <p>O estado abaixo é consultado no servidor. Não substitui os testes ponta a ponta no seu Docker.</p>
+            <dl>
+              <dt>Instância WhatsApp</dt><dd>{status?.channel==="connected" ? "Conectada" : status?.channel==="disconnected" ? "Desconectada" : "Não confirmado"}</dd>
+              <dt>Webhook configurado</dt><dd>{status?.webhook==="configured"?"Encontrado":status?.webhook==="absent"?"Não encontrado":"Não confirmado"}</dd>
+              <dt>Cabeçalho de autenticação</dt><dd>{status?.webhookSecretHeader==="present"?"Configurado (valor não verificado)":status?.webhookSecretHeader==="absent"?"Não encontrado":"Não confirmado"}</dd>
+              <dt>Captura da caixa de entrada</dt><dd>{status?.captureEnabled?"Habilitada no servidor":"Desligada"}</dd>
+              <dt>Rotas extras de IA</dt><dd>{status?.fallbackConfigured?"Cadastradas (não testadas)":"Não cadastradas"}</dd>
+              <dt>Envio automático</dt><dd>{status?.repliesEnabled?"Ativo — conferir segurança":"Desligado"}</dd>
+            </dl>
+          </div>
+          <div className="crm-info-card"><ShieldCheck size={26}/><h2>Bloqueios que faltam resolver</h2>
+            <p><strong>Atendimento humano:</strong> precisa de atribuição e tomada de conversa funcionando no backend.</p>
+            <p><strong>Histórico durável:</strong> a caixa atual usa Redis temporário; as tabelas do Supabase ainda não recebem mensagens reais.</p>
+            <p><strong>Controle por empresa:</strong> o login por operador ainda não substituiu o token de laboratório.</p>
+            <p><strong>Webhook:</strong> existência do endereço e do cabeçalho não prova que o segredo ou a entrega funcionem. É necessário teste real controlado.</p>
+            <p><strong>IA reserva:</strong> configurar modelos permitidos no OmniRoute e simular limite antes de usar clientes reais.</p>
+          </div>
         </section> : null}
         <div className="crm-bottom-actions"><button onClick={()=>{setAccess(false);setToken("");setData(null);setStatus(null);setSelected("");}}>Sair do painel</button></div>
       </>}
