@@ -73,3 +73,12 @@
 .crm-bottom-actions{padding:20px 0}
 @media(max-width:1000px){.crm-live-grid{grid-template-columns:minmax(250px,1fr) minmax(260px,1.35fr)}}
 @media(max-width:760px){.crm-live-grid{grid-template-columns:minmax(0,1fr)}.crm-live-grid .inbox-panel{min-height:260px;max-height:420px}.crm-conversation{min-height:350px}.crm-live-stats{grid-template-columns:1fr}.crm-status-line{font-size:12px}.crm-lock-panel{margin:18px 0}.crm-refresh{padding:9px;font-size:12px}.company-button{display:none}.main-area{padding:0 12px 18px}}
+
+/* Tenant-ready read-only operational modules */
+.crm-details-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-bottom:20px}
+.crm-info-card{background:linear-gradient(145deg,#171526,#10111d);border:1px solid #403854;border-radius:14px;padding:24px;min-width:0;display:flex;flex-direction:column;gap:15px}
+.crm-info-card>svg{color:#b67aff}.crm-info-card h2{margin:0;font-size:21px}
+.crm-info-card p{color:#c7bfd7;line-height:1.65;margin:0;font-size:14px}
+.crm-info-card dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:13px 10px;margin:5px 0;font-size:14px}
+.crm-info-card dt{color:#b3a9c8}.crm-info-card dd{margin:0;text-align:right;overflow-wrap:anywhere;font-weight:650}
+@media(max-width:850px){.crm-details-grid{grid-template-columns:minmax(0,1fr)}}
