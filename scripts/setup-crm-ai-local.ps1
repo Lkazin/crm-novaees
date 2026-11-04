@@ -10,7 +10,8 @@ function Fail([string]$Message) {
 }
 function New-Secret() {
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     return [BitConverter]::ToString($bytes).Replace("-", "").ToLowerInvariant()
 }
 function SecureToPlain($Secure) {
@@ -72,8 +73,8 @@ if (!$admin -or $admin.Length -lt 32 -or $admin -match "REPLACE|USE_ANOTHER|YOUR
 $webhook = Get-EnvValue $raw "CRM_WEBHOOK_SECRET"
 if (!$webhook -or $webhook.Length -lt 32 -or $webhook -match "REPLACE|USE_ANOTHER|YOUR_") { $webhook = New-Secret }
 
-Write-Host "A chave antiga compartilhada no chat deve ser revogada. Use uma nova chave da aba Endpoints do OmniRoute." -ForegroundColor Yellow
-$keySecure = Read-Host "Cole a NOVA chave secreta do OmniRoute (entrada oculta)" -AsSecureString
+Write-Host "Para teste local, pode usar sua chave atual do OmniRoute. Recomenda-se trocá-la antes da producao." -ForegroundColor Yellow
+$keySecure = Read-Host "Cole a chave secreta do OmniRoute (entrada oculta)" -AsSecureString
 $key = SecureToPlain $keySecure
 if ([string]::IsNullOrWhiteSpace($key) -or $key.Length -lt 12 -or $key -match "[\r\n]") { Fail "Chave invalida ou vazia." }
 
