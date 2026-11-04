@@ -10,6 +10,7 @@ import {
 type Msg = { id: string; from: "contact"; text: string; at: string };
 type Conversation = { id: string; number: string; name: string; preview: string; updatedAt: string; messages: Msg[] };
 type InboxResponse = { conversations: Conversation[]; captureEnabled: boolean; repliesEnabled: boolean };
+type StatusResponse = { instance: string | null; channel: "connected"|"disconnected"|"unknown"; captureEnabled: boolean; repliesEnabled: boolean; modelRoute: string|null; fallbackRoutes: string[]; fallbackConfigured: boolean };
 type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações";
 
 const sections: { name: Tab; icon: typeof MessageCircle }[] = [
@@ -33,6 +34,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [data, setData] = useState<InboxResponse | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
   const [info, setInfo] = useState("");
@@ -45,6 +47,10 @@ export default function Dashboard() {
       if (!res.ok) throw new Error("A caixa de entrada está indisponível. Verifique o Redis e a instância configurada.");
       const json = await res.json() as InboxResponse;
       setData(json); setAccess(true);
+      try {
+        const info = await fetch("/api/crm/status", { headers: { "x-crm-lab-admin-token": credential }, cache: "no-store" });
+        setStatus(info.ok ? await info.json() as StatusResponse : null);
+      } catch { setStatus(null); }
     } catch (e) { setError(e instanceof Error ? e.message : "Falha de conexão"); }
     finally { setLoading(false); }
   }, []);
@@ -57,6 +63,7 @@ export default function Dashboard() {
   const filtered = useMemo(() => conversations.filter(c => (c.name + " " + c.number + " " + c.preview).toLowerCase().includes(search.toLowerCase())), [conversations, search]);
   const active = conversations.find(c => c.id === selected) ?? filtered[0] ?? null;
   const title = nav === "Dashboard" ? "Dashboard" : nav;
+  const receivedToday = conversations.reduce((total, chat) => total + chat.messages.filter(m => new Date(m.at).toDateString() === new Date().toDateString()).length, 0);
   const cards = [
     { label: "Conversas registradas", value: conversations.length, icon: MessageCircle },
     { label: "Contatos identificados", value: new Set(conversations.map(c => c.number)).size, icon: UsersRound },
@@ -132,8 +139,22 @@ export default function Dashboard() {
               </> : <div className="crm-conversation-placeholder"><MessageCircle size={35}/><strong>Selecione uma conversa</strong><span>Aqui aparecem somente mensagens recebidas e registradas de verdade.</span></div>}
             </div>
           </section>
-        </> : <section className="crm-lock-panel"><Clock3 size={30}/><h2>{nav} — em implementação</h2><p>Este módulo ainda não está conectado ao backend. Não vamos mostrar botões ou dados fictícios como se estivessem funcionando.</p></section>}
-        <div className="crm-bottom-actions"><button onClick={()=>{setAccess(false);setToken("");setData(null);setSelected("");}}>Sair do painel</button></div>
+        </> : nav==="Relatórios" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><BarChart3 size={26}/><h2>Relatório de mensagens registradas</h2><p>Dados reais da caixa de entrada nos últimos sete dias, limitados aos registros disponíveis no Redis.</p>
+            <dl><dt>Conversas registradas</dt><dd>{conversations.length}</dd><dt>Mensagens recebidas hoje</dt><dd>{receivedToday}</dd><dt>Mensagens no histórico atual</dt><dd>{conversations.reduce((n,c)=>n+c.messages.length,0)}</dd></dl>
+          </div>
+          <div className="crm-info-card"><AlertCircle size={25}/><h2>Limites do relatório</h2><p>Respostas da IA, tempo médio e taxa de resolução ainda não possuem auditoria confiável. Não exibimos números estimados como fatos.</p></div>
+        </section> : nav==="Conexões WhatsApp" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Smartphone size={26}/><h2>Evolution API</h2><dl><dt>Instância configurada</dt><dd>{status?.instance ?? "Não informada"}</dd><dt>Estado consultado</dt><dd>{status?.channel === "connected" ? "Conectada" : status?.channel === "disconnected" ? "Desconectada" : "Não confirmado"}</dd><dt>Recebimento de mensagens</dt><dd>{status?.captureEnabled ? "Autorizado no servidor" : "Desligado"}</dd></dl></div>
+          <div className="crm-info-card"><ShieldCheck size={25}/><h2>Proteção das instâncias</h2><p>Esta página consulta apenas a instância configurada no CRM. Não desconecta ou altera outros WhatsApps. Webhook real precisa ser validado no Docker.</p></div>
+        </section> : nav==="Agentes de IA" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Bot size={26}/><h2>Roteamento de inteligência artificial</h2><dl><dt>Rota principal</dt><dd>{status?.modelRoute ?? "Não configurada"}</dd><dt>Rotas alternativas autorizadas</dt><dd>{status?.fallbackRoutes?.length ? status.fallbackRoutes.join(", ") : "Nenhuma ainda"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ligadas" : "Desligadas"}</dd></dl></div>
+          <div className="crm-info-card"><ShieldCheck size={25}/><h2>Alternância de IA</h2><p>O servidor já aceita rotas alternativas explicitamente configuradas. Cada provedor extra precisará ser conectado e autorizado no OmniRoute. Nenhum provedor pago será ativado por esta tela.</p></div>
+        </section> : nav==="Configurações" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança operacional</h2><dl><dt>Acesso à caixa de entrada</dt><dd>Token administrativo local</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
+          <div className="crm-info-card"><LockKeyhole size={25}/><h2>Configuração protegida</h2><p>Credenciais, parâmetros de privacidade e ativação de canais são gerenciados no servidor. Ainda falta autenticação de operadores por usuário para uso público.</p></div>
+        </section> : null}
+        <div className="crm-bottom-actions"><button onClick={()=>{setAccess(false);setToken("");setData(null);setStatus(null);setSelected("");}}>Sair do painel</button></div>
       </>}
       {info && <div role="status">{info}</div>}
     </main>
