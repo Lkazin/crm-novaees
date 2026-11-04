@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:e2e": "playwright test",
-    "test:agent": "tsx --test src/lib/agent/*.test.ts"
+    "test:agent": "tsx --test src/lib/agent/*.test.ts src/lib/crm/*.test.ts"
   },
   "dependencies": {
     "next": "15.5.29",
