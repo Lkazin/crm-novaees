@@ -1,6 +1,6 @@
 # NovaesWeb CRM AI — proposta de produto para aprovação
 
-Data: 2026-11-04. Estado: PROPOSTA DE FUNCIONALIDADES. Nenhuma opção abaixo autoriza ativação do WhatsApp.
+Data: 2026-11-04. Estado: ESTRUTURA COMPLETA APROVADA PELO RESPONSÁVEL. Implementação progressiva, sem simulações enganosas. Aprovação da estrutura não autoriza ativação do WhatsApp, campanhas nem envio automático.
 
 ## Princípios
 
@@ -44,10 +44,10 @@ Se cliente pedir pessoa ou regra escalar, **não** enviar resposta automática s
 
 **Ainda precisa implementar:** identidade por operador, serviço de escrita no Supabase, fila persistente e worker de entrega, passagem humana real, histórico durável, conhecimento por empresa, gestão de perfis, integração ponta a ponta homologada e política de tratamento de dados.
 
-## Decisões propostas
+## Decisões aprovadas e sequência de execução
 
-- Aprovar MVP com as nove páginas acima.
-- Manter *Campanhas* e automações avançadas para fase 2.
+- Aprovada a estrutura completa, com todos os módulos no menu, desde que somente operações reais sejam liberadas.
+- Campanhas e automações têm fundação de banco e telas de prontidão, mas execução fica bloqueada até controles de segurança, consentimento e homologação.
 - Começar com uma empresa piloto sob controle do próprio operador.
 - IA principal Groq; no OmniRoute adicionar duas reservas gratuitas permitidas e testar fallback antes de ativá-las. Restringir cobrança não autorizada.
 - Visual: painel escuro com roxo NovaesWeb, versão celular com caixa de entrada primeiro, ações de enviar/assumir em área fixa. Evitar excesso de cartões no topo.
@@ -58,3 +58,10 @@ Se cliente pedir pessoa ou regra escalar, **não** enviar resposta automática s
 - Intercom bot inbox e transferência: https://www.intercom.com/help/en/articles/3722087-turn-on-the-bot-inbox
 - Chatwoot help center (WhatsApp, automações e IA): https://www.chatwoot.com/help-center
 - Evolution API webhook custom headers: https://github.com/evolution-foundation/docs-evolution/pull/22
+
+## Entrega incremental de 04/11/2026
+
+- Supabase exclusivo: oito novas tabelas para conhecimento, etiquetas, vínculo de etiquetas, notas, campanhas, consentimento, automações e configurações, com RLS e leitura limitada a membros do tenant.
+- Cada mecanismo de envio por campanha, automação ou IA continua bloqueado no esquema; nenhum disparo foi autorizado.
+- Menu: Base de Conhecimento, Equipe, Campanhas e Automações passaram a aparecer, mas os botões de criar permanecem desativados até existirem autenticação individual e APIs de escrita seguras.
+- Próximas integrações: autenticação multiusuário; API de dados multiempresa; backend de contatos e conversas; edição e publicação de conhecimento; equipe; encaminhamento humano; automações e campanhas com consentimento.
