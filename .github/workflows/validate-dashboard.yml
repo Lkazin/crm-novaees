@@ -19,6 +19,8 @@ jobs:
           node-version: '22'
       - name: Install dependencies (no secrets required)
         run: npm install --no-audit --no-fund
+      - name: Agent unit tests
+        run: npm run test:agent
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Lint
