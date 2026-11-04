@@ -25,3 +25,11 @@ for (const width of [1920, 1366, 768, 390, 360]) {
     }
   });
 }
+
+test("preparation navigation is present but does not expose operations without login", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Preparação" }).click();
+  await expect(page.getByRole("heading", { name: "Preparação" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Acessar atendimentos reais" })).toBeVisible();
+  await expect(page.getByText("Verificação antes de atender clientes")).toHaveCount(0);
+});
