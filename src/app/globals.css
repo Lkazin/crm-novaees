@@ -82,3 +82,7 @@
 .crm-info-card dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:13px 10px;margin:5px 0;font-size:14px}
 .crm-info-card dt{color:#b3a9c8}.crm-info-card dd{margin:0;text-align:right;overflow-wrap:anywhere;font-weight:650}
 @media(max-width:850px){.crm-details-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Full CRM information architecture: missing backend actions remain visibly disabled. */
+.crm-module-state{display:flex;gap:9px;align-items:center;border:1px solid #615276;border-radius:10px;background:#241d33;padding:11px 13px;color:#dfd2f5;font-size:13px;line-height:1.5}
+.crm-module-disabled{align-self:flex-start;border-radius:10px;border:1px solid #51465e;background:#272332;color:#ada5bc;padding:12px 17px;cursor:not-allowed}
