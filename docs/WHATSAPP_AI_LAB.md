@@ -7,7 +7,7 @@ Fluxo experimental: webhook Evolution (somente `messages.upsert` texto individua
 
 ## Antes de rodar
 1. Ter Docker Desktop operacional e identificar a instância Evolution API realmente instalada, versão e porta. **Não recriar nem reiniciar** os containers atuais.
-2. Verificar qual roteador IA existente oferece endpoint compatível com OpenAI `POST /v1/chat/completions` (OmniRoute, FreeLLMAPI ou outro). Não presumir que nomes equivalem a APIs compatíveis.
+2. Provedor inicial escolhido: **OpenRouter**. O endpoint oficial é `https://openrouter.ai/api/v1/chat/completions` e o modelo `openrouter/free` seleciona uma opção gratuita. Isso ainda não constitui conexão validada; requer uma chave própria e limites por conta. A integração permanece adaptável a outros provedores compatíveis.
 3. Criar o arquivo local `.env.ai-lab` a partir de `.env.ai-lab.example`. Inserir as chaves **somente localmente**. Usar um WhatsApp de teste autorizado e seu próprio número como `AI_TEST_ALLOWED_NUMBER` (DDI+DDD+número).
 4. Gerar o segredo do webhook (32+ caracteres fortes, independentes da chave Evolution).
 5. Manter `AI_REPLY_ENABLED=false` inicialmente.
@@ -47,3 +47,22 @@ O formato exato de `headers` e de `webhook` (aninhado ou plano) depende da vers�
 - Entrada: só mensagem de texto individual com `@s.whatsapp.net`; alguns formatos de ID `@lid` e mídia foram intencionalmente ignorados.
 - Deduplicação Redis reduz repetições, mas não garante entrega exatamente uma vez.
 - O laboratório não altera o Supabase CRM nem tem cadastro de clientes reais.
+
+
+## Configuração do OpenRouter (primeira opção)
+1. Crie uma conta em https://openrouter.ai e acesse https://openrouter.ai/settings/keys para gerar uma chave API com limites adequados. Nunca envie a chave pelo chat ou commit.
+2. No arquivo **local** `.env.ai-lab`, configure:
+   ```dotenv
+   AI_OPENAI_BASE_URL=https://openrouter.ai/api/v1
+   AI_API_KEY=SUA_CHAVE_SOMENTE_NO_COMPUTADOR
+   AI_MODEL=openrouter/free
+   AI_REPLY_ENABLED=false
+   ```
+3. O endpoint de teste da IA é `POST /api/ai/test`, protegido por `CRM_LAB_ADMIN_TOKEN` (segredo diferente do webhook). Ele responde sem transmitir WhatsApp.
+4. Para o OpenRouter, a aplicação recusa modelos faturáveis: só permite `openrouter/free` ou IDs terminados em `:free`. O roteador gratuito pode variar o modelo selecionado; não garante consistência entre conversas.
+5. Limites publicados em novembro de 2026: em geral 20 solicitações/minuto e 50/dia no gratuito, sujeitos a mudanças. Atingir o limite retorna erro; não há fallback silencioso para modelo pago.
+6. Não confundir token e senha de login. Segredos só em arquivo local não versionado e nunca em frontend. Use dados fictícios no contexto da empresa até definir privacidade/LGPD.
+7. Primeiro valide a IA sozinha, depois Redis/Evolution e finalmente o número de teste autorizado. Não ative `AI_REPLY_ENABLED=true` antes da homologação.
+
+## Verificações
+O CI faz build, testes unitários e testes de rotas negadas sem token. **Não testa a OpenRouter de verdade**, porque não possui chave (corretamente) nem depende de terceiros. Uma resposta real só é comprovada após o operador configurar a chave local e executar um teste autenticado.
