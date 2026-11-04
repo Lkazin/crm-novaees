@@ -1,0 +1,35 @@
+# Dependencies and build
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Configuration secrets (keep only example files)
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+
+# Docker/local data and sessions
+docker-data/
+volumes/
+sessions/
+evolution_instances/
+*.sqlite
+*.db
+
+# Logs and OS/editor files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
