@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getAgentConfig } from "@/lib/agent/config";
+import { getAiConfig } from "@/lib/agent/config";
 import { generateAnswer } from "@/lib/agent/ai";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (typeof question !== "string" || !question.trim() || question.length > 1000)
     return NextResponse.json({ error: "invalid_question" }, { status: 400 });
   try {
-    const cfg = getAgentConfig();
+    const cfg = getAiConfig();
     const answer = await generateAnswer(question, cfg);
     return NextResponse.json({ answer, deliveredToWhatsApp: false });
   } catch {
