@@ -33,3 +33,5 @@ test("preparation navigation is present but does not expose operations without l
   await expect(page.getByRole("heading", { name: "Acessar atendimentos reais" })).toBeVisible();
   await expect(page.getByText("Verificação antes de atender clientes")).toHaveCount(0);
 });
+
+test('new CRM module navigation stays behind admin login', async ({ page }) => { await page.goto('/'); for (const name of ['Base de Conhecimento','Equipe','Campanhas','Automações']) { await page.getByRole('button',{name,exact:true}).click(); await expect(page.getByRole('heading',{name,exact:true})).toBeVisible(); await expect(page.getByRole('heading',{name:'Acessar atendimentos reais'})).toBeVisible(); } });
