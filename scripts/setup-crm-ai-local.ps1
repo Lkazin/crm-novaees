@@ -73,10 +73,21 @@ if (!$admin -or $admin.Length -lt 32 -or $admin -match "REPLACE|USE_ANOTHER|YOUR
 $webhook = Get-EnvValue $raw "CRM_WEBHOOK_SECRET"
 if (!$webhook -or $webhook.Length -lt 32 -or $webhook -match "REPLACE|USE_ANOTHER|YOUR_") { $webhook = New-Secret }
 
-Write-Host "Para teste local, pode usar sua chave atual do OmniRoute. Recomenda-se trocá-la antes da producao." -ForegroundColor Yellow
-$keySecure = Read-Host "Cole a chave secreta do OmniRoute (entrada oculta)" -AsSecureString
-$key = SecureToPlain $keySecure
-if ([string]::IsNullOrWhiteSpace($key) -or $key.Length -lt 12 -or $key -match "[\r\n]") { Fail "Chave invalida ou vazia." }
+# Read the key from the local env file, avoiding clipboard problems with hidden input.
+# Never print, log, or send the value to GitHub.
+$key = Get-EnvValue $raw "AI_API_KEY"
+if (!$key -or $key.Length -lt 12 -or $key -match '^(REPLACE|YOUR_|COLE_AQUI|SUA_CHAVE)' -or $key -match "[\r\n]") {
+    Write-Host "[INFO] A chave ainda nao esta configurada no arquivo local." -ForegroundColor Yellow
+    Write-Host "No Bloco de Notas, substitua AI_API_KEY pelo valor secreto da chave novaesw. Salve e feche o arquivo." -ForegroundColor Cyan
+    if (!(Test-Path $envPath)) { Write-PrivateFile $envPath $raw }
+    Start-Process -FilePath "notepad.exe" -ArgumentList ('"' + $envPath + '"') -Wait
+    $raw = [IO.File]::ReadAllText($envPath)
+    $key = Get-EnvValue $raw "AI_API_KEY"
+}
+if ([string]::IsNullOrWhiteSpace($key) -or $key.Length -lt 12 -or $key -match '^(REPLACE|YOUR_|COLE_AQUI|SUA_CHAVE)' -or $key -match "[\r\n]") {
+    Fail "Chave nao configurada no arquivo .env.ai-lab. Edite AI_API_KEY localmente e rode novamente."
+}
+Write-Host "[OK] Chave encontrada no arquivo local, sem exibir o valor." -ForegroundColor Green
 
 $model = Read-Host "Identificador do modelo/rota configurada no OmniRoute (Enter = auto)"
 if ([string]::IsNullOrWhiteSpace($model)) { $model = "auto" }
