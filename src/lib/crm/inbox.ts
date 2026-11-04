@@ -26,19 +26,25 @@ export async function captureIncoming(incoming: Incoming): Promise<void> {
   const dedup = namespace + "message:" + createHash("sha256").update(incoming.id + ":" + hash).digest("hex");
   try {
     await r.connect();
-    const claimed = await r.set(dedup, "1", "EX", ttl, "NX");
-    if (claimed !== "OK") return;
     const now = new Date().toISOString();
     const msg: InboxMessage = { id: incoming.id, from: "contact", text: incoming.text, at: now };
-    await r.multi()
-      .hset(key, "number", incoming.number, "updatedAt", now, "preview", incoming.text.slice(0, 200))
-      .lpush(key + ":messages", JSON.stringify(msg))
-      .ltrim(key + ":messages", 0, 99)
-      .expire(key, ttl)
-      .expire(key + ":messages", ttl)
-      .zadd(namespace + "recent", Date.now(), hash)
-      .expire(namespace + "recent", ttl)
-      .exec();
+    // Single atomic operation: never mark an ID as processed before storing the message.
+    const lua = [
+      'if redis.call("EXISTS", KEYS[1]) == 1 then return 0 end',
+      'redis.call("SET", KEYS[1], "1", "EX", ARGV[1])',
+      'redis.call("HSET", KEYS[2], "number", ARGV[2], "updatedAt", ARGV[3], "preview", ARGV[4])',
+      'redis.call("LPUSH", KEYS[3], ARGV[5])',
+      'redis.call("LTRIM", KEYS[3], 0, 99)',
+      'redis.call("EXPIRE", KEYS[2], ARGV[1])',
+      'redis.call("EXPIRE", KEYS[3], ARGV[1])',
+      'redis.call("ZADD", KEYS[4], ARGV[6], ARGV[7])',
+      'redis.call("EXPIRE", KEYS[4], ARGV[1])',
+      'return 1',
+    ].join("\\n");
+    await r.eval(lua, 4, dedup, key, key + ":messages", namespace + "recent",
+      String(ttl), incoming.number, now, incoming.text.slice(0, 200),
+      JSON.stringify(msg), String(Date.now()), hash);
+
   } catch {
     // Capture failure must never cause the WhatsApp provider to retry an otherwise valid event.
     console.error("[crm-inbox] capture_unavailable");
