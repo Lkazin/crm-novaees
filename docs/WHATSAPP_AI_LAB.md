@@ -39,8 +39,8 @@ O formato exato de `headers` e de `webhook` (aninhado ou plano) depende da vers�
 2. Com `AI_REPLY_ENABLED=false`, confirmar `/api/ai/health` e enviar payload fictício ao webhook autenticado: retorno esperado `disabled`, sem saída para WhatsApp.
 3. Testar webhook sem header, com segredo incorreto, grupos, mensagens enviadas por nós e números diferentes (ignorar/bloquear).
 4. Verificar manualmente conexão real com Redis, roteador IA e Evolution; o endpoint health *não* testa serviços externos.
-5. Autorizar `AI_REPLY_ENABLED=true` **somente no laboratório e para número em allowlist**. Reiniciar só o container do lab; mandar uma mensagem de texto de teste do número permitido; verificar recebimento e resposta.
-6. Desligar novamente após o teste. Antes de vender, implementar isolamento multiempresa com RLS, consentimento, transferência humana e política oficial do WhatsApp.
+5. Testar a resposta da IA antes do WhatsApp através de `POST http://localhost:3040/api/ai/test` com JSON `{\"question\":\"Qual o horário?\"}` e header `x-crm-lab-admin-token` igual ao valor de `CRM_LAB_ADMIN_TOKEN` (secret distinto do webhook). O retorno deve conter `deliveredToWhatsApp: false`. Nunca usar a senha real em comandos salvos no GitHub.\n6. Autorizar `AI_REPLY_ENABLED=true` **somente no laboratório e para número em allowlist**. Reiniciar só o container do lab; mandar uma mensagem de texto de teste do número permitido; verificar recebimento e resposta.
+7. Desligar novamente após o teste. Antes de vender, implementar isolamento multiempresa com RLS, consentimento, transferência humana e política oficial do WhatsApp.
 
 ## Limites técnicos
 - Provedor AI: requer chave + modelo e endpoint compatível. Falhas retornam status 503 e não são consideradas sucesso.
