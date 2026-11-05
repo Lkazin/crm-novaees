@@ -4,6 +4,7 @@ import { getAgentConfig } from "@/lib/agent/config";
 import { processWebhook } from "@/lib/agent/processor";
 import { parseIncoming } from "@/lib/agent/parse";
 import { captureIncoming } from "@/lib/crm/inbox";
+import { persistIncomingInSupabase } from "@/lib/crm/supabase-ingest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +29,11 @@ export async function POST(request: NextRequest) {
   try {
     const cfg = getAgentConfig();
     const incoming = parseIncoming(payload);
-    if (incoming && incoming.instance === cfg.instance) await captureIncoming(incoming);
+    if (incoming && incoming.instance === cfg.instance) {
+      // Durable persistence is opt-in and fails closed (503) if a configured channel cannot be saved.
+      await persistIncomingInSupabase(incoming);
+      await captureIncoming(incoming);
+    }
     const result = await processWebhook(payload, cfg);
     return json(result);
   } catch (err) {
