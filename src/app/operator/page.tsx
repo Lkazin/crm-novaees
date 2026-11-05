@@ -27,6 +27,8 @@ export default function OperatorPage() {
   const [contactName,setContactName]=useState("");
   const [contactPhone,setContactPhone]=useState("");
   const [contactNotice,setContactNotice]=useState("");
+  const [handoffNotice,setHandoffNotice]=useState("");
+  const [claiming,setClaiming]=useState(false);
 
   const fetchData=useCallback(async (tenantId:string)=>{
     setLoading(true);setError("");
@@ -90,6 +92,24 @@ export default function OperatorPage() {
       setContactNotice("Contato cadastrado no Supabase. Nenhum WhatsApp foi enviado.");
     }catch{setError("Falha na comunicação com o servidor. Não confirme o cadastro antes de recarregar.");}
     finally{setLoading(false);}
+  }
+  async function claimConversation(id:string) {
+    if(!tenant)return;
+    setClaiming(true);setError("");setHandoffNotice("");
+    try {
+      const res=await fetch("/api/crm/operator/handoff",{
+        method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({tenantId:tenant,conversationId:id})
+      });
+      if(!res.ok){
+        setError(res.status===403?"Seu perfil não pode assumir esta conversa.":res.status===409?"Conversa não está disponível ou a empresa está inativa.":"Não foi possível assumir o atendimento.");
+        return;
+      }
+      await fetchData(tenant);
+      setSelected(id);
+      setHandoffNotice("Conversa atribuída a você no Supabase e marcada como atendimento humano. Ainda falta homologar o bloqueio da IA no motor de envio.");
+    }catch{setError("Falha na conexão. Confira o histórico antes de repetir a operação.");}
+    finally{setClaiming(false);}
   }
   const contacts=useMemo(()=>data?.contacts??[],[data]);
   const conversations=useMemo(()=>data?.conversations??[],[data]);
@@ -165,7 +185,11 @@ export default function OperatorPage() {
           </aside>
           <article className="op-card op-thread">
             {current?<><div className="op-thread-head"><strong>{byContact.get(current.contact_id)?.display_name||byContact.get(current.contact_id)?.phone||"Contato"}</strong>
-              <span>{current.status} · Atendimento {current.mode}</span></div>
+              <span>{current.status} · Atendimento {current.mode}</span>
+              {current.status!=="resolved"&&<button type="button" className="op-refresh" disabled={claiming||loading} onClick={()=>void claimConversation(current.id)}>
+                {claiming?"Registrando...":"Assumir atendimento"}
+              </button>}</div>
+              {handoffNotice&&<p className="op-contact-success" role="status"><CheckCircle2 size={17}/>{handoffNotice}</p>}
               <div className="op-bubbles">{thread.length?thread.map(m=><div key={m.id} className={m.direction==="outbound"?"op-message sent":"op-message"}>
                 <span>{m.sender_type==="human"?"Atendente":m.sender_type==="agent"?"IA":"Cliente"}</span><p>{m.body}</p><small>{dateTime(m.created_at)}</small>
               </div>):<div className="op-empty">Nenhuma mensagem registrada no histórico desta conversa.</div>}</div>
