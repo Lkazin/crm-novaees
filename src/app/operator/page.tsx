@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
-  Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users
+  Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus
 } from "lucide-react";
 
 type Tenant={id:string;name:string;status:string};
@@ -22,6 +22,10 @@ export default function OperatorPage() {
   const [tenant,setTenant]=useState("");
   const [selected,setSelected]=useState("");
   const [search,setSearch]=useState("");
+  const [newContactOpen,setNewContactOpen]=useState(false);
+  const [contactName,setContactName]=useState("");
+  const [contactPhone,setContactPhone]=useState("");
+  const [contactNotice,setContactNotice]=useState("");
 
   const fetchData=useCallback(async (tenantId:string)=>{
     setLoading(true);setError("");
@@ -67,6 +71,25 @@ export default function OperatorPage() {
     finally{setAuthenticated(false);setData(null);setTenant("");setSelected("");setPassword("");setSearch("");}
   }
   async function changeTenant(value:string){setTenant(value);setSelected("");await fetchData(value);}
+  async function registerContact(e:React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();setLoading(true);setError("");setContactNotice("");
+    try {
+      const res=await fetch("/api/crm/operator/contacts",{
+        method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({tenantId:tenant,name:contactName,phone:contactPhone})
+      });
+      if(!res.ok){
+        setError(res.status===409?"Este número já está cadastrado na empresa."
+          :res.status===403?"Cadastro não permitido para esta conta ou empresa inativa."
+          :"Não foi possível salvar o contato.");
+        return;
+      }
+      setContactPhone("");setContactName("");setNewContactOpen(false);
+      await fetchData(tenant);
+      setContactNotice("Contato cadastrado no Supabase. Nenhum WhatsApp foi enviado.");
+    }catch{setError("Falha na comunicação com o servidor. Não confirme o cadastro antes de recarregar.");}
+    finally{setLoading(false);}
+  }
   const contacts=data?.contacts??[];
   const conversations=data?.conversations??[];
   const messages=data?.messages??[];
@@ -115,6 +138,18 @@ export default function OperatorPage() {
           <div className="op-card"><Users size={23}/><span>Contatos cadastrados (até 100)</span><strong>{contacts.length}</strong></div>
           <div className="op-card"><Inbox size={23}/><span>Conversas listadas (até 100)</span><strong>{conversations.length}</strong></div>
           <div className="op-card"><MessageSquare size={23}/><span>Mensagens recentes (até 300)</span><strong>{messages.length}</strong></div>
+        </section>
+        <section className="op-card op-contacts-section" aria-label="Cadastro de contatos reais">
+          <div className="op-contact-heading"><div><UserPlus size={23}/><h2>Contatos da empresa</h2><span>{contacts.length} exibidos</span></div>
+            <button className="op-refresh" onClick={()=>setNewContactOpen(v=>!v)} aria-expanded={newContactOpen}>{newContactOpen?"Fechar":"Novo contato"}</button></div>
+          {newContactOpen&&<form className="op-contact-form" onSubmit={e=>void registerContact(e)}>
+            <label>Nome (opcional)<input value={contactName} maxLength={160} onChange={e=>setContactName(e.target.value)} placeholder="Nome real do contato"/></label>
+            <label>WhatsApp com DDI<input type="tel" required value={contactPhone} onChange={e=>setContactPhone(e.target.value)} placeholder="Ex.: 5511999999999" pattern="[+0-9 ()-]{10,22}"/></label>
+            <button type="submit" className="op-primary" disabled={loading||!contactPhone.trim()}>Salvar contato</button>
+            <p>Cadastro no Supabase, sem mensagem ou convite por WhatsApp. Apenas operadores autorizados podem cadastrar.</p>
+          </form>}
+          {contactNotice&&<p className="op-contact-success" role="status"><CheckCircle2 size={17}/>{contactNotice}</p>}
+          <div className="op-contact-chips">{contacts.length?contacts.slice(0,12).map(c=><div key={c.id} title={c.phone}><strong>{c.display_name||"Sem nome"}</strong><small>{c.phone}</small></div>):<p>Nenhum contato cadastrado nesta empresa.</p>}</div>
         </section>
         <section className="op-workspace">
           <aside className="op-card op-inbox"><h2>Conversas</h2>
