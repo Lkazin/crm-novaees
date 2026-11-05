@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
     webhook,
     webhookSecretHeader,
     captureEnabled: process.env.CRM_INBOX_CAPTURE_ENABLED === "true",
+    supabaseIngestEnabled: process.env.CRM_SUPABASE_INGEST_ENABLED === "true",
     repliesEnabled: process.env.AI_REPLY_ENABLED === "true",
     modelRoute: route,
     fallbackRoutes: fallback,
