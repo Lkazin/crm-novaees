@@ -15,7 +15,7 @@ async function write(path:string,method:"POST"|"PATCH",operator:Operator,values:
   const {url,key}=supabaseSettings();
   return fetch(url+"/rest/v1/"+path,{
     method,cache:"no-store",signal:AbortSignal.timeout(8000),
-    headers:{apikey:key,Authorization:"Bearer "+operator.token,"Content-Type":"application/json",Prefer:"return=minimal"},
+    headers:{apikey:key,Authorization:"Bearer "+operator.token,"Content-Type":"application/json",Prefer:"return=representation"},
     body:JSON.stringify(values)
   });
 }
@@ -52,7 +52,9 @@ export async function POST(request:NextRequest) {
       body:(payload.body as string).trim(),status:"draft",created_by:operator.id
     });
     if(!response.ok)return privateJson({error:"knowledge_denied"},403);
-    return privateJson({created:true,status:"draft"},201);
+    const added=await response.json() as {id:string}[];
+    if(added.length!==1)return privateJson({error:"knowledge_unconfirmed"},503);
+    return privateJson({created:true,id:added[0].id,status:"draft"},201);
   }catch{return privateJson({error:"knowledge_service_unavailable"},503);}
 }
 export async function PATCH(request:NextRequest) {
@@ -77,6 +79,8 @@ export async function PATCH(request:NextRequest) {
       "PATCH",operator,{title:(payload.title as string).trim(),body:(payload.body as string).trim(),
         status:payload.status,updated_at:new Date().toISOString()});
     if(!response.ok)return privateJson({error:"knowledge_denied"},403);
+    const updated=await response.json() as {id:string}[];
+    if(updated.length!==1)return privateJson({error:"knowledge_denied"},403);
     return privateJson({updated:true});
   }catch{return privateJson({error:"knowledge_service_unavailable"},503);}
 }
