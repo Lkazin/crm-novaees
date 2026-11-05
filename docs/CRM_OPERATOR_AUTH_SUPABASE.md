@@ -49,3 +49,18 @@ Obter a chave correta em Supabase → projeto `novaesweb-crm-ai` → Project Set
 - Migração `20261105015851_crm_contact_create_operator_policy.sql` concede INSERT em `crm_contacts` apenas quando há membro autorizado e empresa ativa.
 - SELECT continua limitado pela política RLS existente e não há GRANT de INSERT para usuários anônimos.
 - A evolução do CRM deve manter operações autenticadas por usuário; `service_role` não deve acessar páginas públicas.
+
+## Ponte opcional do webhook para o histórico definitivo
+
+- Arquivo `src/lib/crm/supabase-ingest.ts`: grava mensagens individuais de texto no banco a partir de webhook já autenticado, com idempotência e sem responder WhatsApp.
+- A empresa é resolvida **exclusivamente pelo canal cadastrado no banco** cujo `instance_name` coincide com a instância configurada, nunca por ID enviado pelo cliente.
+- Requer `crm_tenants.status=active` e `crm_channels.status=connected`. Sem canal autorizado, a gravação falha, e o webhook devolve erro para permitir tratamento da entrega.
+- Padrão: `CRM_SUPABASE_INGEST_ENABLED=false`. Ligar somente depois de revisar LGPD, webhook e conexão entre containers.
+- Para habilitar posteriormente, será necessária uma chave **server-only** `CRM_SUPABASE_SERVICE_ROLE_KEY` no arquivo local. Essa chave é privilegiada: nunca deve ser exposta no navegador, em `NEXT_PUBLIC_`, no GitHub ou enviada no chat.
+- Uma mensagem é gravada primeiro no banco, depois passa pela etapa de processamento da IA. O envio automático continua desligado.
+- Histórico antigo do Redis **não é migrado automaticamente**; registros serão gravados no banco a partir do momento em que a integração real for habilitada e testada.
+- Se não houver canal, tenant, segredo e acesso válidos, não ativar a captura.
+
+## Pendências da homologação da ponte
+
+Criar empresa real e atribuir o usuário existente; registrar o canal `novaesweb-ia-teste` vinculado apenas à empresa correta; confirmar webhook com segredo e a capacidade de entrega ao container; enviar mensagem controlada; verificar inserção única em `crm_contacts`, `crm_conversations`, `crm_messages` e visibilidade no portal `/operator` pelo usuário membro; confirmar que outra empresa não enxerga os dados; simular evento duplicado e falha de banco. Depois disso decidir política de retenção e auditoria antes de clientes reais.
