@@ -1,7 +1,7 @@
 "use client";
 import { useEffect,useState } from "react";
 import Link from "next/link";
-import {BarChart3,Building2,ChevronLeft,LockKeyhole,RefreshCw,ShieldCheck,Wifi,AlertCircle,PlusCircle,CheckCircle2} from "lucide-react";
+import {BarChart3,Building2,ChevronLeft,LockKeyhole,RefreshCw,ShieldCheck,Wifi,AlertCircle,PlusCircle,CheckCircle2,Ban,RotateCcw} from "lucide-react";
 
 type Usage={requests:number;tokens:number;costUsd:number;errors:number};
 type Limit={monthly_model_requests:number|null;monthly_token_limit:number|null;monthly_budget_usd:number|null;hard_stop_on_limit:boolean};
@@ -14,6 +14,7 @@ export default function AdminCRM() {
  const [name,setName]=useState("");
  const [creating,setCreating]=useState(false);
  const [notice,setNotice]=useState("");
+ const [changingTenant,setChangingTenant]=useState("");
  async function refresh(){
   setLoading(true);setError("");
   try {
@@ -47,6 +48,28 @@ export default function AdminCRM() {
   }catch {setError("Falha de conexão. Confira o registro antes de tentar novamente.");}
   finally{setCreating(false);}
  }
+ async function changeSuspension(company:Company){
+  if(!overview||changingTenant)return;
+  const suspend=company.status!=="suspended";
+  const action=suspend?"SUSPENDER":"REMOVER A SUSPENSÃO";
+  const approved=window.confirm(action+" a empresa "+company.name+"? Os dados ficam preservados. Ao retirar a suspensão a empresa ficará INATIVA, não ativada.");
+  if(!approved)return;
+  setChangingTenant(company.id);setError("");setNotice("");
+  try{
+   const res=await fetch("/api/crm/admin/suspension",{
+    method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({tenantId:company.id,suspend,confirm:true})
+   });
+   if(!res.ok){
+    setError(res.status===403?"Sem permissão para esta ação.":res.status===409?"Estado alterado ou solicitação não autorizada. Atualize antes de repetir.":"Falha ao alterar estado da empresa.");
+    return;
+   }
+   const result=await res.json() as {status:string};
+   await refresh();
+   setNotice("Empresa "+company.name+": estado "+(result.status==="suspended"?"suspenso":"inativo")+". Dados preservados; envios não foram ativados.");
+  }catch{setError("Falha de conexão. Confira o estado da empresa antes de repetir.");}
+  finally{setChangingTenant("");}
+ }
  useEffect(()=>{void refresh();},[]);
  return <main className="adm-shell">
   <div className="adm-top"><Link href="/operator" className="adm-back"><ChevronLeft size={17}/> Portal Operacional</Link><div className="adm-brand"><ShieldCheck size={22}/> NovaesWeb CRM AI · Master</div></div>
@@ -72,12 +95,20 @@ export default function AdminCRM() {
     </form>
     {notice&&<p role="status" className="adm-create-success"><CheckCircle2 size={17}/>{notice}</p>}
    </section>}
+   {notice&&<p role="status" className="adm-create-success"><CheckCircle2 size={17}/>{notice}</p>}
    <section className="op-card adm-companies"><div className="adm-section-header"><h2>Empresas</h2><span>Visualização somente leitura</span></div>
     {overview.companies.length?overview.companies.map(c=><article key={c.id} className="adm-company">
       <div className="adm-company-head"><div><strong>{c.name}</strong><span>{c.status==="active"?"Ativa":c.status==="suspended"?"Suspensa":"Inativa"}</span></div><small>Cadastro: {new Date(c.created_at).toLocaleDateString("pt-BR")}</small></div>
       <div className="adm-metrics"><span>Requisições contabilizadas: <b>{c.usage.requests}</b></span><span>Tokens contabilizados: <b>{c.usage.tokens}</b></span><span>Erros registrados: <b>{c.usage.errors}</b></span><span>Custo estimado registrado: <b>US$ {c.usage.costUsd.toFixed(4)}</b></span></div>
       <p className="adm-secondary">WhatsApps: {c.channels.length?c.channels.map(v=>v.instance+" ("+v.status+")").join(", "):"nenhum canal cadastrado"}.</p>
       <p className="adm-secondary">Limites: {c.limits?"Configuração cadastrada, ainda não aplicada pelo motor de IA.":"Ainda não configurados."}</p>
+      {(overview.role==="MASTER"||overview.role==="ADMINISTRADOR")&&<div className="adm-company-controls">
+       <button type="button" className="op-refresh" disabled={!!changingTenant} onClick={()=>void changeSuspension(c)}>
+         {c.status==="suspended"?<RotateCcw size={16}/>:<Ban size={16}/>}
+         {changingTenant===c.id?"Atualizando...":c.status==="suspended"?"Retirar suspensão (volta inativa)":"Suspender empresa"}
+       </button>
+       <small>Sem exclusão de dados e sem ativar mensagens automaticamente.</small>
+      </div>}
     </article>):<div className="op-empty">Nenhuma empresa cadastrada no CRM. Não foram criadas empresas fictícias.</div>}
    </section>
    <p className="adm-footer">{overview.note} Esta Central não verifica tráfego em tempo real do provedor ou cobrança real dos modelos.</p>
