@@ -4,6 +4,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin) return privateJson({error:"forbidden"},403);
   if (!request.headers.get("content-type")?.includes("application/json")) return privateJson({error:"json_required"},415);
   if (Number(request.headers.get("content-length") ?? "0") > 4096) return privateJson({error:"request_too_large"},413);
   let body: unknown;
