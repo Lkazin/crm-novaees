@@ -128,3 +128,7 @@
 .op-thread-empty{padding:40px}.op-footnote{display:flex;align-items:center;gap:8px;margin:18px 0;font-size:12px;color:#afa1c2;line-height:1.6}
 @media(max-width:800px){.op-heading{align-items:flex-start}.op-stats{grid-template-columns:1fr}.op-workspace{grid-template-columns:minmax(0,1fr)}.op-inbox{min-height:250px;max-height:420px}.op-thread{min-height:370px}.op-topbar{padding:12px 15px}.op-heading h1{font-size:24px}}
 @media(max-width:470px){.op-brand{font-size:16px}.op-back{font-size:0;padding:12px}.op-back svg{width:20px;height:20px}.op-login{margin:20px 12px;padding:24px}.op-heading{flex-direction:column}.op-thread-head{flex-direction:column}.op-tenant-bar select{min-width:0;width:100%}.op-tenant-bar{align-items:flex-start;flex-direction:column}}
+
+.crm-operator-entry{display:inline-flex;align-items:center;gap:8px;color:#f1e9fc;text-decoration:none;border:1px solid #6e4a93;background:#29203e;border-radius:9px;padding:11px 14px;font-size:13px;font-weight:700;white-space:nowrap}
+.crm-operator-entry:hover{background:#392555}
+@media(max-width:720px){.crm-operator-entry{padding:10px;font-size:0}.crm-operator-entry svg{width:20px;height:20px}}
