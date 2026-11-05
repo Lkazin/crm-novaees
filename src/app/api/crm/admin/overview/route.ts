@@ -27,7 +27,7 @@ export async function GET() {
     if(!user)return privateJson({error:"unauthorized"},401);
     // Read the staff record through the user's own JWT and platform_staff RLS.
     const staff=await supabaseRows<Staff[]>("platform_staff?select=role,enabled&user_id=eq."+encodeURIComponent(user.id)+"&limit=2",user.token);
-    if(staff.length!==1 || !staff[0].enabled || !["MASTER","ADMINISTRADOR","FINANCEIRO","SUPORTE","VISUALIZACAO"].includes(staff[0].role))
+    if(staff.length!==1 || !staff[0].enabled || !["MASTER","ADMINISTRADOR","FINANCEIRO"].includes(staff[0].role))
       return privateJson({error:"platform_access_denied"},403);
     const role=staff[0].role;
     // Support/visual roles are allowed aggregate operational status, not billing secrets.
