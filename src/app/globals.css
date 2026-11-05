@@ -199,3 +199,5 @@
 .kn-notice{display:flex;gap:8px;color:#7fe8bc;font-size:13px;line-height:1.5}
 @media(max-width:820px){.kn-layout{grid-template-columns:minmax(0,1fr)}.kn-list{max-height:330px;overflow:auto}}
 @media(max-width:450px){.kn-top{gap:5px}.kn-top>span{font-size:12px}.kn-editor{padding:16px}}
+
+@media(max-width:650px){.op-topbar{flex-wrap:wrap;min-height:76px;height:auto}.op-top-actions{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px}.op-top-actions .op-back{font-size:12px;padding:9px 11px}.op-top-actions .op-back svg{width:15px;height:15px}}
