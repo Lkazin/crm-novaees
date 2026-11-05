@@ -206,3 +206,28 @@
 .adm-company-controls small{color:#bbaecd;font-size:12px}
 .adm-company-controls .op-refresh{border-color:#8b647c;color:#ffdeea;background:#342233}
 .adm-company-controls .op-refresh:disabled{opacity:.6;cursor:wait}
+
+/* Master AI provider laboratory: real configuration only, no provider simulation. */
+.lab-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.lab-provider{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.lab-provider h2{font-size:20px;margin:0}.lab-provider p{font-size:14px;line-height:1.6;color:#e0d5ed;margin:0;flex:1}
+.lab-provider small{font-size:12px;color:#b8a8cb;line-height:1.5}.lab-provider a{color:#e5c8ff;font-size:13px;text-decoration:underline}
+.lab-provider-tag{font-size:11px;color:#e4d1ff;border-radius:16px;border:1px solid #654584;background:#312447;padding:5px 9px}
+.lab-console{display:flex;flex-direction:column;gap:17px;margin-top:18px}
+.lab-console>h2{margin:0;display:flex;align-items:center;gap:9px;font-size:22px}
+.lab-console>p{margin:0;color:#c8badd;font-size:14px;line-height:1.6}
+.lab-configuration{display:flex;flex-wrap:wrap;gap:9px}
+.lab-configuration span{display:flex;align-items:center;gap:7px;border:1px solid #58466b;border-radius:9px;padding:9px 11px;font-size:12px;color:#dacde9}
+.lab-test-form{display:flex;flex-direction:column;gap:14px;max-width:760px}
+.lab-test-form label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650}
+.lab-test-form select,.lab-test-form textarea{background:#0f0d1c;border:1px solid #645174;border-radius:10px;padding:12px;color:#f8efff;font:inherit;line-height:1.5;max-width:100%}
+.lab-test-form textarea{resize:vertical}
+.lab-test-form .op-primary{display:flex;align-items:center;justify-content:center;gap:9px;align-self:flex-start;padding:12px 17px}
+.lab-test-form .op-primary:disabled{opacity:.6;cursor:not-allowed}
+.lab-output{border:1px solid #5d4974;border-radius:12px;background:#1e1930;padding:17px;max-width:760px}
+.lab-output p{overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.6;color:#efe8fa}
+.lab-output small{color:#c4b3d6}
+.lab-media-readiness{display:flex;flex-wrap:wrap;gap:12px}
+.lab-media-readiness span{display:flex;align-items:center;gap:7px;color:#cab9dc;font-size:12px}
+@media(max-width:950px){.lab-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.lab-grid{grid-template-columns:minmax(0,1fr)}.adm-top{flex-wrap:wrap;height:auto;min-height:75px;padding:12px 0}.lab-console{padding:17px}}
