@@ -148,3 +148,26 @@
 .op-contact-chips strong{font-size:13px}.op-contact-chips small{color:#c7b9d6;font-size:12px}
 .op-contact-chips>p{color:#c0b2d0;font-size:13px}
 .op-contact-success{color:#83e5bf!important;display:flex;align-items:center;gap:8px;font-size:13px}
+
+/* Authorized NovaesWeb platform administration, read-only until audited writes exist. */
+.adm-shell{min-height:100vh;background:radial-gradient(circle at 75% 0,#29153e,transparent 45%),#0d0c17;color:#f3edff;padding:0 clamp(12px,3vw,48px) 40px}
+.adm-top{height:75px;display:flex;align-items:center;justify-content:space-between;gap:15px;border-bottom:1px solid #3c3149}
+.adm-back{display:inline-flex;align-items:center;gap:6px;color:#e6d7f8;text-decoration:none;border:1px solid #625074;border-radius:9px;padding:10px 12px;background:#20182d}
+.adm-brand{display:flex;gap:8px;align-items:center;font-weight:700}
+.adm-header{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:32px 0 22px}
+.adm-header h1{font-size:clamp(23px,3vw,32px);margin:0 0 6px}.adm-header p{margin:0;color:#c2b3d5;line-height:1.6;font-size:14px}
+.adm-notice{display:flex;align-items:center;gap:9px;padding:12px 15px;border:1px solid #5b4676;border-radius:12px;background:#201933;color:#dbc6f6;margin-bottom:16px;font-size:13px}
+.adm-placeholder{max-width:600px;margin:45px auto;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center}
+.adm-placeholder h2{margin:0}.adm-placeholder p{color:#d2c5df;line-height:1.6}
+.adm-warning{display:flex;gap:10px;align-items:center;color:#ffd8aa;padding:13px;background:#302720;border:1px solid #81643e;border-radius:10px}
+.adm-companies{margin-top:18px}.adm-section-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.adm-section-header h2{margin:0;font-size:20px}.adm-section-header>span{font-size:12px;color:#baa5d0}
+.adm-company{padding:17px 4px;border-bottom:1px solid #4d3c5b}.adm-company:last-child{border-bottom:0}
+.adm-company-head{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}
+.adm-company-head>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.adm-company-head strong{font-size:17px}.adm-company-head span{background:#392950;border-radius:7px;font-size:12px;padding:4px 8px}
+.adm-company-head small,.adm-secondary,.adm-footer{color:#bbaecd;font-size:12px;line-height:1.6}
+.adm-metrics{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}
+.adm-metrics span{border:1px solid #493758;border-radius:8px;padding:9px;color:#d8cbe4;font-size:12px}
+.adm-metrics b{color:#fff}.adm-secondary{margin:7px 0;overflow-wrap:anywhere}
+@media(max-width:620px){.adm-header{flex-direction:column;align-items:flex-start}.adm-top{gap:7px}.adm-brand{font-size:12px}.adm-back{font-size:11px}}
