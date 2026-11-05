@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeft, Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus
@@ -90,8 +91,8 @@ export default function OperatorPage() {
     }catch{setError("Falha na comunicação com o servidor. Não confirme o cadastro antes de recarregar.");}
     finally{setLoading(false);}
   }
-  const contacts=data?.contacts??[];
-  const conversations=data?.conversations??[];
+  const contacts=useMemo(()=>data?.contacts??[],[data]);
+  const conversations=useMemo(()=>data?.conversations??[],[data]);
   const messages=data?.messages??[];
   const byContact=useMemo(()=>new Map(contacts.map(c=>[c.id,c])),[contacts]);
   const filtered=useMemo(()=>conversations.filter(c=>{
@@ -102,7 +103,7 @@ export default function OperatorPage() {
   const thread=current?messages.filter(m=>m.conversation_id===current.id).sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)):[];
   return <div className="op-shell">
     <header className="op-topbar"><div className="op-brand"><span>N</span><strong>NovaesWeb <em>CRM AI</em></strong></div>
-      <div className="op-top-actions"><a href="/" className="op-back"><ArrowLeft size={16}/> Laboratório</a>
+      <div className="op-top-actions"><Link href="/" className="op-back"><ArrowLeft size={16}/> Laboratório</Link>
         {authenticated&&<button className="op-exit" onClick={()=>void signOut()}><LogOut size={17}/> Sair</button>}
       </div>
     </header>
