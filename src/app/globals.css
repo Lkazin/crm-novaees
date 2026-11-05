@@ -132,3 +132,19 @@
 .crm-operator-entry{display:inline-flex;align-items:center;gap:8px;color:#f1e9fc;text-decoration:none;border:1px solid #6e4a93;background:#29203e;border-radius:9px;padding:11px 14px;font-size:13px;font-weight:700;white-space:nowrap}
 .crm-operator-entry:hover{background:#392555}
 @media(max-width:720px){.crm-operator-entry{padding:10px;font-size:0}.crm-operator-entry svg{width:20px;height:20px}}
+
+
+.op-contacts-section{margin-bottom:18px;padding:19px}
+.op-contact-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.op-contact-heading>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.op-contact-heading h2{margin:0;font-size:18px}.op-contact-heading span{font-size:12px;color:#b7aacb}
+.op-contact-heading svg{color:#ab73df}
+.op-contact-form{margin:18px 0;padding:16px;border:1px solid #544365;border-radius:11px;background:#171326;display:flex;align-items:end;flex-wrap:wrap;gap:13px}
+.op-contact-form label{flex:1 1 190px;min-width:0;display:flex;flex-direction:column;gap:7px;font-size:13px}
+.op-contact-form input{border:1px solid #675375;background:#0e0d1b;color:white;border-radius:9px;padding:12px;width:100%}
+.op-contact-form .op-primary{padding:12px 18px}.op-contact-form p{width:100%;margin:0;color:#beafd0;font-size:12px;line-height:1.5}
+.op-contact-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:17px}
+.op-contact-chips>div{border:1px solid #55446b;border-radius:9px;background:#221a34;padding:10px 13px;display:flex;flex-direction:column;gap:5px;max-width:100%;overflow-wrap:anywhere}
+.op-contact-chips strong{font-size:13px}.op-contact-chips small{color:#c7b9d6;font-size:12px}
+.op-contact-chips>p{color:#c0b2d0;font-size:13px}
+.op-contact-success{color:#83e5bf!important;display:flex;align-items:center;gap:8px;font-size:13px}
