@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
-  Bot, Building2, ChevronDown, Clock3, LayoutDashboard, LockKeyhole, Menu,
+  Bot, Building2, ChevronDown, LayoutDashboard, LockKeyhole, Menu,
   MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, UsersRound,
   AlertCircle, CheckCircle2, Headphones, BarChart3, ClipboardCheck,
   BookOpen, Users, Megaphone, Workflow
@@ -65,7 +66,7 @@ export default function Dashboard() {
     const timer = setInterval(() => { void refresh(token); }, 15000);
     return () => clearInterval(timer);
   }, [access, refresh, token]);
-  const conversations = data?.conversations ?? [];
+  const conversations = useMemo(()=>data?.conversations??[],[data]);
   const filtered = useMemo(() => conversations.filter(c => (c.name + " " + c.number + " " + c.preview).toLowerCase().includes(search.toLowerCase())), [conversations, search]);
   const active = conversations.find(c => c.id === selected) ?? filtered[0] ?? null;
   const title = nav === "Dashboard" ? "Dashboard" : nav;
@@ -98,7 +99,7 @@ export default function Dashboard() {
           <div><h1>{title}</h1><p>Informações verificáveis, sem dados fictícios</p></div>
         </div>
         <div className="top-actions">
-          <a href="/operator" className="crm-operator-entry"><ShieldCheck size={16}/> Painel Operacional</a>
+          <Link href="/operator" className="crm-operator-entry"><ShieldCheck size={16}/> Painel Operacional</Link>
           <div className="company-button"><Building2 size={18}/> NovaesWeb <ChevronDown size={15}/></div>
           {access && <button className="crm-refresh" disabled={loading} onClick={()=>void refresh(token)}><RefreshCw size={17}/> Atualizar</button>}
         </div>
