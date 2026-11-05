@@ -1,121 +1,81 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
-  Bell, Bot, Building2, Check, CheckCircle2, ChevronDown, ChevronRight,
-  Clock3, Crown, Headphones, LayoutDashboard, Menu, MessageCircle,
-  MoreHorizontal, Paperclip, Plus, Search, Send, Settings2, Smile,
-  Sparkles, Tag, UserRound, UserRoundPlus, UsersRound, X,
-  ChartNoAxesColumnIncreasing, CircleHelp, Megaphone, Workflow, Smartphone, Mic,
-  CheckCheck
+  Bot, Building2, ChevronDown, LayoutDashboard, LockKeyhole, Menu,
+  MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, UsersRound,
+  AlertCircle, CheckCircle2, Headphones, BarChart3, ClipboardCheck,
+  BookOpen, Users, Megaphone, Workflow
 } from "lucide-react";
 
-type Chat = { id: number; name: string; initials: string; color: string; preview: string; time: string; unread: number; mode: "IA" | "Humano"; messages: { id: number; from: "contact" | "agent" | "human"; text: string; time: string }[] };
-type Filter = "Todas" | "IA" | "Humano" | "Não lidas";
-type DetailTab = "Contato" | "Histórico" | "Automação";
+type Msg = { id: string; from: "contact"; text: string; at: string };
+type Conversation = { id: string; number: string; name: string; preview: string; updatedAt: string; messages: Msg[] };
+type InboxResponse = { conversations: Conversation[]; captureEnabled: boolean; repliesEnabled: boolean };
+type StatusResponse = { instance: string | null; channel: "connected"|"disconnected"|"unknown"; captureEnabled: boolean; repliesEnabled: boolean; modelRoute: string|null; fallbackRoutes: string[]; fallbackConfigured: boolean; webhook: "configured"|"absent"|"unknown"; webhookSecretHeader: "present"|"absent"|"unknown" };
+type Tab = "Dashboard" | "Atendimentos" | "Contatos" | "Agentes de IA" | "Conexões WhatsApp" | "Relatórios" | "Configurações" | "Preparação" | "Base de Conhecimento" | "Equipe" | "Campanhas" | "Automações";
 
-const seedChats: Chat[] = [
-  { id: 1, name: "Ana Souza", initials: "AS", color: "rose", preview: "Quero saber sobre os planos...", time: "10:24", unread: 2, mode: "IA", messages: [
-    { id: 1, from: "contact", text: "Olá! Bom dia! 😊", time: "10:20" },
-    { id: 2, from: "contact", text: "Quero saber sobre os planos do CRM AI.\nVocês têm uma versão de teste?", time: "10:21" },
-    { id: 3, from: "agent", text: "Bom dia, Ana! Tudo bem? 😊\n\nTemos sim! Você pode conhecer o NovaesWeb CRM AI em uma demonstração com nossos recursos de agentes de IA, WhatsApp e relatórios.\n\nQuer que eu te envie mais informações?", time: "10:22" },
-    { id: 4, from: "contact", text: "Quero sim! Pode me enviar. 🙏", time: "10:24" },
-  ] },
-  { id: 2, name: "Carlos Mendes", initials: "CM", color: "amber", preview: "Vocês fazem integração com...", time: "10:12", unread: 1, mode: "IA", messages: [
-    { id: 1, from: "contact", text: "Vocês fazem integração com meu site?", time: "10:12" },
-  ] },
-  { id: 3, name: "Mariana Silva", initials: "MS", color: "rose", preview: "Perfeito, obrigado!", time: "09:47", unread: 0, mode: "Humano", messages: [
-    { id: 1, from: "human", text: "Posso ajudar em mais alguma coisa?", time: "09:45" },
-    { id: 2, from: "contact", text: "Perfeito, obrigado!", time: "09:47" },
-  ] },
-  { id: 4, name: "Empresa Alfa", initials: "EA", color: "blue", preview: "Pode me enviar a proposta?", time: "09:30", unread: 0, mode: "IA", messages: [
-    { id: 1, from: "contact", text: "Pode me enviar a proposta?", time: "09:30" },
-  ] },
-  { id: 5, name: "João Pereira", initials: "JP", color: "gold", preview: "Já resolvido, valeu!", time: "Ontem", unread: 0, mode: "Humano", messages: [
-    { id: 1, from: "contact", text: "Já resolvido, valeu!", time: "Ontem" },
-  ] },
-];
-
-const navItems = [
+const sections: { name: Tab; icon: typeof MessageCircle }[] = [
   { name: "Dashboard", icon: LayoutDashboard },
   { name: "Atendimentos", icon: MessageCircle },
   { name: "Contatos", icon: UsersRound },
   { name: "Agentes de IA", icon: Bot },
-  { name: "Conexões WhatsApp", icon: Smartphone },
+  { name: "Base de Conhecimento", icon: BookOpen },
+  { name: "Equipe", icon: Users },
   { name: "Campanhas", icon: Megaphone },
   { name: "Automações", icon: Workflow },
-  { name: "Relatórios", icon: ChartNoAxesColumnIncreasing },
+  { name: "Conexões WhatsApp", icon: Smartphone },
+  { name: "Relatórios", icon: BarChart3 },
   { name: "Configurações", icon: Settings2 },
+  { name: "Preparação", icon: ClipboardCheck },
 ];
-
-const stats = [
-  { title: "Conversas hoje", value: "187", trend: "+23%", icon: MessageCircle, color: "green" },
-  { title: "Atendimentos ativos", value: "12", trend: "", icon: UserRound, color: "purple" },
-  { title: "Respostas da IA", value: "169", trend: "+27%", icon: Bot, color: "purple" },
-  { title: "Tempo médio", value: "1m 24s", trend: "↓ -31%", icon: Clock3, color: "blue" },
-  { title: "Taxa de resolução", value: "92%", trend: "+6%", icon: CheckCircle2, color: "green" },
-];
-
-const starterTasks = ["Enviar planos e comparação", "Aguardar retorno (até 24h)", "Agendar demonstração"];
-
-function Avatar({ chat, size = "normal" }: { chat: Pick<Chat, "initials" | "color">; size?: "normal" | "large" }) {
-  return <span aria-hidden className={`avatar avatar--${chat.color} ${size === "large" ? "avatar--large" : ""}`}>
-    {chat.initials}<span className="avatar-online"><MessageCircle size={10} strokeWidth={2.4} /></span>
-  </span>;
-}
-
+const displayTime = (value: string) => {
+  const d = new Date(value);
+  return Number.isFinite(d.getTime()) ? d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—";
+};
 export default function Dashboard() {
-  const [nav, setNav] = useState("Dashboard");
+  const [nav, setNav] = useState<Tab>("Dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [chats, setChats] = useState<Chat[]>(seedChats);
-  const [selectedId, setSelectedId] = useState(1);
+  const [token, setToken] = useState("");
+  const [access, setAccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [data, setData] = useState<InboxResponse | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("Todas");
-  const [detailTab, setDetailTab] = useState<DetailTab>("Contato");
-  const [draft, setDraft] = useState("");
-  const [tasks, setTasks] = useState(starterTasks.map((title, id) => ({ id, title, done: false })));
-  const [newTask, setNewTask] = useState("");
-  const [addingTask, setAddingTask] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [agentEnabled, setAgentEnabled] = useState(true);
-  const [companyMenu, setCompanyMenu] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [masterView, setMasterView] = useState(false);
-
-  const chat = chats.find(c => c.id === selectedId) ?? chats[0];
-  const filtered = useMemo(() => chats.filter(c => {
-    const matchSearch = `${c.name} ${c.preview}`.toLocaleLowerCase("pt-BR").includes(search.toLocaleLowerCase("pt-BR"));
-    const matchFilter = filter === "Todas" || (filter === "Não lidas" ? c.unread > 0 : c.mode === filter);
-    return matchSearch && matchFilter;
-  }), [chats, filter, search]);
-  const unread = chats.reduce((sum, c) => sum + c.unread, 0);
-
-  function chooseChat(id: number) {
-    setSelectedId(id);
-    setChats(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c));
-    setDetailsOpen(false);
-    setNav("Atendimentos");
-  }
-  function sendMessage() {
-    if (!draft.trim()) return;
-    const text = draft.trim();
-    setChats(prev => prev.map(c => c.id === selectedId ? {
-      ...c, preview: text, time: "Agora", mode: "Humano",
-      messages: [...c.messages, { id: Date.now(), from: "human" as const, text, time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }],
-    } : c));
-    setDraft("");
-    setNotice("Mensagem adicionada à simulação. Nenhum WhatsApp foi acionado.");
-  }
-  function addTask() {
-    if (!newTask.trim()) return;
-    setTasks(t => [...t, { id: Date.now(), title: newTask.trim(), done: false }]);
-    setNewTask(""); setAddingTask(false);
-  }
-  function changeNav(name: string) {
-    setNav(name); setMenuOpen(false);
-    if (name !== "Dashboard" && name !== "Atendimentos") setNotice(`${name}: módulo previsto para uma próxima etapa. Esta é uma demonstração visual.`);
-  }
-
+  const [info, setInfo] = useState("");
+  const refresh = useCallback(async (credential: string) => {
+    if (!credential) return;
+    setLoading(true); setError("");
+    try {
+      const res = await fetch("/api/crm/inbox", { headers: { "x-crm-lab-admin-token": credential }, cache: "no-store" });
+      if (res.status === 401) { setAccess(false); setData(null); setError("Token inválido. Confira CRM_LAB_ADMIN_TOKEN no arquivo local."); return; }
+      if (!res.ok) throw new Error("A caixa de entrada está indisponível. Verifique o Redis e a instância configurada.");
+      const json = await res.json() as InboxResponse;
+      setData(json); setAccess(true);
+      try {
+        const info = await fetch("/api/crm/status", { headers: { "x-crm-lab-admin-token": credential }, cache: "no-store" });
+        setStatus(info.ok ? await info.json() as StatusResponse : null);
+      } catch { setStatus(null); }
+    } catch (e) { setError(e instanceof Error ? e.message : "Falha de conexão"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => {
+    if (!access) return;
+    const timer = setInterval(() => { void refresh(token); }, 15000);
+    return () => clearInterval(timer);
+  }, [access, refresh, token]);
+  const conversations = useMemo(()=>data?.conversations??[],[data]);
+  const filtered = useMemo(() => conversations.filter(c => (c.name + " " + c.number + " " + c.preview).toLowerCase().includes(search.toLowerCase())), [conversations, search]);
+  const active = conversations.find(c => c.id === selected) ?? filtered[0] ?? null;
+  const title = nav === "Dashboard" ? "Dashboard" : nav;
+  const receivedToday = conversations.reduce((total, chat) => total + chat.messages.filter(m => new Date(m.at).toDateString() === new Date().toDateString()).length, 0);
+  const cards = [
+    { label: "Conversas registradas", value: conversations.length, icon: MessageCircle },
+    { label: "Contatos identificados", value: new Set(conversations.map(c => c.number)).size, icon: UsersRound },
+    { label: "Mensagens recebidas", value: conversations.reduce((n,c)=>n+c.messages.length,0), icon: Bot },
+  ];
   return <div className="app-shell">
     {menuOpen && <button className="mobile-backdrop" aria-label="Fechar menu" onClick={() => setMenuOpen(false)} />}
     <aside className={`sidebar ${menuOpen ? "sidebar--open" : ""}`} aria-label="Navegação principal">
@@ -123,101 +83,127 @@ export default function Dashboard() {
         <span className="brand-mark">N</span><div><strong>NovaesWeb<span className="brand-star">✦</span></strong><span className="brand-pill">CRM AI</span></div>
       </div>
       <nav className="nav-list">
-        {navItems.map(({ name, icon: Icon }) => <button key={name} className={`nav-item ${nav === name ? "active" : ""}`} onClick={() => changeNav(name)} aria-current={nav === name ? "page" : undefined}>
-          <Icon size={20} strokeWidth={1.9}/><span>{name}</span>{name === "Atendimentos" && unread > 0 && <span className="nav-count">{unread}</span>}
+        {sections.map(({name,icon:Icon}) => <button key={name} className={`nav-item ${nav===name?"active":""}`} onClick={()=>{setNav(name);setMenuOpen(false);setInfo("");}}>
+          <Icon size={20}/><span>{name}</span>
         </button>)}
       </nav>
       <div className="sidebar-footer">
-        <span className="footer-label">Painel Master</span>
-        <button className="master-card" onClick={() => {setMasterView(!masterView);setNotice("Painel Master: acesso demonstrativo, sem dados reais.");}}>
-          <Crown size={24} className="master-crown"/>
-          <span><strong>Painel Master</strong><small>Gestão da plataforma,<br/> clientes e consumo.</small></span>
-          <ChevronRight size={18}/>
-        </button>
-        <div className="sidebar-glow" aria-hidden />
+        <span className="footer-label">NovaesWeb CRM AI</span>
+        <div className="crm-side-status"><ShieldCheck size={17}/> Acesso privado · mensagens sem envio automático</div>
       </div>
     </aside>
-
     <main className="main-area">
       <header className="topbar">
         <div className="heading-group">
-          <button className="icon-button menu-button" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu size={22}/></button>
-          <div><h1>{masterView ? "Painel Master" : nav === "Dashboard" || nav === "Atendimentos" ? "Dashboard" : nav}</h1><p>Visão geral do seu CRM e agentes de atendimento</p></div>
+          <button className="icon-button menu-button" onClick={()=>setMenuOpen(true)} aria-label="Abrir menu"><Menu size={22}/></button>
+          <div><h1>{title}</h1><p>Informações verificáveis, sem dados fictícios</p></div>
         </div>
         <div className="top-actions">
-          <div className="company-control">
-            <button className="company-button" onClick={() => setCompanyMenu(v => !v)} aria-expanded={companyMenu}><Building2 size={20}/><span>Minha Empresa</span><ChevronDown size={17}/></button>
-            {companyMenu && <div className="company-popover"><strong>Ambiente de demonstração</strong><p>Somente Minha Empresa está disponível.</p><button onClick={() => setCompanyMenu(false)}>Entendi</button></div>}
-          </div>
-          <button className="notification-button" onClick={() => setNotice("Nenhuma notificação real: dados demonstrativos.")} aria-label="Notificações"><Bell size={23}/><span className="notification-dot"/></button>
-          <div className="top-separator"/>
-          <div className="user-badge"><span className="user-avatar">LN</span><span className="user-identity"><strong>Administrador</strong><small>NovaesWeb</small></span><ChevronDown size={18}/></div>
+          <Link href="/operator" className="crm-operator-entry"><ShieldCheck size={16}/> Painel Operacional</Link>
+          <div className="company-button"><Building2 size={18}/> NovaesWeb <ChevronDown size={15}/></div>
+          {access && <button className="crm-refresh" disabled={loading} onClick={()=>void refresh(token)}><RefreshCw size={17}/> Atualizar</button>}
         </div>
       </header>
-
-      <div className="demo-strip"><Sparkles size={14}/><span>Prévia visual do produto — dados fictícios e interações locais, sem WhatsApp ou IA conectados.</span><button onClick={() => setNotice("")} className="demo-help" title="Sobre a demonstração"><CircleHelp size={15}/></button></div>
-
-      <section className="stats-grid" aria-label="Indicadores demonstrativos">
-        {stats.map(({ title, value, trend, icon: Icon, color }) => <div className="stat-card" key={title}>
-          <div className={`stat-icon stat-icon--${color}`}><Icon size={27} strokeWidth={2.2}/></div>
-          <div className="stat-content"><span className="stat-title">{title}</span><div className="stat-value-row"><strong>{value}</strong>{trend && <span className="trend">{trend}</span>}</div></div>
-        </div>)}
-      </section>
-
-      <section className="workspace" aria-label="Área de atendimento">
-        <div className="inbox-panel panel">
-          <div className="panel-titlebar"><h2>Caixa de Entrada</h2><span className="count-badge">{unread}</span><button aria-label="Informações da caixa de entrada" className="title-action" onClick={() => setNotice("Caixa de entrada demonstrativa com cinco conversas fictícias.")}><MoreHorizontal size={22}/></button></div>
-          <label className="searchbox"><Search size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar conversa, nome ou número..." aria-label="Buscar conversas"/></label>
-          <div className="filters" aria-label="Filtrar conversas">{(["Todas", "IA", "Humano", "Não lidas"] as const).map(f => <button key={f} className={filter === f ? "selected" : ""} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f}</button>)}</div>
-          <div className="chat-list" role="list">
-            {filtered.length ? filtered.map(c => <button role="listitem" key={c.id} className={`chat-item ${selectedId === c.id ? "chat-item--active" : ""}`} onClick={() => chooseChat(c.id)}>
-              <Avatar chat={c}/><span className="chat-item-info"><strong>{c.name}</strong><span>{c.preview}</span></span><span className="chat-item-meta"><time>{c.time}</time>{c.unread > 0 && <b>{c.unread}</b>}</span>
-            </button>) : <div className="empty-list">Nenhuma conversa encontrada.</div>}
-          </div>
+      {!access ? <section className="crm-lock-panel">
+        <LockKeyhole size={34}/>
+        <h2>Acessar atendimentos reais</h2>
+        <p>Informe o token administrativo do CRM para consultar conversas. A chave fica apenas na memória desta aba e não é salva no navegador.</p>
+        <form onSubmit={e=>{e.preventDefault(); void refresh(token);}}>
+          <input type="password" aria-label="Token administrativo do CRM" autoComplete="off" placeholder="CRM_LAB_ADMIN_TOKEN" value={token} onChange={e=>setToken(e.target.value)} required/>
+          <button disabled={loading || !token.trim()} type="submit">{loading?"Conectando...":"Entrar no CRM"}</button>
+        </form>
+        {error && <p role="alert" className="crm-error"><AlertCircle size={16}/>{error}</p>}
+        <p className="crm-note">O token está no arquivo .env.ai-lab do computador. Não compartilhe em mensagens ou capturas de tela.</p>
+      </section> : <>
+        <div className="crm-status-line">
+          <span><CheckCircle2 size={16}/> Caixa de entrada autenticada</span>
+          <span>{data?.captureEnabled ? "Recebimento: habilitado" : "Recebimento: não habilitado"}</span>
+          <span>{data?.repliesEnabled ? "Respostas automáticas: ativadas" : "Respostas automáticas: desligadas"}</span>
         </div>
-
-        <div className="conversation-panel panel">
-          <div className="conversation-header">
-            <Avatar chat={chat} size="large"/>
-            <div className="conversation-contact"><strong>{chat.name}</strong><small><span className="online-dot"/> Atendimento de demonstração</small></div>
-            <div className="conversation-actions">
-              <button aria-label="Etiquetas" onClick={() => {setDetailTab("Contato");setDetailsOpen(true)}}><Tag size={19}/></button>
-              <button aria-label="Assumir atendimento humano" onClick={() => {setChats(prev => prev.map(c => c.id === chat.id ? {...c, mode: "Humano"} : c));setNotice("Atendimento humano ativado nesta conversa simulada.");}}><UserRoundPlus size={20}/></button>
-              <button aria-label="Mais opções" onClick={() => setDetailsOpen(v => !v)}><MoreHorizontal size={21}/></button>
-            </div>
-          </div>
-          <div className="messages" aria-live="polite">
-            {chat.messages.map(message => <div className={`bubble-row bubble-row--${message.from}`} key={message.id}>
-              <div className={`message-bubble message-bubble--${message.from}`}>
-                {message.from === "agent" && <span className="agent-label"><Bot size={17}/> Atendimento IA</span>}
-                {message.from === "human" && <span className="agent-label"><Headphones size={15}/> Atendimento humano</span>}
-                <p>{message.text}</p><span className="message-time">{message.time}{message.from !== "contact" && <CheckCheck size={13}/>}</span>
+        {error && <p role="alert" className="crm-error">{error}</p>}
+        {(nav==="Dashboard" || nav==="Atendimentos" || nav==="Contatos") ? <>
+          {nav==="Dashboard" && <section className="stats-grid crm-live-stats">
+            {cards.map(({label,value,icon:Icon}) => <div className="stat-card" key={label}><div className="stat-icon stat-icon--purple"><Icon size={25}/></div><div className="stat-content"><span className="stat-title">{label}</span><div className="stat-value-row"><strong>{value}</strong></div></div></div>)}
+          </section>}
+          <section className="crm-live-grid" aria-label="Caixa de Entrada">
+            <div className="panel inbox-panel">
+              <div className="panel-titlebar"><h2>{nav==="Contatos"?"Contatos":"Caixa de Entrada"}</h2><span className="count-badge">{conversations.length}</span></div>
+              <label className="searchbox"><Search size={18}/><input aria-label="Buscar conversas" placeholder="Buscar contato ou número" value={search} onChange={e=>setSearch(e.target.value)}/></label>
+              <div className="crm-chat-items">
+                {filtered.length===0 ? <div className="crm-empty">Nenhuma conversa real registrada. O CRM não exibirá clientes fictícios.</div> :
+                filtered.map(c=><button key={c.id} className={`crm-chat-button ${active?.id===c.id?"crm-chat-button--active":""}`} onClick={()=>setSelected(c.id)}>
+                  <span className="crm-contact-avatar">{c.number.slice(-2)}</span>
+                  <span><strong>{c.name}</strong><small>{c.preview}</small></span><time>{displayTime(c.updatedAt)}</time>
+                </button>)}
               </div>
-            </div>)}
+            </div>
+            <div className="panel crm-conversation">
+              {active ? <>
+                <div className="crm-conversation-top"><div><strong>{active.number}</strong><small>WhatsApp · histórico recebido</small></div><Headphones size={20}/></div>
+                <div className="crm-conversation-messages">
+                  {active.messages.map((m,i)=><div key={m.id+"-"+i} className="crm-inbound-bubble"><p>{m.text}</p><small>{displayTime(m.at)}</small></div>)}
+                </div>
+                <div className="crm-readonly"><LockKeyhole size={16}/> Envio humano e transferência serão liberados após validação da segurança.</div>
+              </> : <div className="crm-conversation-placeholder"><MessageCircle size={35}/><strong>Selecione uma conversa</strong><span>Aqui aparecem somente mensagens recebidas e registradas de verdade.</span></div>}
+            </div>
+          </section>
+        </> : nav==="Relatórios" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><BarChart3 size={26}/><h2>Relatório de mensagens registradas</h2><p>Dados reais da caixa de entrada nos últimos sete dias, limitados aos registros disponíveis no Redis.</p>
+            <dl><dt>Conversas registradas</dt><dd>{conversations.length}</dd><dt>Mensagens recebidas hoje</dt><dd>{receivedToday}</dd><dt>Mensagens no histórico atual</dt><dd>{conversations.reduce((n,c)=>n+c.messages.length,0)}</dd></dl>
           </div>
-          <form className="composer" onSubmit={e => {e.preventDefault();sendMessage()}}>
-            <button type="button" aria-label="Adicionar emoji demonstrativo" title="Adicionar emoji" onClick={() => setDraft(t => t + " 😊")}><Smile size={21}/></button>
-            <button type="button" aria-label="Anexo indisponível" title="Anexos indisponíveis na demonstração" onClick={() => setNotice("Anexos estarão disponíveis após integração com o backend.")}><Paperclip size={21}/></button>
-            <input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Digite uma mensagem..." aria-label="Mensagem"/>
-            <button type="button" aria-label="Áudio indisponível" title="Áudio indisponível na demonstração" onClick={() => setNotice("Gravação de áudio ainda não está implementada.")}><Mic size={21}/></button>
-            <button className="send-button" type="submit" aria-label="Adicionar mensagem à simulação" disabled={!draft.trim()}><Send size={20}/></button>
-          </form>
-        </div>
-
-        <div className={`details-panel ${detailsOpen ? "details-panel--open" : ""}`}>
-          <div className="detail-tabs" role="tablist" aria-label="Detalhes da conversa">
-            {(["Contato", "Histórico", "Automação"] as const).map(t => <button role="tab" aria-selected={detailTab === t} className={detailTab === t ? "active" : ""} key={t} onClick={() => setDetailTab(t)}>{t}</button>)}
+          <div className="crm-info-card"><AlertCircle size={25}/><h2>Limites do relatório</h2><p>Respostas da IA, tempo médio e taxa de resolução ainda não possuem auditoria confiável. Não exibimos números estimados como fatos.</p></div>
+        </section> : nav==="Conexões WhatsApp" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Smartphone size={26}/><h2>Evolution API</h2><dl><dt>Instância configurada</dt><dd>{status?.instance ?? "Não informada"}</dd><dt>Estado consultado</dt><dd>{status?.channel === "connected" ? "Conectada" : status?.channel === "disconnected" ? "Desconectada" : "Não confirmado"}</dd><dt>Recebimento de mensagens</dt><dd>{status?.captureEnabled ? "Autorizado no servidor" : "Desligado"}</dd></dl></div>
+          <div className="crm-info-card"><ShieldCheck size={25}/><h2>Proteção das instâncias</h2><p>Esta página consulta apenas a instância configurada no CRM. Não desconecta ou altera outros WhatsApps. Webhook real precisa ser validado no Docker.</p></div>
+        </section> : nav==="Agentes de IA" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Bot size={26}/><h2>Roteamento de inteligência artificial</h2><dl><dt>Rota principal</dt><dd>{status?.modelRoute ?? "Não configurada"}</dd><dt>Rotas alternativas autorizadas</dt><dd>{status?.fallbackRoutes?.length ? status.fallbackRoutes.join(", ") : "Nenhuma ainda"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ligadas" : "Desligadas"}</dd></dl></div>
+          <div className="crm-info-card"><ShieldCheck size={25}/><h2>Alternância de IA</h2><p>O servidor já aceita rotas alternativas explicitamente configuradas. Cada provedor extra precisará ser conectado e autorizado no OmniRoute. Nenhum provedor pago será ativado por esta tela.</p></div>
+        </section> : nav==="Configurações" ? <section className="crm-details-grid">
+          <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança operacional</h2><dl><dt>Acesso à caixa de entrada</dt><dd>Token administrativo local</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
+          <div className="crm-info-card"><LockKeyhole size={25}/><h2>Configuração protegida</h2><p>Credenciais, parâmetros de privacidade e ativação de canais são gerenciados no servidor. Ainda falta autenticação de operadores por usuário para uso público.</p></div>
+        </section> : (nav==="Base de Conhecimento" || nav==="Equipe" || nav==="Campanhas" || nav==="Automações") ? <section className="crm-details-grid" aria-label={nav}>
+          <div className="crm-info-card">
+            {nav==="Base de Conhecimento" ? <BookOpen size={26}/> : nav==="Equipe" ? <Users size={26}/> : nav==="Campanhas" ? <Megaphone size={26}/> : <Workflow size={26}/>}
+            <h2>{nav}</h2>
+            <p>{nav==="Base de Conhecimento" ? "Estrutura de artigos e respostas aprovadas no banco de dados. Somente material publicado pela própria empresa deverá alimentar a IA."
+              : nav==="Equipe" ? "A estrutura de membros e papéis por empresa já existe no Supabase. Convites e permissões administrativas dependem da autenticação individual."
+              : nav==="Campanhas" ? "Estrutura de rascunhos e consentimentos preparada. Não há campanhas ou disparos habilitados; qualquer envio exige consentimento e revisão."
+              : "Estrutura para regras e gatilhos preparada. A execução de automações está intencionalmente bloqueada até existir motor de regras auditável."}</p>
+            <div className="crm-module-state"><LockKeyhole size={16}/> Integração de dados deste módulo pendente · nenhuma ação simulada</div>
+            <button className="crm-module-disabled" type="button" disabled aria-disabled="true">
+              {nav==="Base de Conhecimento" ? "Novo artigo" : nav==="Equipe" ? "Convidar membro" : nav==="Campanhas" ? "Criar campanha" : "Criar automação"}
+            </button>
           </div>
-          {detailTab === "Contato" ? <div className="detail-card contact-card">
-            <div className="contact-top"><Avatar chat={chat} size="large"/><div><strong>{chat.name}</strong><span><MessageCircle size={13}/> Número de demonstração</span></div><button onClick={() => setNotice("Edição de contato será conectada ao Supabase numa próxima etapa.")}><Settings2 size={13}/>Editar</button></div>
-            <dl><dt>Empresa</dt><dd>—</dd><dt>Origem</dt><dd>WhatsApp</dd><dt>Tag(s)</dt><dd className="tags"><span>Lead</span><span>Interesse CRM</span><button aria-label="Adicionar etiqueta demonstrativa" onClick={() => setNotice("Cadastro de etiquetas será habilitado após a integração.")}><Plus size={18}/></button></dd></dl>
-          </div> : <div className="detail-card alternate-card">{detailTab === "Histórico" ? <><Clock3 size={22}/><strong>Histórico da conversa</strong><p>{chat.messages.length} mensagens nesta demonstração. Os eventos reais serão registrados após a integração.</p></> : <><Workflow size={22}/><strong>Automação</strong><p>Configure regras, gatilhos e transferência para humanos quando o backend estiver disponível.</p></>}</div>}
-          <div className="detail-card agent-card"><h3>Agente de IA</h3><div className="agent-main"><div className="agent-avatar"><Bot size={27}/></div><div><strong>Agente Comercial</strong><p>Especialista em apresentação, planos e qualificação de leads.</p></div><button aria-label={agentEnabled ? "Pausar agente de teste" : "Ativar agente de teste"} aria-pressed={agentEnabled} className={`agent-status ${!agentEnabled ? "is-off" : ""}`} onClick={() => setAgentEnabled(v => !v)}>{agentEnabled ? "Ativo" : "Pausado"}</button></div></div>
-          <div className="detail-card tasks-card"><h3>Próximas ações</h3><div className="task-list">{tasks.map(t => <label key={t.id} className={t.done ? "task-done" : ""}><input type="checkbox" checked={t.done} onChange={() => setTasks(prev => prev.map(x => x.id === t.id ? {...x, done: !x.done} : x))}/><span>{t.title}</span></label>)}</div>{addingTask ? <form className="add-task-form" onSubmit={e => {e.preventDefault();addTask()}}><input aria-label="Nova tarefa" autoFocus value={newTask} placeholder="Nova tarefa..." onChange={e => setNewTask(e.target.value)}/><button type="submit" aria-label="Salvar tarefa"><Check size={17}/></button></form> : <button className="add-task" onClick={() => setAddingTask(true)}><Plus size={19}/> Adicionar tarefa</button>}</div>
-        </div>
-      </section>
+          <div className="crm-info-card"><ShieldCheck size={26}/><h2>Requisitos de liberação</h2>
+            <p>{nav==="Base de Conhecimento" ? "Conectar sessão e empresa ao Supabase; validar autor, publicação, histórico de versões e instruções seguras para a IA."
+              : nav==="Equipe" ? "Adicionar login por operador, convite seguro, revogação de sessões, papéis e auditoria."
+              : nav==="Campanhas" ? "Implementar gestão de opt-in/opt-out, revisão humana, regras do WhatsApp, fila limitada e histórico de entregas."
+              : "Implementar validador de gatilhos, simulação segura, limites por empresa, logs e botão de desligamento."}</p>
+            <p>Enquanto não houver backend testado, os dados não são inventados e nenhuma operação é executada pelo navegador.</p>
+          </div>
+        </section> : nav==="Preparação" ? <section className="crm-details-grid" aria-label="Preparação operacional">
+          <div className="crm-info-card"><ClipboardCheck size={26}/><h2>Verificação antes de atender clientes</h2>
+            <p>O estado abaixo é consultado no servidor. Não substitui os testes ponta a ponta no seu Docker.</p>
+            <dl>
+              <dt>Instância WhatsApp</dt><dd>{status?.channel==="connected" ? "Conectada" : status?.channel==="disconnected" ? "Desconectada" : "Não confirmado"}</dd>
+              <dt>Webhook configurado</dt><dd>{status?.webhook==="configured"?"Encontrado":status?.webhook==="absent"?"Não encontrado":"Não confirmado"}</dd>
+              <dt>Cabeçalho de autenticação</dt><dd>{status?.webhookSecretHeader==="present"?"Configurado (valor não verificado)":status?.webhookSecretHeader==="absent"?"Não encontrado":"Não confirmado"}</dd>
+              <dt>Captura da caixa de entrada</dt><dd>{status?.captureEnabled?"Habilitada no servidor":"Desligada"}</dd>
+              <dt>Rotas extras de IA</dt><dd>{status?.fallbackConfigured?"Cadastradas (não testadas)":"Não cadastradas"}</dd>
+              <dt>Envio automático</dt><dd>{status?.repliesEnabled?"Ativo — conferir segurança":"Desligado"}</dd>
+            </dl>
+          </div>
+          <div className="crm-info-card"><ShieldCheck size={26}/><h2>Bloqueios que faltam resolver</h2>
+            <p><strong>Atendimento humano:</strong> precisa de atribuição e tomada de conversa funcionando no backend.</p>
+            <p><strong>Histórico durável:</strong> a caixa atual usa Redis temporário; as tabelas do Supabase ainda não recebem mensagens reais.</p>
+            <p><strong>Controle por empresa:</strong> o login por operador ainda não substituiu o token de laboratório.</p>
+            <p><strong>Webhook:</strong> existência do endereço e do cabeçalho não prova que o segredo ou a entrega funcionem. É necessário teste real controlado.</p>
+            <p><strong>IA reserva:</strong> configurar modelos permitidos no OmniRoute e simular limite antes de usar clientes reais.</p>
+          </div>
+        </section> : null}
+        <div className="crm-bottom-actions"><button onClick={()=>{setAccess(false);setToken("");setData(null);setStatus(null);setSelected("");}}>Sair do painel</button></div>
+      </>}
+      {info && <div role="status">{info}</div>}
     </main>
-    {notice && <div className="toast" role="status"><CircleHelp size={17}/><span>{notice}</span><button aria-label="Fechar aviso" onClick={() => setNotice("")}><X size={16}/></button></div>}
-    {detailsOpen && <button aria-label="Fechar detalhes" className="details-backdrop" onClick={() => setDetailsOpen(false)}/>}
   </div>;
 }

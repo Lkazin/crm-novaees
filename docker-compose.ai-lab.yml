@@ -1,0 +1,31 @@
+# Dedicated local lab. Does not stop or modify existing Evolution/FreeLLMAPI containers.
+services:
+  crm-ai-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai-lab
+    env_file:
+      - .env.ai-lab
+    environment:
+      CRM_REDIS_URL: redis://crm-ai-redis:6379
+    ports:
+      - "127.0.0.1:3040:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      crm-ai-redis:
+        condition: service_healthy
+    restart: unless-stopped
+  crm-ai-redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server","--appendonly","yes"]
+    volumes:
+      - crm_ai_redis_data:/data
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  crm_ai_redis_data:

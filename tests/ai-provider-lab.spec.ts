@@ -1,0 +1,32 @@
+import { test, expect } from "@playwright/test";
+
+test("Master AI provider catalog is visible with an honest locked lab",async({page})=>{
+ await page.goto("/admin/ai-providers");
+ await expect(page.getByRole("heading",{name:"Central de Provedores de IA"})).toBeVisible();
+ await expect(page.getByText("Laboratório protegido")).toBeVisible();
+ await expect(page.getByText("Provedores abaixo são opções pesquisadas")).toBeVisible();
+ await expect(page.getByRole("button",{name:"Testar resposta sem WhatsApp"})).toHaveCount(0);
+});
+test("Master AI provider APIs reject unauthenticated access",async({request})=>{
+ const res=await request.get("/api/crm/admin/ai-lab");
+ expect(res.status()).toBe(401);
+ expect(res.headers()["cache-control"]).toContain("no-store");
+ const testResponse=await request.post("/api/crm/admin/ai-lab/test",{
+  headers:{"Origin":"http://127.0.0.1:3000"},
+  data:{model:"openrouter/free",question:"Qual horário da loja?"}
+ });
+ expect([401,403]).toContain(testResponse.status());
+});
+test("Master lab text test rejects cross-site requests",async({request})=>{
+ const res=await request.post("/api/crm/admin/ai-lab/test",{
+  headers:{"Origin":"https://malicious.example"},data:{model:"openrouter/free",question:"Teste"}
+ });
+ expect(res.status()).toBe(403);
+});
+for(const width of [360,390,768,1366]){
+ test(`AI providers Master view ${width} has no horizontal overflow`,async({page})=>{
+  await page.setViewportSize({width,height:850});await page.goto("/admin/ai-providers");
+  await expect(page.getByRole("heading",{name:"Central de Provedores de IA"})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+1)).toBe(false);
+ });
+}
