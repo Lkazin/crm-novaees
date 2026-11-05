@@ -22,3 +22,18 @@ for(const width of [360,390,768,1366]){
   expect(over).toBe(false);
  });
 }
+
+test("Company registration rejects requests without operator session",async({request})=>{
+ const response=await request.post("/api/crm/admin/companies",{
+  headers:{"Origin":"http://localhost:3040"},
+  data:{name:"Empresa não deve ser criada"}
+ });
+ expect([401,403]).toContain(response.status());
+});
+test("Company registration rejects invalid name and cannot create data",async({request})=>{
+ const response=await request.post("/api/crm/admin/companies",{
+  headers:{"Origin":"http://localhost:3040"},
+  data:{name:""}
+ });
+ expect([400,403]).toContain(response.status());
+});
