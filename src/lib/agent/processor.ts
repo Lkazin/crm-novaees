@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import type { AgentConfig } from "./config";
 import { parseIncoming } from "./parse";
+import type { Incoming } from "./parse";
 import { generateAnswer } from "./ai";
 import { sendText } from "./evolution";
 
@@ -9,7 +10,7 @@ export type ProcessResult = { status: "ignored" | "duplicate" | "disabled" | "se
 export async function processWebhook(
   payload: unknown,
   cfg: AgentConfig,
-  deps: { redis?: Redis; generate?: typeof generateAnswer; send?: typeof sendText } = {},
+  deps: { redis?: Redis; generate?: typeof generateAnswer; send?: typeof sendText; maySend?: (incoming: Incoming) => Promise<boolean> } = {},
 ): Promise<ProcessResult> {
   const incoming = parseIncoming(payload);
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
@@ -27,7 +28,10 @@ export async function processWebhook(
     const locked = await redis.set(lockKey, "locked", "EX", 90, "NX");
     if (locked !== "OK") return { status: "duplicate" };
     try {
+      if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       const text = await (deps.generate ?? generateAnswer)(incoming.text, cfg);
+      // Recheck after AI generation. A human could claim the conversation while the model runs.
+      if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       await (deps.send ?? sendText)(incoming.number, text, cfg);
       // Mark after a successful send. If Evolution times out after sending,
       // a retry could duplicate. Production needs an outbox with reconciliation.
