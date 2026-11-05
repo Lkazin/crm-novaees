@@ -98,6 +98,7 @@ export default function Dashboard() {
           <div><h1>{title}</h1><p>Informações verificáveis, sem dados fictícios</p></div>
         </div>
         <div className="top-actions">
+          <a href="/operator" className="crm-operator-entry"><ShieldCheck size={16}/> Painel Operacional</a>
           <div className="company-button"><Building2 size={18}/> NovaesWeb <ChevronDown size={15}/></div>
           {access && <button className="crm-refresh" disabled={loading} onClick={()=>void refresh(token)}><RefreshCw size={17}/> Atualizar</button>}
         </div>
