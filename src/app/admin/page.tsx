@@ -1,7 +1,7 @@
 "use client";
 import { useEffect,useState } from "react";
 import Link from "next/link";
-import {BarChart3,Building2,ChevronLeft,LockKeyhole,RefreshCw,ShieldCheck,Wifi,AlertCircle,PlusCircle,CheckCircle2,Ban,RotateCcw} from "lucide-react";
+import {BarChart3,Building2,ChevronLeft,LockKeyhole,RefreshCw,ShieldCheck,Wifi,BrainCircuit,AlertCircle,PlusCircle,CheckCircle2,Ban,RotateCcw} from "lucide-react";
 
 type Usage={requests:number;tokens:number;costUsd:number;errors:number};
 type Limit={monthly_model_requests:number|null;monthly_token_limit:number|null;monthly_budget_usd:number|null;hard_stop_on_limit:boolean};
@@ -72,7 +72,7 @@ export default function AdminCRM() {
  }
  useEffect(()=>{void refresh();},[]);
  return <main className="adm-shell">
-  <div className="adm-top"><Link href="/operator" className="adm-back"><ChevronLeft size={17}/> Portal Operacional</Link><div className="adm-brand"><ShieldCheck size={22}/> NovaesWeb CRM AI · Master</div></div>
+  <div className="adm-top"><Link href="/admin/ai-providers" className="adm-back"><BrainCircuit size={17}/> Central de IAs</Link><Link href="/operator" className="adm-back"><ChevronLeft size={17}/> Portal Operacional</Link><div className="adm-brand"><ShieldCheck size={22}/> NovaesWeb CRM AI · Master</div></div>
   <header className="adm-header"><div><h1>Central Administrativa</h1><p>Empresas, canais e consumo efetivamente registrados no Supabase.</p></div>
    <button className="op-refresh" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={16}/> Atualizar</button></header>
   {loading?<div className="op-card adm-placeholder"><RefreshCw size={28}/><strong>Consultando dados reais…</strong></div>
