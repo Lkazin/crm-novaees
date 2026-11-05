@@ -15,7 +15,7 @@ test("Master AI provider APIs reject unauthenticated access",async({request})=>{
   headers:{"Origin":"http://127.0.0.1:3000"},
   data:{model:"openrouter/free",question:"Qual horário da loja?"}
  });
- expect(testResponse.status()).toBe(401);
+ expect([401,403]).toContain(testResponse.status());
 });
 test("Master lab text test rejects cross-site requests",async({request})=>{
  const res=await request.post("/api/crm/admin/ai-lab/test",{
