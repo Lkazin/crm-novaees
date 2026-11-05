@@ -12,7 +12,7 @@ test("Master AI provider APIs reject unauthenticated access",async({request})=>{
  expect(res.status()).toBe(401);
  expect(res.headers()["cache-control"]).toContain("no-store");
  const testResponse=await request.post("/api/crm/admin/ai-lab/test",{
-  headers:{"Origin":"http://localhost:3040"},
+  headers:{"Origin":"http://127.0.0.1:3000"},
   data:{model:"openrouter/free",question:"Qual horário da loja?"}
  });
  expect(testResponse.status()).toBe(401);
