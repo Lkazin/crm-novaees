@@ -5,6 +5,7 @@ import { processWebhook } from "@/lib/agent/processor";
 import { parseIncoming } from "@/lib/agent/parse";
 import { captureIncoming } from "@/lib/crm/inbox";
 import { persistIncomingInSupabase } from "@/lib/crm/supabase-ingest";
+import { outboundAllowed } from "@/lib/crm/outbound-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
       await persistIncomingInSupabase(incoming);
       await captureIncoming(incoming);
     }
-    const result = await processWebhook(payload, cfg);
+    const result = await processWebhook(payload, cfg, { maySend: outboundAllowed });
     return json(result);
   } catch (err) {
     // No payload, API keys or personal data in application logs.
