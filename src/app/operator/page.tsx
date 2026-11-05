@@ -103,7 +103,7 @@ export default function OperatorPage() {
   const thread=current?messages.filter(m=>m.conversation_id===current.id).sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)):[];
   return <div className="op-shell">
     <header className="op-topbar"><div className="op-brand"><span>N</span><strong>NovaesWeb <em>CRM AI</em></strong></div>
-      <div className="op-top-actions"><Link href="/" className="op-back"><ArrowLeft size={16}/> Laboratório</Link>
+      <div className="op-top-actions"><Link href="/admin" className="op-back">Central Master</Link><Link href="/" className="op-back"><ArrowLeft size={16}/> Laboratório</Link>
         {authenticated&&<button className="op-exit" onClick={()=>void signOut()}><LogOut size={17}/> Sair</button>}
       </div>
     </header>
