@@ -37,3 +37,16 @@ test("Company registration rejects invalid name and cannot create data",async({r
  });
  expect([400,403]).toContain(response.status());
 });
+
+test("suspension refuses unknown callers and missing confirmation",async({request})=>{
+ const unauth=await request.post("/api/crm/admin/suspension",{
+  headers:{Origin:"http://localhost:3040"},
+  data:{tenantId:"123e4567-e89b-12d3-a456-426614174000",suspend:true,confirm:true}
+ });
+ expect([401,403]).toContain(unauth.status());
+ const invalid=await request.post("/api/crm/admin/suspension",{
+  headers:{Origin:"http://localhost:3040"},
+  data:{tenantId:"123e4567-e89b-12d3-a456-426614174000",suspend:true}
+ });
+ expect([400,403]).toContain(invalid.status());
+});
