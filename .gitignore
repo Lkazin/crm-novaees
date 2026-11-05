@@ -38,3 +38,6 @@ Thumbs.db
 screenshots/
 test-results/
 playwright-report/
+
+backups/
+
