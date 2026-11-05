@@ -201,3 +201,8 @@
 @media(max-width:450px){.kn-top{gap:5px}.kn-top>span{font-size:12px}.kn-editor{padding:16px}}
 
 @media(max-width:650px){.op-topbar{flex-wrap:wrap;min-height:76px;height:auto}.op-top-actions{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px}.op-top-actions .op-back{font-size:12px;padding:9px 11px}.op-top-actions .op-back svg{width:15px;height:15px}}
+
+.adm-company-controls{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:12px 0 3px}
+.adm-company-controls small{color:#bbaecd;font-size:12px}
+.adm-company-controls .op-refresh{border-color:#8b647c;color:#ffdeea;background:#342233}
+.adm-company-controls .op-refresh:disabled{opacity:.6;cursor:wait}
