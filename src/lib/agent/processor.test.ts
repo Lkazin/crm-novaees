@@ -42,3 +42,27 @@ test("failed send releases lock and allows retry",async()=>{
  assert.equal((await processWebhook(payload,cfg,deps)).status,"sent");
  assert.equal(calls,2);
 });
+
+test("human takeover blocks sending before calling AI",async()=>{
+ const db=fakeRedis();let generated=0;let sent=0;
+ const result=await processWebhook(payload,cfg,{
+  redis:db as never,maySend:async()=>false,
+  generate:async()=>{generated++;return "Não deveria responder";},
+  send:async()=>{sent++;}
+ });
+ assert.equal(result.status,"disabled");
+ assert.equal(result.reason,"tenant_or_conversation_blocked");
+ assert.equal(generated,0);
+ assert.equal(sent,0);
+});
+test("handoff during AI generation blocks outbound message",async()=>{
+ const db=fakeRedis();let permissionChecks=0;let sent=0;
+ const result=await processWebhook(payload,cfg,{
+  redis:db as never,maySend:async()=>++permissionChecks===1,
+  generate:async()=> "Resposta descartada depois do atendimento humano",
+  send:async()=>{sent++;}
+ });
+ assert.equal(result.status,"disabled");
+ assert.equal(permissionChecks,2);
+ assert.equal(sent,0);
+});
