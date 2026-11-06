@@ -1,4 +1,4 @@
-export type Incoming = { id: string; remoteJid: string; number: string; text: string; instance: string };
+export type Incoming = { id: string; remoteJid: string; number: string; text: string; instance: string; pushName?: string };
 type RecordLike = Record<string, unknown>;
 const record = (value: unknown): RecordLike | null =>
   !!value && typeof value === "object" && !Array.isArray(value) ? value as RecordLike : null;
@@ -23,5 +23,6 @@ export function parseIncoming(payload: unknown): Incoming | null {
   const innerEphemeral = record(ephemeral?.message);
   const text = message.conversation ?? extended?.text ?? innerEphemeral?.conversation;
   if (typeof text !== "string" || !text.trim() || text.length > 1600) return null;
-  return { id, remoteJid, number, text: text.trim(), instance };
+  const pushName = typeof data.pushName === "string" ? data.pushName.trim() : undefined;
+  return { id, remoteJid, number, text: text.trim(), instance, pushName };
 }

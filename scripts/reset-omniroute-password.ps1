@@ -55,3 +55,4 @@ if ($result -match "OK") {
     Write-Host "[ERRO] Falha ao atualizar senha: $result" -ForegroundColor Red
     exit 1
 }
+

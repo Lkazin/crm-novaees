@@ -36,3 +36,16 @@ export async function supabaseRows<T>(path: string, token: string): Promise<T> {
 export function privateJson(value: unknown, status = 200) {
   return Response.json(value,{status,headers:{"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
 }
+export function isAllowedOrigin(origin: string | null, requestUrl: string): boolean {
+  if (!origin) return true;
+  try {
+    const o = new URL(origin);
+    const u = new URL(requestUrl);
+    if (o.hostname === u.hostname) return true;
+    const localHosts = ["localhost", "127.0.0.1", "host.docker.internal", "0.0.0.0"];
+    if (localHosts.includes(o.hostname) && (localHosts.includes(u.hostname) || u.hostname === "0.0.0.0")) return true;
+    return o.origin === u.origin;
+  } catch {
+    return false;
+  }
+}

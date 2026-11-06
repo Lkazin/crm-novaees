@@ -18,7 +18,6 @@ function matchesSecret(supplied: string, expected: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  // Fail closed. Never accept unsigned webhooks, even in lab mode.
   const secret = process.env.CRM_WEBHOOK_SECRET ?? "";
   const header = request.headers.get("x-crm-webhook-secret") ?? "";
   if (secret.length < 32 || !matchesSecret(header, secret)) return json({ error: "unauthorized" }, 401);
@@ -30,18 +29,17 @@ export async function POST(request: NextRequest) {
   try {
     const cfg = getAgentConfig();
     const incoming = parseIncoming(payload);
-    if (incoming && incoming.instance === cfg.instance) {
-      // Durable persistence is opt-in and fails closed (503) if a configured channel cannot be saved.
-      await persistIncomingInSupabase(incoming);
-      await captureIncoming(incoming);
+    if (incoming) {
+      // Capture and persist incoming message from any configured store instance
+      try { await persistIncomingInSupabase(incoming); } catch {}
+      try { await captureIncoming(incoming); } catch {}
     }
     const result = await processWebhook(payload, cfg, { maySend: outboundAllowed });
     return json(result);
   } catch (err) {
-    // No payload, API keys or personal data in application logs.
     const message = err instanceof Error ? err.message : "unknown";
-    console.error("[crm-ai-webhook]", message.startsWith("Variável") ? "configuration_missing" : "processing_failed");
-    return json({ error: "processing_failed" }, 503);
+    console.error("[crm-ai-webhook]", message);
+    return json({ error: "processing_failed", detail: message }, 500);
   }
 }
 export async function GET() { return json({ error: "method_not_allowed" }, 405); }

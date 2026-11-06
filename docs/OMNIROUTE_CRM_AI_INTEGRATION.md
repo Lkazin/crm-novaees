@@ -88,3 +88,4 @@ Na pasta `scripts/`, você encontra automações prontas:
 
 * O arquivo `.gitignore` foi atualizado para ignorar a pasta `backups/`, bancos SQLite (`*.sqlite`) e arquivos `.env.*`.
 * Chaves secretas, senhas de dashboard e credenciais bancárias/bancos de dados **nunca** devem ser commitadas em repositórios públicos.
+

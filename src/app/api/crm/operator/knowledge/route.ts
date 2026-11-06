@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 type Article={id:string;title:string;body:string;status:string;updated_at:string};
@@ -9,7 +9,7 @@ function valid(value:unknown,min:number,max:number):value is string {
   return typeof value==="string"&&value.trim().length>=min&&value.length<=max;
 }
 function checkOrigin(request:NextRequest) {
-  return request.headers.get("origin")===new URL(request.url).origin;
+  return isAllowedOrigin(request.headers.get("origin"), request.url);
 }
 async function write(path:string,method:"POST"|"PATCH",operator:Operator,values:object) {
   const {url,key}=supabaseSettings();

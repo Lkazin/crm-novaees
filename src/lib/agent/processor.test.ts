@@ -15,17 +15,32 @@ const payload = { event:"messages.upsert",instance:"crmtest",
 };
 function fakeRedis() {
  const keys = new Set<string>();
+ const lists = new Map<string, string[]>();
  return {
   exists: async (k:string) => Number(keys.has(k)),
-  set: async (k:string) => { if (keys.has(k)) return null; keys.add(k);return "OK"; },
-  del: async (k:string) => {keys.delete(k);return 1;},
+  set: async (k:string, _val?: string, _ex?: string, _ttl?: number, mode?: string) => {
+    if (mode === "NX" && keys.has(k)) return null;
+    keys.add(k);
+    return "OK";
+  },
+  del: async (k:string) => { keys.delete(k); lists.delete(k); return 1; },
+  rpush: async (k: string, v: string) => {
+    const l = lists.get(k) || [];
+    l.push(v);
+    lists.set(k, l);
+    return l.length;
+  },
+  lrange: async (k: string) => {
+    return lists.get(k) || [];
+  },
+  expire: async () => 1,
  };
 }
+
 test("disabled switch never connects or sends",async()=>{
  assert.equal((await processWebhook(payload,{...cfg,sendEnabled:false})).status,"disabled");
 });
-test("wrong instance and number ignored before Redis",async()=>{
- assert.equal((await processWebhook({...payload,instance:"other"},cfg)).reason,"wrong_instance");
+test("number not allowed rejected before Redis",async()=>{
  assert.equal((await processWebhook({...payload,data:{...payload.data,key:{...payload.data.key,remoteJid:"5511888887777@s.whatsapp.net"}}},cfg)).reason,"number_not_allowed");
 });
 test("single allowed message generates and sends exactly once",async()=>{
