@@ -1,7 +1,14 @@
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
-import { syncTenantUsageLimits, getMasterPlans } from "@/lib/crm/plans";
+import {
+  syncTenantUsageLimits,
+  getMasterPlans,
+  checkTrialEligibility,
+  recordTrialRegistration,
+  convertTrialToPaidPlan,
+  TRIAL_PLAN
+} from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,20 +97,49 @@ export async function GET(request: NextRequest) {
         }
       } catch {}
 
-      // Check auto-block condition
-      const due = new Date(plan.dueDate);
-      if (plan.autoBlock && plan.status !== "paid" && due < now) {
-        plan.isOverdue = true;
-        // If not already suspended, automatically suspend
-        if (t.status === "active") {
-          t.status = "suspended";
-          try {
-            await fetch(url + `/rest/v1/crm_tenants?id=eq.${t.id}`, {
-              method: "PATCH",
-              headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-              body: JSON.stringify({ status: "suspended" })
-            });
-          } catch {}
+      // Trial handling & lifecycle check
+      if (plan.isTrial || plan.planId === "crm-trial" || plan.status === "trial") {
+        plan.isTrial = true;
+        const trialExpires = plan.trialExpiresAt
+          ? new Date(plan.trialExpiresAt)
+          : new Date(new Date(t.created_at).getTime() + 7 * 86400000);
+        plan.trialExpiresAt = trialExpires.toISOString();
+        const diffMs = trialExpires.getTime() - now.getTime();
+        plan.trialDaysLeft = Math.max(0, Math.ceil(diffMs / 86400000));
+
+        if (now >= trialExpires) {
+          plan.trialStatus = "expired";
+          if (t.status === "active") {
+            t.status = "suspended";
+            try {
+              await fetch(url + `/rest/v1/crm_tenants?id=eq.${t.id}`, {
+                method: "PATCH",
+                headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "suspended" })
+              });
+            } catch {}
+          }
+        } else if (plan.trialDaysLeft <= 3) {
+          plan.trialStatus = "expiring_soon";
+        } else {
+          plan.trialStatus = "active";
+        }
+      } else {
+        // Check auto-block condition for paid plans
+        const due = new Date(plan.dueDate);
+        if (plan.autoBlock && plan.status !== "paid" && due < now) {
+          plan.isOverdue = true;
+          // If not already suspended, automatically suspend
+          if (t.status === "active") {
+            t.status = "suspended";
+            try {
+              await fetch(url + `/rest/v1/crm_tenants?id=eq.${t.id}`, {
+                method: "PATCH",
+                headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "suspended" })
+              });
+            } catch {}
+          }
         }
       }
 
@@ -155,6 +191,17 @@ export async function POST(request: NextRequest) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return privateJson({ error: "invalid_email" }, 400);
     if (password.length < 6) return privateJson({ error: "password_too_short" }, 400);
 
+    const isTrial = body.isTrial === true || body.planId === "crm-trial";
+    if (isTrial) {
+      const eligibility = await checkTrialEligibility(storeName, email);
+      if (!eligibility.eligible) {
+        return privateJson({
+          error: "trial_already_used",
+          message: eligibility.reason || "Esta empresa ou e-mail já utilizou a avaliação gratuita de 7 dias anteriormente."
+        }, 400);
+      }
+    }
+
     // 1. Create tenant in crm_tenants
     const rTenant = await fetch(url + "/rest/v1/crm_tenants", {
       method: "POST",
@@ -205,26 +252,62 @@ export async function POST(request: NextRequest) {
     });
 
     // 4. Save initial Plan settings with stable planId
-    const masterPlans = await getMasterPlans();
-    const planId = typeof body.planId === "string" ? body.planId : "";
-    const matchedPlan = masterPlans.find(p => p.id === planId || p.name.toLowerCase() === planName.toLowerCase()) || masterPlans[0];
+    let planMeta: Record<string, any>;
+    let effectiveLimit: number;
 
-    const customQuota = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
-    const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
+    if (isTrial) {
+      const trialStartedAt = new Date().toISOString();
+      const trialExpiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+      planMeta = {
+        plan: {
+          isTrial: true,
+          planId: "crm-trial",
+          name: "Teste Grátis (7 Dias)",
+          price: "0,00",
+          quotaLimit: 100,
+          trialStartedAt,
+          trialExpiresAt,
+          dueDate: trialExpiresAt.slice(0, 10),
+          status: "trial",
+          autoBlock: true,
+          customQuotaOverride: null,
+          exceptionReason: null
+        }
+      };
+      effectiveLimit = 100;
+      await recordTrialRegistration(tenantId, storeName, email);
+    } else {
+      const masterPlans = await getMasterPlans();
+      const planId = typeof body.planId === "string" ? body.planId : "";
+      const matchedPlan = masterPlans.find(p => p.id === planId || p.name.toLowerCase() === planName.toLowerCase()) || masterPlans[0];
 
-    const planMeta = {
-      plan: {
-        planId: matchedPlan.id,
-        name: matchedPlan.name,
-        price: planPrice || matchedPlan.price,
-        quotaLimit: matchedPlan.quotaLimit,
-        dueDate,
-        status: paymentStatus,
-        autoBlock,
-        customQuotaOverride: customQuota,
-        exceptionReason
-      }
-    };
+      const customQuota = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
+      const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
+
+      planMeta = {
+        plan: {
+          isTrial: false,
+          planId: matchedPlan.id,
+          name: matchedPlan.name,
+          price: planPrice || matchedPlan.price,
+          quotaLimit: matchedPlan.quotaLimit,
+          dueDate,
+          status: paymentStatus,
+          autoBlock,
+          customQuotaOverride: customQuota,
+          exceptionReason,
+          contractedPlan: {
+            quotaLimit: matchedPlan.quotaLimit,
+            features: matchedPlan.features,
+            price: matchedPlan.price,
+            version: matchedPlan.version,
+            contractedAt: new Date().toISOString()
+          }
+        }
+      };
+      effectiveLimit = customQuota !== null ? customQuota : matchedPlan.quotaLimit;
+    }
+
     await fetch(url + "/rest/v1/crm_tenant_settings", {
       method: "POST",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
@@ -234,8 +317,6 @@ export async function POST(request: NextRequest) {
         business_description: JSON.stringify(planMeta)
       })
     });
-
-    const effectiveLimit = customQuota !== null ? customQuota : matchedPlan.quotaLimit;
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
 
     // 5. Create default agent in crm_agents
@@ -391,6 +472,17 @@ export async function PATCH(request: NextRequest) {
       });
 
       return privateJson({ updated: true, plan: planObj });
+    }
+
+    // 5. Action: Convert Trial to Paid Commercial Plan
+    if (action === "convert_trial") {
+      const targetPlanId = typeof body.planId === "string" ? body.planId : "crm-business";
+      const targetDueDate = typeof body.dueDate === "string" ? body.dueDate : undefined;
+      const result = await convertTrialToPaidPlan(tenantId, targetPlanId, auth.actor || "master_admin", targetDueDate);
+      if (!result.success) {
+        return privateJson({ error: "conversion_failed", message: result.error || "Falha ao converter teste para plano pago" }, 500);
+      }
+      return privateJson({ updated: true, converted: true, plan: result.plan });
     }
 
     return privateJson({ error: "invalid_action" }, 400);

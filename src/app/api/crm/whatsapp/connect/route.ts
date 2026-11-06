@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,13 +28,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Evolution API Key nao configurada" }, { status: 500 });
     }
 
-    let body: { instanceName?: string; tenantName?: string } = {};
+    let body: { instanceName?: string; tenantName?: string; tenantId?: string } = {};
     try {
       body = await req.json();
     } catch {}
 
     const rawName = body.instanceName || body.tenantName || "novaesweb-ia-teste";
     const instanceName = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 30);
+
+    // Validar limite de conexões WhatsApp conforme plano contratado
+    const tenantId = (typeof body.tenantId === "string" && body.tenantId) ? body.tenantId : undefined;
+    if (tenantId) {
+      const effectivePlan = await getEffectiveTenantPlan(tenantId);
+      const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
+      const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
+      if (supaUrl && supaKey) {
+        const rCh = await fetch(`${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${encodeURIComponent(tenantId)}&select=instance_name,status`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+          cache: "no-store"
+        });
+        if (rCh.ok) {
+          const channels = (await rCh.json()) as Array<{ instance_name: string; status: string }>;
+          const activeConnections = channels.filter(c => c.status === "connected" || c.status === "open");
+          const isExistingInstance = channels.some(c => c.instance_name === instanceName);
+          if (!isExistingInstance && activeConnections.length >= effectivePlan.maxWhatsappConnections) {
+            return NextResponse.json({
+              error: "whatsapp_limit_reached",
+              message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxWhatsappConnections} conexão(ões) WhatsApp simultânea(s). Faça upgrade para conectar mais números.`
+            }, { status: 403 });
+          }
+        }
+      }
+    }
 
     // 1. Verificar se a instancia ja existe
     let state = "close";

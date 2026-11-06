@@ -103,80 +103,92 @@ const DEFAULT_PLANS: PlanItem[] = [
   {
     id: "crm-start",
     name: "CRM Start",
-    price: "149,00",
-    quotaLimit: 500,
+    price: "59,90",
+    quotaLimit: 200,
     maxOperators: 1,
     maxWhatsAppConnections: 1,
     isActive: true,
-    description: "Ideal para pequenos comércios locais, lanchonetes e pizzarias.",
+    description: "Ideal para autônomos, pequenos comércios e prestadores de serviços locais.",
     allowedFeatures: ["ai_chat", "human_handoff", "simulator"],
     features: [
-      "Até 500 atendimentos/mês",
-      "NovaesWeb IA ativa 24h",
-      "Conexão WhatsApp (1 número)",
-      "Base de Conhecimento e Cardápio",
-      "Simulador de Teste no Painel",
-      "Atendimento Humano Básico"
+      "200 atendimentos com IA por mês",
+      "1 número WhatsApp",
+      "1 operador humano",
+      "NovaesWeb IA para responder dúvidas",
+      "Base de conhecimento personalizada",
+      "Central de conversas ao vivo",
+      "Atendimento humano com transbordo",
+      "Simulador de atendimento com IA",
+      "Notificações visuais no painel",
+      "Histórico e indicadores básicos"
     ]
   },
   {
     id: "crm-business",
     name: "CRM Business",
-    price: "249,00",
-    quotaLimit: 2000,
-    maxOperators: 2,
+    price: "99,90",
+    quotaLimit: 600,
+    maxOperators: 3,
     maxWhatsAppConnections: 1,
-    isPopular: true,
+    isPopular: true, // MAIS RECOMENDADO
     isActive: true,
-    description: "Para empresas e lojas em crescimento com alto volume de clientes diários.",
+    description: "Para empresas e lojas em crescimento que buscam escala e atendimento profissional.",
     allowedFeatures: [
       "ai_chat",
       "human_handoff",
+      "simulator",
       "business_hours",
       "commercial_tags",
       "handoff_summary",
       "sound_notifications",
-      "simulator",
       "model_fallback"
     ],
     features: [
-      "Até 2.000 atendimentos/mês",
-      "NovaesWeb IA com modelo reserva autorizado",
-      "Controle de Horários de Funcionamento",
-      "Resumo Inteligente para Atendentes",
-      "Etiquetas Comerciais e Funil Completo",
-      "Notificações Sonoras e Visuais",
-      "Suporte Prioritário NovaesWeb"
+      "600 atendimentos com IA por mês",
+      "Tudo do Plano Start incluído",
+      "1 número WhatsApp",
+      "Até 3 operadores humanos",
+      "Configuração de horários e folgas",
+      "Funil comercial completo",
+      "Etiquetas comerciais",
+      "Notificações visuais e sonoras",
+      "Resumo inteligente de 3 linhas",
+      "Modelo reserva de IA (zero quedas)",
+      "Indicadores de atendimento",
+      "Suporte prioritário"
     ]
   },
   {
     id: "crm-premium",
     name: "CRM Premium",
-    price: "449,00",
-    quotaLimit: 5000,
+    price: "159,90",
+    quotaLimit: 1500,
     maxOperators: 5,
     maxWhatsAppConnections: 2,
     isActive: true,
-    description: "Para operações de grande porte, clínicas, imobiliárias e redes de lojas.",
+    description: "Para operações avançadas, redes de lojas, imobiliárias e clínicas de alta demanda.",
     allowedFeatures: [
       "ai_chat",
       "human_handoff",
+      "simulator",
       "business_hours",
       "commercial_tags",
       "handoff_summary",
       "sound_notifications",
-      "simulator",
       "model_fallback",
       "advanced_reports"
     ],
     features: [
-      "Até 5.000 atendimentos/mês",
-      "Até 5 operadores humanos simultâneos",
-      "Até 2 conexões WhatsApp",
-      "Recursos Business completos",
-      "Relatórios Comerciais Avançados",
-      "IA dedicada com máxima prioridade",
-      "Gerente de conta exclusivo"
+      "1.500 atendimentos com IA por mês",
+      "Tudo do Plano Business incluído",
+      "Até 2 números WhatsApp",
+      "Até 5 operadores humanos",
+      "Central de atendimento para múltiplos números",
+      "Relatórios avançados",
+      "Métricas do funil comercial",
+      "Indicadores de desempenho dos operadores",
+      "Filtros e análises avançadas",
+      "Suporte prioritário Premium"
     ]
   }
 ];
@@ -443,8 +455,9 @@ export default function AdminCRM() {
     setError("");
     setNotice("");
     try {
+      const isTrial = planName === "Teste Grátis (7 Dias)" || planName.includes("Teste Grátis");
       const selectedPlanObj = plans.find(p => p.name === planName);
-      const planId = selectedPlanObj?.id || "crm-start";
+      const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-start");
       const res = await fetch("/api/crm/admin/clients", {
         method: "POST",
         credentials: "same-origin",
@@ -453,18 +466,21 @@ export default function AdminCRM() {
           storeName,
           email,
           password,
+          isTrial,
           planId,
-          planName,
-          planPrice,
+          planName: isTrial ? "Teste Grátis (7 Dias)" : planName,
+          planPrice: isTrial ? "0,00" : planPrice,
           dueDate,
-          paymentStatus,
+          paymentStatus: isTrial ? "paid" : paymentStatus,
           autoBlock,
-          quotaLimit
+          quotaLimit: isTrial ? 100 : quotaLimit
         })
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        if (errJson.error === "backend_not_configured") {
+        if (errJson.error === "trial_already_used") {
+          setError(errJson.message || "Esta empresa ou e-mail já utilizou a avaliação gratuita de 7 dias anteriormente.");
+        } else if (errJson.error === "backend_not_configured") {
           setError("O Supabase não está configurado no servidor. Adicione a variável CRM_SUPABASE_SERVICE_ROLE_KEY nas configurações de ambiente da hospedagem (ex: Vercel).");
         } else if (errJson.error === "tenant_create_failed") {
           setError("Falha ao criar o registro da loja no banco de dados do Supabase. Verifique as permissões da chave service_role.");
@@ -1790,9 +1806,10 @@ export default function AdminCRM() {
                     style={{
                       position: "relative",
                       background: p.isPopular
-                        ? "linear-gradient(145deg, #201533, #150f24)"
+                        ? "linear-gradient(145deg, #231638, #140e24)"
                         : "linear-gradient(145deg, #181427, #110d1d)",
                       border: p.isPopular ? "2px solid #ec4899" : isActive ? "1px solid #3d335c" : "1px dashed #574b6f",
+                      boxShadow: p.isPopular ? "0 0 32px rgba(236, 72, 153, 0.22), 0 0 8px rgba(244, 63, 94, 0.3)" : undefined,
                       borderRadius: "18px",
                       padding: "26px",
                       display: "flex",
@@ -1844,13 +1861,14 @@ export default function AdminCRM() {
                         <span style={{
                           background: "var(--grad-primary)",
                           color: "white",
-                          padding: "4px 12px",
+                          padding: "5px 14px",
                           borderRadius: "20px",
                           fontSize: "11px",
-                          fontWeight: 800,
-                          boxShadow: "var(--glow-pink)"
+                          fontWeight: 900,
+                          letterSpacing: "0.5px",
+                          boxShadow: "0 0 16px rgba(244, 63, 94, 0.45)"
                         }}>
-                          MAIS VENDIDO
+                          ⭐ MAIS RECOMENDADO
                         </span>
                       )}
                     </div>
@@ -1878,14 +1896,14 @@ export default function AdminCRM() {
                     }}>
                       <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
                         <span style={{fontSize: "13px", color: "#e2e8f0", fontWeight: 600}}>
-                          Franquia de Atendimentos:
+                          Franquia com IA:
                         </span>
                         <strong style={{fontSize: "14px", color: "#ec4899"}}>
-                          {p.quotaLimit.toLocaleString("pt-BR")} / mês
+                          {p.quotaLimit.toLocaleString("pt-BR")} atendimentos / mês
                         </strong>
                       </div>
                       <small style={{fontSize: "11px", color: "#9ca3af", margin: "-2px 0 2px"}}>
-                        (1 atendimento = 1 conversa ativa mensal)
+                        (1 atendimento = 1 conversa ativa em 24h)
                       </small>
                       <div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#9ca3af"}}>
                         <span>Operadores: <strong style={{color: "white"}}>{p.maxOperators || 1}</strong></span>
@@ -1893,46 +1911,20 @@ export default function AdminCRM() {
                       </div>
                     </div>
 
-                    {/* Checklist dos 9 Recursos Técnicos */}
-                    <div style={{marginBottom: "18px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "14px"}}>
-                      <strong style={{display: "block", fontSize: "12px", color: "#a599c2", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px"}}>
-                        Recursos Técnicos Habilitados:
+                    {/* Benefícios Reais e Incluídos */}
+                    <div style={{marginBottom: "18px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "14px", flex: 1}}>
+                      <strong style={{display: "block", fontSize: "12px", color: "#a599c2", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "10px"}}>
+                        Recursos e Benefícios Incluídos:
                       </strong>
-                      <div style={{display: "grid", gridTemplateColumns: "1fr", gap: "6px"}}>
-                        {TECHNICAL_FEATURES_LIST.map(feat => {
-                          const hasFeat = allowedFeats.includes(feat.id);
-                          return (
-                            <div
-                              key={feat.id}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "8px",
-                                fontSize: "12px",
-                                color: hasFeat ? "#e2e8f0" : "#6b7280"
-                              }}
-                            >
-                              {hasFeat ? (
-                                <Check size={14} color="#00db8c" style={{flexShrink: 0}}/>
-                              ) : (
-                                <span style={{width: "14px", textAlign: "center", color: "#6b7280", flexShrink: 0}}>—</span>
-                              )}
-                              <span style={{textDecoration: hasFeat ? "none" : "line-through"}}>{feat.name}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "8px"}}>
+                        {p.features.map(f => (
+                          <li key={f} style={{display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "12.5px", color: "#e2e8f0", lineHeight: 1.4}}>
+                            <Check size={14} color="#00db8c" style={{flexShrink: 0, marginTop: "2px"}}/>
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-
-                    {/* Bullets Comerciais */}
-                    <ul style={{listStyle: "none", padding: 0, margin: "0 0 20px", flex: 1, display: "flex", flexDirection: "column", gap: "8px"}}>
-                      {p.features.map(f => (
-                        <li key={f} style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#d1d5db"}}>
-                          <Sparkles size={14} color="#ec4899" style={{flexShrink: 0}}/>
-                          <span>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
 
                     {/* Lojas vinculadas e Botões de Ação */}
                     <div style={{borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "16px"}}>
@@ -2189,6 +2181,15 @@ export default function AdminCRM() {
                     <select
                       value={planName}
                       onChange={e => {
+                        if (e.target.value === "crm-trial" || e.target.value === "Teste Grátis (7 Dias)") {
+                          setPlanName("Teste Grátis (7 Dias)");
+                          setPlanPrice("0,00");
+                          setQuotaLimit(100);
+                          const trialExp = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+                          setDueDate(trialExp);
+                          setPaymentStatus("paid");
+                          return;
+                        }
                         const sel = plans.find(p => p.name === e.target.value);
                         if (sel) {
                           setPlanName(sel.name);
@@ -2198,6 +2199,7 @@ export default function AdminCRM() {
                       }}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
+                      <option value="crm-trial">🎁 Teste Grátis (7 Dias — 100 atendimentos)</option>
                       {plans.map(p => (
                         <option key={p.id} value={p.name}>
                           {p.name} — R$ {p.price}/mês ({p.quotaLimit.toLocaleString("pt-BR")} msgs)
@@ -2409,6 +2411,47 @@ export default function AdminCRM() {
                               </span>
                             </div>
                           )}
+                          {Boolean(client.plan.isTrial) && (
+                            <div style={{marginTop: "6px"}}>
+                              {client.plan.trialStatus === "expired" ? (
+                                <span style={{
+                                  background: "rgba(239, 68, 68, 0.2)",
+                                  color: "#f87171",
+                                  border: "1px solid rgba(239, 68, 68, 0.4)",
+                                  padding: "3px 9px",
+                                  borderRadius: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800
+                                }}>
+                                  ⚠️ Teste Expirado (7 dias esgotados)
+                                </span>
+                              ) : client.plan.trialStatus === "quota_exhausted" ? (
+                                <span style={{
+                                  background: "rgba(245, 158, 11, 0.2)",
+                                  color: "#fbbf24",
+                                  border: "1px solid rgba(245, 158, 11, 0.4)",
+                                  padding: "3px 9px",
+                                  borderRadius: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800
+                                }}>
+                                  🚫 Limite do Teste Atingido (100/100)
+                                </span>
+                              ) : (
+                                <span style={{
+                                  background: "rgba(168, 85, 247, 0.2)",
+                                  color: "#c084fc",
+                                  border: "1px solid rgba(168, 85, 247, 0.4)",
+                                  padding: "3px 9px",
+                                  borderRadius: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800
+                                }}>
+                                  🎁 Teste Grátis — {client.plan.trialDaysLeft ?? 7}d restantes
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -2417,8 +2460,8 @@ export default function AdminCRM() {
                         <div style={{textAlign: "right", marginRight: "6px"}}>
                           <span style={{
                             display: "inline-block",
-                            background: "rgba(236, 72, 153, 0.15)",
-                            color: "#ec4899",
+                            background: client.plan.isTrial ? "rgba(168, 85, 247, 0.15)" : "rgba(236, 72, 153, 0.15)",
+                            color: client.plan.isTrial ? "#c084fc" : "#ec4899",
                             padding: "4px 10px",
                             borderRadius: "8px",
                             fontSize: "13px",
@@ -2427,15 +2470,34 @@ export default function AdminCRM() {
                             {client.plan.name}
                           </span>
                           <strong style={{display: "block", fontSize: "16px", color: "white", marginTop: "2px"}}>
-                            R$ {client.plan.price}/mês
+                            {client.plan.isTrial ? "Gratuito (7 dias)" : `R$ ${client.plan.price}/mês`}
                           </strong>
                           <small style={{color: "#8e87a2", fontSize: "11px"}}>
-                            {client.plan.customQuotaOverride || client.plan.quotaLimit || 500} atendimentos
+                            {client.plan.isTrial ? "100 atendimentos de teste" : `${client.plan.customQuotaOverride || client.plan.quotaLimit || 200} atendimentos`}
                           </small>
                         </div>
 
                         {/* Botões de Ação */}
                         <div style={{display: "flex", gap: "6px", flexWrap: "wrap"}}>
+                          {client.plan.isTrial && (
+                            <button
+                              type="button"
+                              className="op-primary"
+                              title="Converter Teste em Plano Pago Definitivo"
+                              style={{
+                                padding: "8px 12px",
+                                background: "var(--grad-primary)",
+                                color: "white",
+                                fontSize: "12px",
+                                fontWeight: 800,
+                                borderRadius: "8px",
+                                boxShadow: "0 0 12px rgba(236, 72, 153, 0.35)"
+                              }}
+                              onClick={() => handleOpenAssignModal(client)}
+                            >
+                              ⭐ Converter p/ Pago
+                            </button>
+                          )}
                           {client.plan.status === "paid" ? (
                             <button
                               type="button"

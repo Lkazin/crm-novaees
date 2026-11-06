@@ -72,6 +72,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
   channelFound?: boolean;
   tenantId?: string;
   quotaLimit?: number;
+  isTrial?: boolean;
 }> {
   try {
     const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
@@ -171,6 +172,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       channelFound: true,
       tenantId,
       quotaLimit,
+      isTrial: effectivePlan.isTrial,
       context: {
         storeName: tenants?.[0]?.name,
         instructions: agents?.[0]?.instructions,
@@ -194,7 +196,7 @@ export async function processWebhook(
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
 
   // Check store context & permission
-  const { context = {}, isBlocked, tenantId, quotaLimit } = await getStoreAiContext(incoming.instance);
+  const { context = {}, isBlocked, tenantId, quotaLimit, isTrial } = await getStoreAiContext(incoming.instance);
   if (isBlocked) return { status: "disabled", reason: "store_suspended_or_overdue" };
 
   const isAuthorizedInstance = Boolean(incoming.instance);
@@ -330,7 +332,9 @@ export async function processWebhook(
         const sessionKey = `crm:session:${tenantId}:${incoming.number}`;
         const isNewSession = await redis.set(sessionKey, "1", "EX", 86400, "NX");
         const monthKey = new Date().toISOString().slice(0, 7);
-        const quotaKey = `crm:quota:${tenantId}:${monthKey}`;
+        const quotaKey = isTrial
+          ? `crm:quota:trial:${tenantId}`
+          : `crm:quota:${tenantId}:${monthKey}`;
 
         if (isNewSession === "OK") {
           await redis.incr(quotaKey);
@@ -339,7 +343,7 @@ export async function processWebhook(
 
         const currentUsageRaw = await redis.get(quotaKey);
         const currentUsage = parseInt(currentUsageRaw || "0", 10);
-        const maxLimit = quotaLimit || 500;
+        const maxLimit = quotaLimit || (isTrial ? 100 : 200);
 
         if (currentUsage > maxLimit) {
           console.warn(`[crm-quota-exceeded] Tenant ${tenantId} used ${currentUsage}/${maxLimit}`);

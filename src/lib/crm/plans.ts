@@ -82,7 +82,7 @@ export type EffectiveTenantPlan = {
   maxWhatsappConnections: number;
   allowedFeatures: FeatureId[];
   dueDate: string;
-  status: "paid" | "pending";
+  status: "paid" | "pending" | "trial";
   autoBlock: boolean;
   isOverdue: boolean;
   isSuspended: boolean;
@@ -96,6 +96,13 @@ export type EffectiveTenantPlan = {
   contractedVersion?: number;
   isContractFrozen?: boolean;
   pendingUpdate?: PendingPlanUpdate;
+  // Trial (7 Dias)
+  isTrial?: boolean;
+  trialDaysLeft?: number;
+  trialStartedAt?: string;
+  trialExpiresAt?: string;
+  trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted";
+  quotaUsed?: number;
 };
 
 export const TECHNICAL_FEATURES: TechnicalFeature[] = [
@@ -161,20 +168,23 @@ export const DEFAULT_PLANS: CrmPlan[] = [
   {
     id: "crm-start",
     name: "CRM Start",
-    price: "149,00",
-    quotaLimit: 500, // 500 atendimentos mensais
+    price: "59,90",
+    quotaLimit: 200, // 200 atendimentos com IA por mês
     maxOperators: 1,
     maxWhatsappConnections: 1,
-    description: "Ideal para pequenos comércios locais, lanchonetes e prestadores de serviço.",
+    description: "Ideal para autônomos, pequenos comércios e prestadores de serviços locais.",
     features: ["ai_chat", "human_handoff", "simulator"],
     featureBullets: [
-      "Até 500 atendimentos/mês",
-      "NovaesWeb IA ativa 24h",
-      "Conexão WhatsApp (1 número)",
-      "Cardápio e Regras do Negócio",
-      "Central de Atendimento ao Vivo",
-      "Envio Real de Mensagens Humanas",
-      "Simulador de Testes no Painel"
+      "200 atendimentos com IA por mês",
+      "1 número WhatsApp",
+      "1 operador humano",
+      "NovaesWeb IA para responder dúvidas dos clientes",
+      "Base de conhecimento personalizada",
+      "Central de conversas ao vivo",
+      "Atendimento humano com possibilidade de assumir",
+      "Simulador de atendimento com IA",
+      "Notificações visuais no painel",
+      "Histórico e indicadores básicos"
     ],
     status: "active",
     version: 1,
@@ -183,12 +193,12 @@ export const DEFAULT_PLANS: CrmPlan[] = [
   {
     id: "crm-business",
     name: "CRM Business",
-    price: "249,00",
-    quotaLimit: 2000, // 2.000 atendimentos mensais
+    price: "99,90",
+    quotaLimit: 600, // 600 atendimentos com IA por mês
     maxOperators: 3,
     maxWhatsappConnections: 1,
-    isPopular: true,
-    description: "Para empresas e lojas em crescimento com alto volume de clientes diários.",
+    isPopular: true, // Destaque: MAIS RECOMENDADO
+    description: "Para empresas e lojas em crescimento que buscam escala e atendimento profissional.",
     features: [
       "ai_chat",
       "human_handoff",
@@ -200,14 +210,18 @@ export const DEFAULT_PLANS: CrmPlan[] = [
       "model_fallback"
     ],
     featureBullets: [
-      "Até 2.000 atendimentos/mês",
-      "Tudo do Plano Start",
-      "Controle de Horários de Funcionamento",
-      "Funil e Etiquetas Comerciais",
-      "Resumo Inteligente em 3 Linhas",
-      "Notificações Sonoras no Painel",
-      "Fallback Automático (Zero Quedas)",
-      "Até 3 atendentes simultâneos"
+      "600 atendimentos com IA por mês",
+      "Tudo do Plano Start incluído",
+      "1 número WhatsApp",
+      "Até 3 operadores humanos",
+      "Configuração de horários e folgas",
+      "Funil comercial completo",
+      "Etiquetas comerciais",
+      "Notificações visuais e sonoras",
+      "Resumo inteligente de 3 linhas",
+      "Modelo reserva de IA (zero quedas)",
+      "Indicadores de atendimento",
+      "Suporte prioritário"
     ],
     status: "active",
     version: 1,
@@ -216,11 +230,11 @@ export const DEFAULT_PLANS: CrmPlan[] = [
   {
     id: "crm-premium",
     name: "CRM Premium",
-    price: "449,00",
-    quotaLimit: 5000, // 5.000 atendimentos mensais
-    maxOperators: 10,
-    maxWhatsappConnections: 3, // Até 3 números WhatsApp homologados
-    description: "Para operações de grande porte, clínicas, imobiliárias e redes de lojas.",
+    price: "159,90",
+    quotaLimit: 1500, // 1.500 atendimentos com IA por mês
+    maxOperators: 5,
+    maxWhatsappConnections: 2, // Até 2 números WhatsApp homologados
+    description: "Para operações avançadas, redes de lojas, imobiliárias e clínicas de alta demanda.",
     features: [
       "ai_chat",
       "human_handoff",
@@ -233,19 +247,54 @@ export const DEFAULT_PLANS: CrmPlan[] = [
       "advanced_reports"
     ],
     featureBullets: [
-      "Até 5.000 atendimentos/mês",
-      "Tudo do Plano Business",
-      "Múltiplos números WhatsApp (até 3)",
-      "Até 10 operadores simultâneos",
-      "Relatórios e Métricas Avançadas",
-      "Prioridade Máxima no Processamento",
-      "Suporte VIP NovaesWeb"
+      "1.500 atendimentos com IA por mês",
+      "Tudo do Plano Business incluído",
+      "Até 2 números WhatsApp",
+      "Até 5 operadores humanos",
+      "Central de atendimento para múltiplos números",
+      "Relatórios avançados",
+      "Métricas do funil comercial",
+      "Indicadores de desempenho dos operadores",
+      "Filtros e análises avançadas",
+      "Suporte prioritário Premium"
     ],
     status: "active",
     version: 1,
     updated_at: new Date().toISOString()
   }
 ];
+
+export const TRIAL_PLAN: CrmPlan & { durationDays: number } = {
+  id: "crm-trial",
+  name: "Teste Grátis (7 Dias)",
+  price: "0,00",
+  quotaLimit: 100, // 100 atendimentos no período inteiro
+  durationDays: 7,
+  maxOperators: 1,
+  maxWhatsappConnections: 1,
+  description: "Avaliação gratuita de 7 dias com recursos homologados do Plano Business.",
+  features: [
+    "ai_chat",
+    "human_handoff",
+    "simulator",
+    "business_hours",
+    "commercial_tags",
+    "handoff_summary",
+    "sound_notifications",
+    "model_fallback"
+  ],
+  featureBullets: [
+    "7 dias corridos de teste grátis",
+    "Até 100 atendimentos no período",
+    "1 número WhatsApp",
+    "1 operador humano",
+    "Recursos de avaliação do Business",
+    "Sem cartão obrigatório e sem cobrança automática"
+  ],
+  status: "active",
+  version: 1,
+  updated_at: new Date().toISOString()
+};
 
 export function getRedis(providedRedis?: Redis): Redis {
   if (providedRedis) return providedRedis;
@@ -781,7 +830,22 @@ export async function syncTenantUsageLimits(tenantId: string, quotaLimit: number
  * - Honors contractual custom overrides (customQuotaOverride).
  * - Never returns or uses unapproved drafts.
  */
-export async function getEffectiveTenantPlan(tenantId: string, providedRedis?: Redis): Promise<EffectiveTenantPlan> {
+export async function getEffectiveTenantPlan(
+  tenantId: string,
+  arg2?: Redis | string,
+  arg3?: Redis | string
+): Promise<EffectiveTenantPlan> {
+  let providedRedis: Redis | undefined;
+  let mockSettingsJson: string | undefined;
+
+  if (typeof arg2 === "string") {
+    mockSettingsJson = arg2;
+    providedRedis = arg3 && typeof arg3 === "object" ? (arg3 as Redis) : undefined;
+  } else if (typeof arg2 === "object") {
+    providedRedis = arg2 as Redis;
+    mockSettingsJson = typeof arg3 === "string" ? arg3 : undefined;
+  }
+
   const redis = getRedis(providedRedis);
   let ownsConnection = false;
 
@@ -807,7 +871,15 @@ export async function getEffectiveTenantPlan(tenantId: string, providedRedis?: R
   let isSuspended = false;
   let suspensionReason = "";
 
-  if (url && serviceKey) {
+  if (mockSettingsJson) {
+    try {
+      const parsed = typeof mockSettingsJson === "string" && mockSettingsJson.startsWith("{")
+        ? JSON.parse(mockSettingsJson)
+        : mockSettingsJson;
+      if (parsed.plan) rawTenantPlan = parsed.plan;
+      else rawTenantPlan = parsed;
+    } catch {}
+  } else if (url && serviceKey) {
     try {
       const [rSettings, rTenant] = await Promise.all([
         fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
@@ -839,17 +911,64 @@ export async function getEffectiveTenantPlan(tenantId: string, providedRedis?: R
     } catch {}
   }
 
-  // 3. Resolve matching master plan
-  const planId = (typeof rawTenantPlan.planId === "string" ? rawTenantPlan.planId : "") ||
-                 (typeof rawTenantPlan.id === "string" ? rawTenantPlan.id : "");
-  const planName = (typeof rawTenantPlan.name === "string" ? rawTenantPlan.name : "");
+  const now = new Date();
 
-  let matchedPlan = masterPlans.find(p => p.id === planId);
-  if (!matchedPlan && planName) {
-    matchedPlan = masterPlans.find(p => p.name.toLowerCase() === planName.toLowerCase());
-  }
-  if (!matchedPlan) {
-    matchedPlan = masterPlans[0] || DEFAULT_PLANS[0];
+  // 3. Check for Trial vs Paid Plan
+  const isTrial = Boolean(rawTenantPlan.isTrial || rawTenantPlan.planId === "crm-trial" || rawTenantPlan.status === "trial");
+  let trialStartedAt: string | undefined;
+  let trialExpiresAt: string | undefined;
+  let trialDaysLeft = 0;
+  let trialStatus: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted" | undefined;
+  let quotaUsed = 0;
+
+  // Read quotaUsed from Redis
+  try {
+    const rConn = getRedis(providedRedis);
+    let owns = false;
+    if (rConn.status !== "ready" && rConn.status !== "connecting") {
+      await rConn.connect();
+      owns = true;
+    }
+    if (isTrial) {
+      const u = await rConn.get(`crm:quota:trial:${tenantId}`);
+      quotaUsed = parseInt(u || "0", 10);
+    } else {
+      const monthKey = now.toISOString().slice(0, 7);
+      const u = await rConn.get(`crm:quota:${tenantId}:${monthKey}`);
+      quotaUsed = parseInt(u || "0", 10);
+    }
+    if (owns && !providedRedis) rConn.disconnect();
+  } catch {}
+
+  let matchedPlan: CrmPlan;
+
+  if (isTrial) {
+    matchedPlan = TRIAL_PLAN;
+    trialStartedAt = typeof rawTenantPlan.trialStartedAt === "string" ? rawTenantPlan.trialStartedAt : now.toISOString();
+    trialExpiresAt = typeof rawTenantPlan.trialExpiresAt === "string"
+      ? rawTenantPlan.trialExpiresAt
+      : new Date(new Date(trialStartedAt).getTime() + 7 * 86400000).toISOString();
+
+    const diffMs = new Date(trialExpiresAt).getTime() - now.getTime();
+    trialDaysLeft = Math.max(0, Math.ceil(diffMs / 86400000));
+
+    if (now >= new Date(trialExpiresAt)) {
+      trialStatus = "expired";
+      isSuspended = true;
+      if (!suspensionReason) suspensionReason = "trial_expired";
+    } else if (quotaUsed >= 100) {
+      trialStatus = "quota_exhausted";
+      isSuspended = true;
+      if (!suspensionReason) suspensionReason = "trial_quota_exhausted";
+    } else if (trialDaysLeft <= 3) {
+      trialStatus = "expiring_soon";
+    } else {
+      trialStatus = "active";
+    }
+  } else {
+    matchedPlan = masterPlans.find(p => p.id === planId) ||
+      (planName ? masterPlans.find(p => p.name.toLowerCase() === planName.toLowerCase()) : undefined) ||
+      masterPlans[0] || DEFAULT_PLANS[0];
   }
 
   // 4. Check for lifecycle states: pendingPlanUpdate vs contractedPlan vs master catalog
@@ -862,51 +981,53 @@ export async function getEffectiveTenantPlan(tenantId: string, providedRedis?: R
   const pendingUpdate = rawTenantPlan.pendingPlanUpdate as PendingPlanUpdate | undefined;
   const contractedSnapshot = rawTenantPlan.contractedPlan as ContractedSnapshot | undefined;
 
-  const now = new Date();
-
-  if (pendingUpdate && pendingUpdate.effectiveAt) {
-    const effectiveDate = new Date(pendingUpdate.effectiveAt);
-    if (now >= effectiveDate) {
-      // Pending update has matured and becomes active!
-      baseQuota = pendingUpdate.quotaLimit;
-      baseFeatures = [...pendingUpdate.features];
-      basePrice = pendingUpdate.price;
-      contractedVersion = pendingUpdate.planVersion;
-    } else {
-      // Still before renewal date: maintain contracted snapshot if available
-      if (contractedSnapshot) {
-        baseQuota = contractedSnapshot.quotaLimit;
-        baseFeatures = [...contractedSnapshot.features];
-        basePrice = contractedSnapshot.price;
-        contractedVersion = contractedSnapshot.version;
-        isContractFrozen = true;
+  if (!isTrial) {
+    if (pendingUpdate && pendingUpdate.effectiveAt) {
+      const effectiveDate = new Date(pendingUpdate.effectiveAt);
+      if (now >= effectiveDate) {
+        // Pending update has matured and becomes active!
+        baseQuota = pendingUpdate.quotaLimit;
+        baseFeatures = [...pendingUpdate.features];
+        basePrice = pendingUpdate.price;
+        contractedVersion = pendingUpdate.planVersion;
+      } else {
+        // Still before renewal date: maintain contracted snapshot if available
+        if (contractedSnapshot) {
+          baseQuota = contractedSnapshot.quotaLimit;
+          baseFeatures = [...contractedSnapshot.features];
+          basePrice = contractedSnapshot.price;
+          contractedVersion = contractedSnapshot.version;
+          isContractFrozen = true;
+        }
       }
+    } else if (contractedSnapshot) {
+      // Contract is frozen (e.g. from new_clients only update)
+      baseQuota = contractedSnapshot.quotaLimit;
+      baseFeatures = [...contractedSnapshot.features];
+      basePrice = contractedSnapshot.price;
+      contractedVersion = contractedSnapshot.version;
+      isContractFrozen = true;
     }
-  } else if (contractedSnapshot) {
-    // Contract is frozen (e.g. from new_clients only update)
-    baseQuota = contractedSnapshot.quotaLimit;
-    baseFeatures = [...contractedSnapshot.features];
-    basePrice = contractedSnapshot.price;
-    contractedVersion = contractedSnapshot.version;
-    isContractFrozen = true;
   }
 
   // 5. Contractual exception overrides (highest priority for quota)
   const customQuotaRaw = rawTenantPlan.customQuotaOverride;
   const hasCustomQuota = customQuotaRaw !== undefined && customQuotaRaw !== null && !Number.isNaN(Number(customQuotaRaw));
-  const finalQuota = hasCustomQuota ? Number(customQuotaRaw) : baseQuota;
+  const finalQuota = (!isTrial && hasCustomQuota) ? Number(customQuotaRaw) : baseQuota;
 
   const customFeaturesRaw = rawTenantPlan.customFeaturesOverride;
   const hasCustomFeatures = Array.isArray(customFeaturesRaw) && customFeaturesRaw.length > 0;
-  const finalFeatures: FeatureId[] = hasCustomFeatures
+  const finalFeatures: FeatureId[] = (!isTrial && hasCustomFeatures)
     ? Array.from(new Set([...baseFeatures, ...(customFeaturesRaw as FeatureId[])]))
     : baseFeatures;
 
   // 6. Check due date and payment status
-  const dueDate = typeof rawTenantPlan.dueDate === "string" ? rawTenantPlan.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-  const paymentStatus = rawTenantPlan.status === "pending" ? "pending" : "paid";
+  const dueDate = isTrial
+    ? (trialExpiresAt || new Date(now.getTime() + 7 * 86400000).toISOString().slice(0, 10))
+    : (typeof rawTenantPlan.dueDate === "string" ? rawTenantPlan.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+  const paymentStatus = isTrial ? "trial" : (rawTenantPlan.status === "pending" ? "pending" : "paid");
   const autoBlock = rawTenantPlan.autoBlock !== false;
-  const isOverdue = autoBlock && paymentStatus !== "paid" && new Date(dueDate) < now;
+  const isOverdue = !isTrial && autoBlock && paymentStatus !== "paid" && new Date(dueDate) < now;
 
   if (isOverdue) {
     isSuspended = true;
@@ -917,26 +1038,32 @@ export async function getEffectiveTenantPlan(tenantId: string, providedRedis?: R
     tenantId,
     planId: matchedPlan.id,
     planName: matchedPlan.name,
-    price: (typeof rawTenantPlan.price === "string" && rawTenantPlan.price) ? rawTenantPlan.price : basePrice,
-    quotaLimit: finalQuota,
+    price: isTrial ? "0,00" : ((typeof rawTenantPlan.price === "string" && rawTenantPlan.price) ? rawTenantPlan.price : basePrice),
+    quotaLimit: isTrial ? 100 : finalQuota,
     maxOperators: matchedPlan.maxOperators || 1,
     maxWhatsappConnections: matchedPlan.maxWhatsappConnections || 1,
     allowedFeatures: finalFeatures,
     dueDate,
-    status: paymentStatus,
+    status: isTrial ? "trial" : paymentStatus,
     autoBlock,
     isOverdue,
     isSuspended,
     suspensionReason,
-    hasCustomOverride: hasCustomQuota || hasCustomFeatures,
-    customOverride: (hasCustomQuota || hasCustomFeatures) ? {
+    hasCustomOverride: !isTrial && (hasCustomQuota || hasCustomFeatures),
+    customOverride: (!isTrial && (hasCustomQuota || hasCustomFeatures)) ? {
       quotaLimit: hasCustomQuota ? Number(customQuotaRaw) : undefined,
       features: hasCustomFeatures ? (customFeaturesRaw as FeatureId[]) : undefined,
       reason: typeof rawTenantPlan.exceptionReason === "string" ? rawTenantPlan.exceptionReason : undefined
     } : undefined,
     contractedVersion,
     isContractFrozen,
-    pendingUpdate: pendingUpdate && now < new Date(pendingUpdate.effectiveAt) ? pendingUpdate : undefined
+    pendingUpdate: !isTrial && pendingUpdate && now < new Date(pendingUpdate.effectiveAt) ? pendingUpdate : undefined,
+    isTrial,
+    trialDaysLeft: isTrial ? trialDaysLeft : undefined,
+    trialStartedAt: isTrial ? trialStartedAt : undefined,
+    trialExpiresAt: isTrial ? trialExpiresAt : undefined,
+    trialStatus: isTrial ? trialStatus : undefined,
+    quotaUsed
   };
 
   // 7. Cache in Redis for 60s
@@ -1007,5 +1134,198 @@ export async function getPlanAuditHistory(providedRedis?: Redis): Promise<PlanAu
     return [];
   } finally {
     if (ownsConnection && !providedRedis) redis.disconnect();
+  }
+}
+
+/**
+ * Check if a company / store or email is eligible for a 7-day free trial.
+ * Prevents repeat trials for the same company or email.
+ */
+export async function checkTrialEligibility(
+  storeName: string,
+  email: string,
+  providedRedis?: Redis
+): Promise<{ eligible: boolean; reason?: string; message?: string }> {
+  const normName = storeName.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normEmail = email.trim().toLowerCase();
+
+  const redis = getRedis(providedRedis);
+  let ownsConnection = false;
+  try {
+    if (redis.status !== "ready" && redis.status !== "connecting") {
+      await redis.connect();
+      ownsConnection = true;
+    }
+    const [nameUsed, emailUsed] = await Promise.all([
+      redis.get(`crm:trial:registered:store:${normName}`),
+      redis.get(`crm:trial:registered:email:${normEmail}`)
+    ]);
+
+    if (nameUsed) {
+      return { eligible: false, reason: "duplicate_store", message: "Esta empresa já utilizou a avaliação gratuita anteriormente." };
+    }
+    if (emailUsed) {
+      return { eligible: false, reason: "duplicate_email", message: "Este e-mail já foi cadastrado para uma avaliação gratuita." };
+    }
+    return { eligible: true };
+  } catch {
+    return { eligible: true };
+  } finally {
+    if (ownsConnection && !providedRedis) redis.disconnect();
+  }
+}
+
+/**
+ * Record a free trial registration in Redis to prevent multiple trials.
+ */
+export async function recordTrialRegistration(
+  arg1: string,
+  arg2: string,
+  arg3: string,
+  providedRedis?: Redis
+): Promise<void> {
+  let tenantId = arg1;
+  let storeName = arg2;
+  let email = arg3;
+  if (arg2 && arg2.includes("@")) {
+    storeName = arg1;
+    email = arg2;
+    tenantId = arg3;
+  } else if (arg1 && arg1.includes("@")) {
+    email = arg1;
+    storeName = arg2;
+    tenantId = arg3;
+  }
+  const normName = storeName.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normEmail = email.trim().toLowerCase();
+
+  const redis = getRedis(providedRedis);
+  let ownsConnection = false;
+  try {
+    if (redis.status !== "ready" && redis.status !== "connecting") {
+      await redis.connect();
+      ownsConnection = true;
+    }
+    // Keep record permanently (365 days)
+    await Promise.all([
+      redis.set(`crm:trial:registered:store:${normName}`, tenantId, "EX", 365 * 86400),
+      redis.set(`crm:trial:registered:email:${normEmail}`, tenantId, "EX", 365 * 86400),
+      redis.set(`crm:trial:active:${tenantId}`, "1", "EX", 30 * 86400)
+    ]);
+  } catch {} finally {
+    if (ownsConnection && !providedRedis) redis.disconnect();
+  }
+}
+
+/**
+ * Convert a trial tenant to a paid commercial plan without losing data, settings, or connections.
+ */
+export async function convertTrialToPaidPlan(
+  tenantId: string,
+  newPlanId: string,
+  actor = "master_admin",
+  dueDate?: string,
+  providedRedis?: Redis
+): Promise<{ success: boolean; plan: CrmPlan; error?: string }> {
+  const masterPlans = await getMasterPlans(providedRedis);
+  const targetPlan = masterPlans.find(p => p.id === newPlanId) || masterPlans[1] || DEFAULT_PLANS[1]; // defaults to Business
+
+  const { url, serviceKey } = getSupabaseConfig();
+  if (!url || !serviceKey) {
+    return { success: false, plan: targetPlan, error: "Supabase não configurado" };
+  }
+
+  try {
+    // 1. Fetch current settings to preserve knowledge base, operating hours, ai settings, and connections
+    const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
+      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+      cache: "no-store"
+    });
+    if (!rSettings.ok) throw new Error("Falha ao consultar configurações da empresa no Supabase");
+
+    const settingsList = (await rSettings.json()) as Array<{ business_description: string }>;
+    let dataObj: Record<string, any> = {};
+    if (settingsList[0]?.business_description?.startsWith("{")) {
+      dataObj = JSON.parse(settingsList[0].business_description);
+    }
+
+    const calculatedDueDate = dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+    // 2. Update plan payload, clearing trial flags
+    dataObj.plan = {
+      planId: targetPlan.id,
+      name: targetPlan.name,
+      price: targetPlan.price,
+      quotaLimit: targetPlan.quotaLimit,
+      dueDate: calculatedDueDate,
+      status: "paid",
+      autoBlock: true,
+      isTrial: false,
+      trialConvertedAt: new Date().toISOString(),
+      contractedPlan: {
+        quotaLimit: targetPlan.quotaLimit,
+        features: targetPlan.features,
+        price: targetPlan.price,
+        version: targetPlan.version,
+        contractedAt: new Date().toISOString()
+      }
+    };
+
+    // 3. Update Supabase
+    const rUpdate = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+      method: "PATCH",
+      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        business_description: JSON.stringify(dataObj),
+        ai_sending_enabled: true
+      })
+    });
+    if (!rUpdate.ok) throw new Error("Falha ao salvar novo plano no Supabase");
+
+    // 4. Update status in crm_tenants to active (if it was suspended by trial expiration)
+    await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
+      method: "PATCH",
+      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" })
+    });
+
+    // 5. Update crm_usage_limits in Supabase
+    await syncTenantUsageLimits(tenantId, targetPlan.quotaLimit, url, serviceKey);
+
+    // 6. Invalidate Redis cache
+    const redis = getRedis(providedRedis);
+    let ownsConnection = false;
+    try {
+      if (redis.status !== "ready" && redis.status !== "connecting") {
+        await redis.connect();
+        ownsConnection = true;
+      }
+      await redis.del(`crm:tenant:effective_plan:${tenantId}`);
+      await redis.del(`crm:trial:active:${tenantId}`);
+    } catch {} finally {
+      if (ownsConnection && !providedRedis) redis.disconnect();
+    }
+
+    // 7. Audit log
+    await recordPlanAudit({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      actor,
+      planId: targetPlan.id,
+      planName: targetPlan.name,
+      action: "apply_bulk",
+      vigencia: "immediate",
+      newValues: {
+        price: targetPlan.price,
+        quotaLimit: targetPlan.quotaLimit,
+        features: targetPlan.features
+      },
+      affectedTenantsCount: 1,
+      affectedTenants: [tenantId],
+      timestamp: new Date().toISOString()
+    }, providedRedis);
+
+    return { success: true, plan: targetPlan };
+  } catch (err) {
+    return { success: false, plan: targetPlan, error: err instanceof Error ? err.message : String(err) };
   }
 }

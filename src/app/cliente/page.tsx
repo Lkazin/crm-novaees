@@ -22,7 +22,24 @@ type Data = {
   selectedTenant: string | null;
   isSuspended?: boolean;
   suspensionReason?: string;
-  plan?: { name: string; price: string; dueDate: string; status: string; autoBlock: boolean; quotaLimit?: number; quotaUsed?: number };
+  plan?: {
+    planId?: string;
+    name: string;
+    price: string;
+    dueDate: string;
+    status: string;
+    autoBlock: boolean;
+    quotaLimit?: number;
+    quotaUsed?: number;
+    maxOperators?: number;
+    maxWhatsappConnections?: number;
+    allowedFeatures?: string[];
+    isTrial?: boolean;
+    trialDaysLeft?: number;
+    trialStartedAt?: string;
+    trialExpiresAt?: string;
+    trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted";
+  };
   allowedFeatures?: string[];
   contacts: Contact[];
   conversations: Conversation[];
@@ -33,7 +50,7 @@ type Data = {
   note?: string;
 };
 
-type Tab = "whatsapp" | "conhecimento" | "simulador" | "horarios" | "atendimentos" | "contatos";
+type Tab = "whatsapp" | "conhecimento" | "simulador" | "horarios" | "atendimentos" | "contatos" | "plano";
 
 function dateTime(s: string | null) {
   if (!s) return "—";
@@ -1105,6 +1122,24 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 )}
               </button>
 
+              <button
+                type="button"
+                className={`nw-nav-button ${activeTab === "plano" ? "active" : ""}`}
+                onClick={() => setActiveTab("plano")}
+              >
+                <CreditCard size={19}/>
+                <span>Meu Plano</span>
+                {data?.plan?.isTrial ? (
+                  <span style={{marginLeft: "auto", background: "linear-gradient(90deg, #ec4899, #8b5cf6)", color: "#fff", padding: "2px 7px", borderRadius: "999px", fontSize: "10px", fontWeight: 800}}>
+                    7 DIAS
+                  </span>
+                ) : (
+                  <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#f472b6", padding: "2px 6px", borderRadius: "6px", fontSize: "10px", fontWeight: 700}}>
+                    {data?.plan?.name?.replace("CRM ", "") || "PLANO"}
+                  </span>
+                )}
+              </button>
+
               <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
               <Link
@@ -1121,15 +1156,22 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* Rodapé do Menu Lateral */}
             <div className="nw-sidebar-footer">
               {/* Medidor de Franquia Visual */}
-              <div style={{
-                background: "rgba(255, 255, 255, 0.03)",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                borderRadius: "12px",
-                padding: "12px 14px",
-                fontSize: "12px"
-              }}>
+              <div
+                onClick={() => setActiveTab("plano")}
+                style={{
+                  background: data?.plan?.isTrial ? "rgba(236, 72, 153, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                  border: data?.plan?.isTrial ? "1px solid rgba(236, 72, 153, 0.35)" : "1px solid rgba(255, 255, 255, 0.08)",
+                  borderRadius: "12px",
+                  padding: "12px 14px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.2s"
+                }}
+              >
                 <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px"}}>
-                  <span style={{color: "#c9bede", fontWeight: 600}}>Franquia do Mês</span>
+                  <span style={{color: data?.plan?.isTrial ? "#f472b6" : "#c9bede", fontWeight: 700}}>
+                    {data?.plan?.isTrial ? "🎁 Teste Grátis (7d)" : "Franquia do Mês"}
+                  </span>
                   <span style={{
                     fontSize: "11px",
                     fontWeight: 800,
@@ -1151,8 +1193,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     transition: "width 0.4s ease"
                   }}/>
                 </div>
-                <small style={{display: "block", color: "#8e87a2", fontSize: "10px", marginTop: "6px"}}>
-                  Renovação mensal automática
+                <small style={{display: "block", color: data?.plan?.isTrial ? "#c4b5fd" : "#8e87a2", fontSize: "10px", marginTop: "6px", fontWeight: data?.plan?.isTrial ? 600 : 400}}>
+                  {data?.plan?.isTrial
+                    ? `${data.plan.trialDaysLeft !== undefined ? `${data.plan.trialDaysLeft} dias restantes` : "7 dias de avaliação"} · Clique p/ detalhes`
+                    : "Renovação mensal automática"}
                 </small>
               </div>
 
@@ -1369,6 +1413,92 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </p>
                   </div>
                 </div>
+              </section>
+            )}
+
+            {/* BANNER INFORMATIVO: TESTE GRÁTIS DE 7 DIAS */}
+            {data?.plan?.isTrial && !isSuspended && (
+              <section
+                style={{
+                  background: (data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 1)
+                    ? "linear-gradient(135deg, rgba(120, 20, 40, 0.85), rgba(40, 10, 20, 0.85))"
+                    : (data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 3)
+                      ? "linear-gradient(135deg, rgba(110, 50, 15, 0.85), rgba(40, 20, 10, 0.85))"
+                      : "linear-gradient(135deg, rgba(60, 20, 90, 0.75), rgba(25, 10, 45, 0.85))",
+                  border: `1px solid ${(data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 1) ? "#f43f5e" : (data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 3) ? "#f59e0b" : "rgba(236, 72, 153, 0.45)"}`,
+                  borderRadius: "16px",
+                  padding: "16px 20px",
+                  marginBottom: "24px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "14px",
+                  boxShadow: "0 8px 30px rgba(0, 0, 0, 0.35)"
+                }}
+              >
+                <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "12px",
+                    background: "rgba(255, 255, 255, 0.1)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0
+                  }}>
+                    <Sparkles size={22} color={data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 1 ? "#f43f5e" : "#ec4899"} />
+                  </div>
+                  <div>
+                    <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}}>
+                      <h3 style={{margin: 0, fontSize: "16px", fontWeight: 800, color: "#ffffff"}}>
+                        {data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 0
+                          ? "Teste Grátis Encerrado"
+                          : data.plan.trialDaysLeft === 1
+                            ? "Último dia de Teste Grátis!"
+                            : `Avaliação Gratuita — ${data.plan.trialDaysLeft ?? 7} dias restantes`}
+                      </h3>
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: "999px",
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        background: "rgba(236, 72, 153, 0.25)",
+                        color: "#f472b6"
+                      }}>
+                        {quotaData.quotaUsed} / {quotaData.quotaLimit} atendimentos
+                      </span>
+                    </div>
+                    <p style={{margin: "4px 0 0", fontSize: "13px", color: "rgba(226, 232, 240, 0.85)"}}>
+                      {data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 0
+                        ? "Escolha um dos planos comerciais para reativar os atendimentos da IA. Seus dados estão seguros."
+                        : "Aproveite todos os recursos do CRM Business durante o teste. Sem fidelidade e sem cobrança automática."}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("plano")}
+                  style={{
+                    padding: "9px 18px",
+                    borderRadius: "10px",
+                    border: "none",
+                    background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                    color: "#ffffff",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    boxShadow: "0 4px 14px rgba(236, 72, 153, 0.35)",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  <CreditCard size={15} /> Ver Planos & Upgrade
+                </button>
               </section>
             )}
 
@@ -2873,6 +3003,443 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       Nenhum contato cadastrado ainda.
                     </div>
                   )}
+                </div>
+              </section>
+            )}
+
+            {/* SEÇÃO 5: MEU PLANO & ASSINATURA */}
+            {activeTab === "plano" && (
+              <section style={{display: "flex", flexDirection: "column", gap: "24px"}}>
+                {/* Header da Seção */}
+                <div className="op-card" style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
+                    <div style={{width: "48px", height: "48px", borderRadius: "14px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
+                      <CreditCard size={24} color="#fff"/>
+                    </div>
+                    <div>
+                      <h2 style={{fontSize: "22px", fontWeight: 800, margin: 0, color: "#fff"}}>
+                        Meu Plano & Franquia Comercial
+                      </h2>
+                      <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
+                        Acompanhe seu consumo de atendimentos com IA, limites de operadores e recursos contratados.
+                      </p>
+                    </div>
+                  </div>
+
+                  <a
+                    href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da empresa ${currentTenantObj?.name || "minha loja"} e gostaria de solicitar upgrade no plano do NovaesWeb CRM IA.`)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      padding: "10px 20px",
+                      borderRadius: "10px",
+                      background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                      color: "#fff",
+                      textDecoration: "none",
+                      fontWeight: 700,
+                      fontSize: "14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      boxShadow: "0 4px 18px rgba(236, 72, 153, 0.4)"
+                    }}
+                  >
+                    <Sparkles size={16}/> Falar com Consultor & Upgrade
+                  </a>
+                </div>
+
+                {/* Card de Resumo do Plano Atual + Barra de Consumo */}
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px"}}>
+                  {/* Detalhes do Plano Contratado */}
+                  <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
+                      <div>
+                        <span style={{fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "#f472b6", fontWeight: 800}}>
+                          Plano em Operação
+                        </span>
+                        <h3 style={{fontSize: "24px", fontWeight: 900, margin: "4px 0 0", color: "#fff"}}>
+                          {data?.plan?.isTrial ? "Teste Grátis (7 Dias)" : (data?.plan?.name || "CRM Business")}
+                        </h3>
+                      </div>
+                      <span style={{
+                        padding: "6px 14px",
+                        borderRadius: "999px",
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        background: data?.plan?.isTrial
+                          ? "rgba(236, 72, 153, 0.2)"
+                          : data?.plan?.status === "paid" ? "rgba(0, 219, 140, 0.15)" : "rgba(244, 63, 94, 0.15)",
+                        color: data?.plan?.isTrial
+                          ? "#f472b6"
+                          : data?.plan?.status === "paid" ? "#00db8c" : "#f43f5e",
+                        border: `1px solid ${data?.plan?.isTrial ? "rgba(236, 72, 153, 0.4)" : data?.plan?.status === "paid" ? "rgba(0, 219, 140, 0.4)" : "rgba(244, 63, 94, 0.4)"}`
+                      }}>
+                        {data?.plan?.isTrial ? "⚡ Período de Teste" : data?.plan?.status === "paid" ? "✅ Assinatura Ativa" : "⚠️ Pendente"}
+                      </span>
+                    </div>
+
+                    <div style={{display: "flex", alignItems: "baseline", gap: "6px", margin: "6px 0"}}>
+                      <span style={{fontSize: "32px", fontWeight: 900, color: "#fff"}}>
+                        {data?.plan?.isTrial ? "Grátis" : `R$ ${data?.plan?.price || "99,90"}`}
+                      </span>
+                      <span style={{fontSize: "14px", color: "#aba8bf"}}>
+                        {data?.plan?.isTrial ? "por 7 dias corridos" : "/mês"}
+                      </span>
+                    </div>
+
+                    <div style={{background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.06)", borderRadius: "10px", padding: "12px 14px", fontSize: "13px", color: "#c9bede", display: "flex", flexDirection: "column", gap: "6px"}}>
+                      <div>
+                        <strong>Vencimento / Renovação:</strong>{" "}
+                        <span style={{color: "#fff"}}>
+                          {data?.plan?.isTrial
+                            ? (data.plan.trialDaysLeft !== undefined ? `${data.plan.trialDaysLeft} dias restantes (expira em ${data.plan.trialExpiresAt?.slice(0, 10) || "7 dias"})` : "7 dias corridos")
+                            : (data?.plan?.dueDate || "Renovação mensal")}
+                        </span>
+                      </div>
+                      <div>
+                        <strong>Cobrança Automática:</strong>{" "}
+                        <span style={{color: "#00db8c"}}>
+                          {data?.plan?.isTrial ? "Sem cartão de crédito · Sem cobrança surpresa" : "Boleto / Pix mensal"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Medidor de Atendimentos com IA */}
+                  <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
+                    <span style={{fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "#8b5cf6", fontWeight: 800}}>
+                      Consumo de Atendimentos IA
+                    </span>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "baseline"}}>
+                      <span style={{fontSize: "32px", fontWeight: 900, color: "#fff"}}>
+                        {quotaData.quotaUsed} <span style={{fontSize: "18px", color: "#aba8bf", fontWeight: 500}}>/ {quotaData.quotaLimit}</span>
+                      </span>
+                      <span style={{
+                        fontSize: "14px",
+                        fontWeight: 800,
+                        color: quotaPercent > 90 ? "#f43f5e" : quotaPercent > 70 ? "#f59e0b" : "#00db8c"
+                      }}>
+                        {quotaPercent}% consumido
+                      </span>
+                    </div>
+
+                    {/* Barra de Progresso de Cota */}
+                    <div style={{width: "100%", height: "12px", background: "rgba(255, 255, 255, 0.08)", borderRadius: "6px", overflow: "hidden", position: "relative"}}>
+                      <div style={{
+                        width: `${quotaPercent}%`,
+                        height: "100%",
+                        background: quotaPercent > 90
+                          ? "#f43f5e"
+                          : quotaPercent > 70
+                            ? "#f59e0b"
+                            : "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                        transition: "width 0.4s ease"
+                      }}/>
+                    </div>
+
+                    <p style={{fontSize: "12px", color: "#8e87a2", margin: 0, lineHeight: 1.5}}>
+                      Cada atendimento é contabilizado por sessão de 24 horas por cliente no WhatsApp. Mensagens ilimitadas trocadas na mesma janela de 24h não consomem franquia adicional.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Grid de Limites Técnicos da Conta */}
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px"}}>
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
+                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center"}}>
+                      <Smartphone size={20} color="#ec4899"/>
+                    </div>
+                    <div>
+                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>WhatsApps Permitidos</span>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>
+                        {data?.plan?.maxWhatsappConnections ?? 1} número(s)
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
+                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(139, 92, 246, 0.15)", display: "grid", placeItems: "center"}}>
+                      <Users size={20} color="#8b5cf6"/>
+                    </div>
+                    <div>
+                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>Operadores Humanos</span>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>
+                        Até {data?.plan?.maxOperators ?? (data?.plan?.isTrial ? 1 : 3)} atendente(s)
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
+                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center"}}>
+                      <Bot size={20} color="#00db8c"/>
+                    </div>
+                    <div>
+                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>NovaesWeb IA</span>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>Ativa 24h/dia</strong>
+                    </div>
+                  </div>
+
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
+                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(59, 130, 246, 0.15)", display: "grid", placeItems: "center"}}>
+                      <ShieldCheck size={20} color="#3b82f6"/>
+                    </div>
+                    <div>
+                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>Histórico & Conversas</span>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>100% Preservado</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Comparativo dos Três Planos Comerciais */}
+                <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "20px"}}>
+                  <div>
+                    <h3 style={{fontSize: "20px", fontWeight: 800, margin: 0, color: "#fff"}}>
+                      Conheça os Planos Comerciais NovaesWeb CRM IA
+                    </h3>
+                    <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
+                      Escale seu atendimento com automação inteligente, múltiplos atendentes e números WhatsApp.
+                    </p>
+                  </div>
+
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px"}}>
+                    {/* Plano 1: Start */}
+                    <div
+                      style={{
+                        background: "rgba(255, 255, 255, 0.02)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "16px",
+                        padding: "24px 20px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "16px"
+                      }}
+                    >
+                      <div>
+                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Start</h4>
+                        <p style={{fontSize: "12px", color: "#8e87a2", margin: "4px 0 0"}}>
+                          Ideal para autônomos e pequenos comércios locais.
+                        </p>
+                      </div>
+
+                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
+                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 59,90</span>
+                        <span style={{fontSize: "13px", color: "#8e87a2"}}>/mês</span>
+                      </div>
+
+                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#c9bede"}}>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>200 atendimentos</strong> com IA/mês
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 operador</strong> humano
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> NovaesWeb IA p/ dúvidas
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Base de conhecimento própria
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Central de conversas ao vivo
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Transbordo humano integrado
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Simulador de atendimento
+                        </li>
+                      </ul>
+
+                      <a
+                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de contratar o plano CRM Start (R$ 59,90/mês).`)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          marginTop: "auto",
+                          padding: "10px",
+                          borderRadius: "10px",
+                          background: "rgba(255, 255, 255, 0.08)",
+                          border: "1px solid rgba(255, 255, 255, 0.15)",
+                          color: "#fff",
+                          textAlign: "center",
+                          textDecoration: "none",
+                          fontWeight: 700,
+                          fontSize: "13px"
+                        }}
+                      >
+                        Solicitar Start
+                      </a>
+                    </div>
+
+                    {/* Plano 2: Business (DESTAQUE MAIS RECOMENDADO) */}
+                    <div
+                      style={{
+                        background: "linear-gradient(135deg, rgba(60, 20, 80, 0.65), rgba(25, 10, 45, 0.85))",
+                        border: "2px solid #ec4899",
+                        borderRadius: "16px",
+                        padding: "24px 20px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "16px",
+                        position: "relative",
+                        boxShadow: "0 0 28px rgba(236, 72, 153, 0.35)"
+                      }}
+                    >
+                      <div style={{
+                        position: "absolute",
+                        top: "-12px",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                        color: "#fff",
+                        padding: "3px 14px",
+                        borderRadius: "999px",
+                        fontSize: "11px",
+                        fontWeight: 900,
+                        letterSpacing: "0.5px",
+                        boxShadow: "0 2px 10px rgba(236, 72, 153, 0.5)"
+                      }}>
+                        ⭐ MAIS RECOMENDADO
+                      </div>
+
+                      <div style={{marginTop: "6px"}}>
+                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Business</h4>
+                        <p style={{fontSize: "12px", color: "#fbcfe8", margin: "4px 0 0"}}>
+                          Para empresas em expansão que exigem escala e equipe.
+                        </p>
+                      </div>
+
+                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
+                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 99,90</span>
+                        <span style={{fontSize: "13px", color: "#fbcfe8"}}>/mês</span>
+                      </div>
+
+                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#f5d0fe"}}>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>600 atendimentos</strong> com IA/mês
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>3 operadores</strong> humanos
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários de funcionamento e folgas
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Funil comercial e etiquetas
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Notificações sonoras e visuais
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Resumo inteligente de 3 linhas
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Modelo reserva de IA (zero quedas)
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Suporte prioritário NovaesWeb
+                        </li>
+                      </ul>
+
+                      <a
+                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de ativar o plano CRM Business (R$ 99,90/mês).`)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          marginTop: "auto",
+                          padding: "11px",
+                          borderRadius: "10px",
+                          background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                          color: "#fff",
+                          textAlign: "center",
+                          textDecoration: "none",
+                          fontWeight: 800,
+                          fontSize: "13px",
+                          boxShadow: "0 4px 14px rgba(236, 72, 153, 0.4)"
+                        }}
+                      >
+                        Fazer Upgrade p/ Business
+                      </a>
+                    </div>
+
+                    {/* Plano 3: Premium */}
+                    <div
+                      style={{
+                        background: "rgba(255, 255, 255, 0.02)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "16px",
+                        padding: "24px 20px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "16px"
+                      }}
+                    >
+                      <div>
+                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Premium</h4>
+                        <p style={{fontSize: "12px", color: "#8e87a2", margin: "4px 0 0"}}>
+                          Para redes de lojas, clínicas e alta demanda comercial.
+                        </p>
+                      </div>
+
+                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
+                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 159,90</span>
+                        <span style={{fontSize: "13px", color: "#8e87a2"}}>/mês</span>
+                      </div>
+
+                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#c9bede"}}>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1.500 atendimentos</strong> com IA/mês
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>Até 2 números</strong> WhatsApp
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>5 operadores</strong> humanos
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Tudo do plano Business incluído
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Central multi-números
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Relatórios avançados de funil
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Desempenho dos operadores
+                        </li>
+                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Suporte VIP prioritário
+                        </li>
+                      </ul>
+
+                      <a
+                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de solicitar o plano CRM Premium (R$ 159,90/mês).`)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          marginTop: "auto",
+                          padding: "10px",
+                          borderRadius: "10px",
+                          background: "rgba(255, 255, 255, 0.08)",
+                          border: "1px solid rgba(255, 255, 255, 0.15)",
+                          color: "#fff",
+                          textAlign: "center",
+                          textDecoration: "none",
+                          fontWeight: 700,
+                          fontSize: "13px"
+                        }}
+                      >
+                        Solicitar Premium
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </section>
             )}

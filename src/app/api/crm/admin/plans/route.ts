@@ -275,6 +275,9 @@ export async function PATCH(request: NextRequest) {
     planObj.name = planName || planObj.name || "CRM Start";
     if (planPrice) planObj.price = planPrice;
     planObj.quotaLimit = quotaLimit;
+    planObj.isTrial = false;
+    planObj.status = "paid";
+    planObj.trialConvertedAt = new Date().toISOString();
 
     if (customQuotaOverride !== null) {
       planObj.customQuotaOverride = customQuotaOverride;
@@ -286,9 +289,21 @@ export async function PATCH(request: NextRequest) {
     const rPatch = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
+      body: JSON.stringify({
+        business_description: JSON.stringify(dataObj),
+        ai_sending_enabled: true
+      })
     });
     if (!rPatch.ok) throw new Error(`Supabase PATCH tenant assignment failed: HTTP ${rPatch.status}`);
+
+    // Re-activate tenant in crm_tenants if it was suspended (e.g. from trial expiration)
+    try {
+      await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
+        method: "PATCH",
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "active" })
+      });
+    } catch {}
 
     const effectiveLimit = customQuotaOverride !== null ? customQuotaOverride : quotaLimit;
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);

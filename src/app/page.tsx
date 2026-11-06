@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   Mail, Lock, Eye, EyeOff, LogIn, ShieldCheck, AlertCircle,
-  Bot, MessageCircle, BookOpen, Smartphone, Sparkles, X, CheckCircle2
+  Bot, MessageCircle, BookOpen, Smartphone, Sparkles, X, CheckCircle2,
+  Crown, Users, Layers, BarChart3
 } from "lucide-react";
 
 export default function CentralLoginPage() {
@@ -306,7 +307,7 @@ export default function CentralLoginPage() {
             </div>
           </div>
 
-          {/* Pill Badge */}
+          {/* Pill Badge: Painel Master */}
           <div>
             <div
               style={{
@@ -320,14 +321,14 @@ export default function CentralLoginPage() {
                 boxShadow: "0 0 16px rgba(236, 72, 153, 0.25)"
               }}
             >
-              <Sparkles size={14} style={{ color: "#ec4899" }} />
+              <Crown size={14} style={{ color: "#fbbf24" }} />
               <span style={{ fontSize: "13px", fontWeight: 700, color: "#f5d0fe", letterSpacing: "0.2px" }}>
-                Central de Acesso Oficial
+                Painel Master
               </span>
             </div>
           </div>
 
-          {/* Headline */}
+          {/* Main Headline */}
           <h1
             style={{
               fontSize: "clamp(26px, 3.2vw, 36px)",
@@ -338,7 +339,7 @@ export default function CentralLoginPage() {
               margin: 0
             }}
           >
-            Inteligência e Gestão Comercial<br />em um só lugar
+            Central de Gestão<br />do NovaesWeb CRM IA
           </h1>
 
           {/* Subtitle */}
@@ -351,7 +352,7 @@ export default function CentralLoginPage() {
               maxWidth: "460px"
             }}
           >
-            Acesse os atendimentos via WhatsApp, IA comercial, base de conhecimento e gestão da sua loja com isolamento seguro e controle total.
+            Administre planos, clientes, IA, WhatsApp, funcionalidades e toda a operação da plataforma em um só lugar.
           </p>
 
           {/* 4 Feature Cards */}
@@ -363,6 +364,7 @@ export default function CentralLoginPage() {
               marginTop: "12px"
             }}
           >
+            {/* Card 1 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -379,12 +381,36 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <Smartphone size={22} style={{ color: "#f1f5f9" }} />
+              <Users size={22} style={{ color: "#f1f5f9" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                WhatsApp<br />Conectado
+                Clientes e<br />Empresas
               </span>
             </div>
 
+            {/* Card 2 */}
+            <div
+              style={{
+                background: "rgba(24, 12, 32, 0.55)",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                borderRadius: "14px",
+                padding: "16px 8px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                gap: "8px",
+                backdropFilter: "blur(10px)",
+                boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
+              }}
+            >
+              <Layers size={22} style={{ color: "#f1f5f9" }} />
+              <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
+                Planos e<br />Franquias
+              </span>
+            </div>
+
+            {/* Card 3 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -403,10 +429,11 @@ export default function CentralLoginPage() {
             >
               <Bot size={22} style={{ color: "#f1f5f9" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                IA de<br />Atendimento
+                IA e<br />Modelos
               </span>
             </div>
 
+            {/* Card 4 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -423,31 +450,9 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <BookOpen size={22} style={{ color: "#f1f5f9" }} />
+              <BarChart3 size={22} style={{ color: "#f1f5f9" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                Base de<br />Conhecimento
-              </span>
-            </div>
-
-            <div
-              style={{
-                background: "rgba(24, 12, 32, 0.55)",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                borderRadius: "14px",
-                padding: "16px 8px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                textAlign: "center",
-                gap: "8px",
-                backdropFilter: "blur(10px)",
-                boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
-              }}
-            >
-              <ShieldCheck size={22} style={{ color: "#f1f5f9" }} />
-              <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                Segurança<br />Multiempresa
+                Relatórios e<br />Uso
               </span>
             </div>
           </div>
@@ -468,7 +473,7 @@ export default function CentralLoginPage() {
               boxShadow: "0 24px 60px rgba(0, 0, 0, 0.65), 0 0 32px rgba(217, 70, 239, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16)"
             }}
           >
-            {/* Shield / Sparkle Emblem */}
+            {/* Crown Icon Emblem matching visual reference */}
             <div
               style={{
                 width: "52px",
@@ -482,7 +487,7 @@ export default function CentralLoginPage() {
                 justifyContent: "center"
               }}
             >
-              <ShieldCheck size={26} style={{ color: "#fef08a" }} />
+              <Crown size={24} style={{ color: "#ffffff" }} />
             </div>
 
             {/* Title and Subtitle */}
@@ -496,7 +501,7 @@ export default function CentralLoginPage() {
                 letterSpacing: "-0.3px"
               }}
             >
-              Entrar no NovaesWeb CRM IA
+              Acesso ao Painel Master
             </h2>
             <p
               style={{
@@ -507,12 +512,12 @@ export default function CentralLoginPage() {
                 fontWeight: 500
               }}
             >
-              Acesso exclusivo para clientes, lojistas e administradores
+              NovaesWeb CRM IA
             </p>
 
             {/* Unified Form */}
             <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              {/* Input 1: E-mail */}
+              {/* Input 1: E-mail do administrador */}
               <div style={{ position: "relative", width: "100%" }}>
                 <Mail
                   size={18}
@@ -527,7 +532,7 @@ export default function CentralLoginPage() {
                 />
                 <input
                   type="email"
-                  placeholder="Seu e-mail de acesso"
+                  placeholder="E-mail do administrador"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   style={{
@@ -567,7 +572,7 @@ export default function CentralLoginPage() {
                 />
                 <input
                   type={showPassword ? "text" : "password"}
-                  placeholder="Sua senha"
+                  placeholder="Senha"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   required
@@ -702,7 +707,7 @@ export default function CentralLoginPage() {
                 }}
               >
                 <LogIn size={18} />
-                <span>{loading ? "Autenticando..." : "Entrar no Sistema"}</span>
+                <span>{loading ? "Autenticando..." : "Entrar no Painel Master"}</span>
               </button>
             </form>
 
@@ -741,8 +746,8 @@ export default function CentralLoginPage() {
                 textAlign: "center"
               }}
             >
-              <ShieldCheck size={16} style={{ color: "#94a3b8", flexShrink: 0 }} />
-              <span>Acesso seguro com criptografia e isolamento por empresa.</span>
+              <ShieldCheck size={16} style={{ color: "rgba(203, 213, 225, 0.75)", flexShrink: 0 }} />
+              <span>Acesso seguro e restrito aos gestores da NovaesWeb.</span>
             </div>
           </div>
         </div>

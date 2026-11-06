@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_PLANS,
   TECHNICAL_FEATURES,
+  TRIAL_PLAN,
+  checkTrialEligibility,
+  recordTrialRegistration,
   getMasterPlans,
   getMasterPlanDrafts,
   getMasterPlansWithDrafts,
@@ -105,8 +108,8 @@ test("1. Rascunhos: saveMasterPlan(draft) não altera o catálogo publicado e cl
   // 1. Catálogo publicado NÃO PODE ter sido alterado:
   const publishedPlans = await getMasterPlans(redis as never);
   const publishedBusiness = publishedPlans.find(p => p.id === "crm-business");
-  assert.equal(publishedBusiness?.quotaLimit, 2000); // Permanece 2.000!
-  assert.equal(publishedBusiness?.price, "249,00");
+  assert.equal(publishedBusiness?.quotaLimit, 600); // Permanece 600 do catálogo oficial!
+  assert.equal(publishedBusiness?.price, "99,90");
 
   // 2. Draft está presente em crm:master:plans:drafts:
   const drafts = await getMasterPlanDrafts(redis as never);
@@ -307,17 +310,31 @@ test("8. Feature Gating e Limites Oficiais do Catálogo", () => {
   // Capacidade WhatsApp
   assert.equal(start.maxWhatsappConnections, 1);
   assert.equal(business.maxWhatsappConnections, 1);
-  assert.equal(premium.maxWhatsappConnections, 3); // Premium formalmente com até 3 WhatsApps
+  assert.equal(premium.maxWhatsappConnections, 2); // Premium formalmente com até 2 WhatsApps
 
   // Capacidade Operadores
   assert.equal(start.maxOperators, 1);
   assert.equal(business.maxOperators, 3);
-  assert.equal(premium.maxOperators, 10);
+  assert.equal(premium.maxOperators, 5); // Premium formalmente com até 5 operadores
 
   // Franquias mensais
-  assert.equal(start.quotaLimit, 500);
-  assert.equal(business.quotaLimit, 2000);
-  assert.equal(premium.quotaLimit, 5000);
+  assert.equal(start.quotaLimit, 200);
+  assert.equal(business.quotaLimit, 600);
+  assert.equal(premium.quotaLimit, 1500);
+
+  // Preços oficiais
+  assert.equal(start.price, "59,90");
+  assert.equal(business.price, "99,90");
+  assert.equal(premium.price, "159,90");
+
+  // Destaque do Business (MAIS RECOMENDADO)
+  assert.equal(business.isPopular, true);
+
+  // Teste Grátis Oficial (7 Dias / 100 Atendimentos)
+  assert.equal(TRIAL_PLAN.quotaLimit, 100);
+  assert.equal(TRIAL_PLAN.durationDays, 7);
+  assert.equal(TRIAL_PLAN.maxWhatsappConnections, 1);
+  assert.equal(TRIAL_PLAN.maxOperators, 1);
 });
 
 test("9. Proteção contra força bruta (Rate Limiting de Login Master)", async () => {
@@ -340,4 +357,162 @@ test("9. Proteção contra força bruta (Rate Limiting de Login Master)", async 
   // Success resets counter
   await redis.del(rateLimitKey);
   assert.equal(await redis.get(rateLimitKey), null);
+});
+
+test("10. Teste Grátis (7 Dias): Recursos do Business herdados e franquia de 100", () => {
+  assert.equal(TRIAL_PLAN.features.includes("ai_chat"), true);
+  assert.equal(TRIAL_PLAN.features.includes("human_handoff"), true);
+  assert.equal(TRIAL_PLAN.features.includes("simulator"), true);
+  assert.equal(TRIAL_PLAN.features.includes("business_hours"), true);
+  assert.equal(TRIAL_PLAN.features.includes("commercial_tags"), true);
+  assert.equal(TRIAL_PLAN.features.includes("sound_notifications"), true);
+  assert.equal(TRIAL_PLAN.features.includes("handoff_summary"), true);
+  assert.equal(TRIAL_PLAN.features.includes("model_fallback"), true);
+  // Recursos exclusivos do Premium NÃO devem estar presentes no Trial
+  assert.equal(TRIAL_PLAN.features.includes("advanced_reports"), false);
+});
+
+test("11. Ciclo de Vida do Teste Grátis: Contagem regressiva e bloqueio após 7 dias", async () => {
+  const redis = fakeMemoryRedis();
+
+  // Caso 1: Teste iniciado hoje (7 dias restantes)
+  const today = new Date().toISOString();
+  const rawToday = {
+    plan: {
+      planId: "crm-trial",
+      name: "Teste Grátis (7 Dias)",
+      isTrial: true,
+      trialStartedAt: today,
+      quotaLimit: 100
+    }
+  };
+  const planToday = await getEffectiveTenantPlan("tenant-today", JSON.stringify(rawToday), redis as never);
+  assert.equal(planToday.isTrial, true);
+  assert.equal(planToday.quotaLimit, 100);
+  assert.equal(planToday.isSuspended, false);
+  assert.equal(planToday.trialDaysLeft! >= 6, true);
+
+  // Caso 2: Teste com 8 dias atrás (expirado)
+  const eightDaysAgo = new Date(Date.now() - 8 * 86400000).toISOString();
+  const rawExpired = {
+    plan: {
+      planId: "crm-trial",
+      name: "Teste Grátis (7 Dias)",
+      isTrial: true,
+      trialStartedAt: eightDaysAgo,
+      quotaLimit: 100
+    }
+  };
+  const planExpired = await getEffectiveTenantPlan("tenant-expired", JSON.stringify(rawExpired), redis as never);
+  assert.equal(planExpired.isTrial, true);
+  assert.equal(planExpired.isSuspended, true); // Automaticamente suspenso por expiração
+  assert.equal(planExpired.trialStatus, "expired");
+  assert.equal(planExpired.trialDaysLeft, 0);
+});
+
+test("12. Anti-abuso do Teste Grátis: Prevenção de cadastro repetido por loja ou e-mail", async () => {
+  const redis = fakeMemoryRedis();
+
+  const storeName = "Loja das Flores Novaes";
+  const email = "contato@floresnovaes.com.br";
+  const tenantId = "tenant-flores-001";
+
+  // Primeira verificação: elegível
+  const firstCheck = await checkTrialEligibility(storeName, email, redis as never);
+  assert.equal(firstCheck.eligible, true);
+
+  // Registra no Redis
+  await recordTrialRegistration(storeName, email, tenantId, redis as never);
+
+  // Segunda verificação com o mesmo nome: deve ser bloqueado
+  const secondCheckName = await checkTrialEligibility(storeName, "outro-email@gmail.com", redis as never);
+  assert.equal(secondCheckName.eligible, false);
+  assert.equal(secondCheckName.reason, "duplicate_store");
+
+  // Terceira verificação com o mesmo e-mail: deve ser bloqueado
+  const thirdCheckEmail = await checkTrialEligibility("Outra Loja Nova", email, redis as never);
+  assert.equal(thirdCheckEmail.eligible, false);
+  assert.equal(thirdCheckEmail.reason, "duplicate_email");
+});
+
+test("13. Feature Gating Real: Bloqueio estrito de recursos entre Start, Business e Premium", () => {
+  const startFeatures = DEFAULT_PLANS[0].features;
+  const businessFeatures = DEFAULT_PLANS[1].features;
+  const premiumFeatures = DEFAULT_PLANS[2].features;
+
+  // Start não possui horários nem etiquetas
+  assert.equal(startFeatures.includes("business_hours"), false);
+  assert.equal(startFeatures.includes("commercial_tags"), false);
+  assert.equal(startFeatures.includes("sound_notifications"), false);
+  assert.equal(startFeatures.includes("advanced_reports"), false);
+
+  // Business possui horários, etiquetas e som, mas não relatórios avançados
+  assert.equal(businessFeatures.includes("business_hours"), true);
+  assert.equal(businessFeatures.includes("commercial_tags"), true);
+  assert.equal(businessFeatures.includes("sound_notifications"), true);
+  assert.equal(businessFeatures.includes("model_fallback"), true);
+  assert.equal(businessFeatures.includes("advanced_reports"), false);
+
+  // Premium possui tudo do Business + relatórios avançados
+  assert.equal(premiumFeatures.includes("advanced_reports"), true);
+  assert.equal(premiumFeatures.includes("sound_notifications"), true);
+});
+
+test("14. Limites de conexões WhatsApp por plano", () => {
+  const start = DEFAULT_PLANS[0];
+  const business = DEFAULT_PLANS[1];
+  const premium = DEFAULT_PLANS[2];
+  const trial = TRIAL_PLAN;
+
+  assert.equal(start.maxWhatsappConnections, 1);
+  assert.equal(business.maxWhatsappConnections, 1);
+  assert.equal(trial.maxWhatsappConnections, 1);
+  assert.equal(premium.maxWhatsappConnections, 2);
+});
+
+test("15. Isolamento de chaves de cota: Teste Grátis vs Planos Mensais", async () => {
+  const redis = fakeMemoryRedis();
+  const trialTenantId = "tenant-trial-123";
+  const paidTenantId = "tenant-paid-456";
+
+  // Cota do trial usa chave fixa independente do mês
+  const trialKey = `crm:quota:trial:${trialTenantId}`;
+  await redis.set(trialKey, "99");
+  assert.equal(await redis.get(trialKey), "99");
+
+  // Próximo atendimento chega a 100 (limite máximo)
+  await redis.set(trialKey, "100");
+  assert.equal(parseInt((await redis.get(trialKey)) || "0", 10) >= 100, true);
+
+  // Cota de plano mensal usa chave por mês
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const paidKey = `crm:quota:${paidTenantId}:${monthKey}`;
+  await redis.set(paidKey, "450");
+  assert.equal(await redis.get(paidKey), "450");
+  // Chaves não colidem
+  assert.notEqual(trialKey, paidKey);
+});
+
+test("16. Execução do Catálogo Master com 0 Clientes Cadastrados", async () => {
+  const redis = fakeMemoryRedis();
+
+  // Catálogo vazio é inicializado com DEFAULT_PLANS
+  const plans = await getMasterPlans(redis as never);
+  assert.equal(plans.length, 3);
+  assert.equal(plans[0].name, "CRM Start");
+  assert.equal(plans[1].name, "CRM Business");
+  assert.equal(plans[2].name, "CRM Premium");
+
+  // Salvar plano mesmo com 0 clientes registrados opera com sucesso e registra auditoria
+  const updateRes = await saveMasterPlan({
+    ...plans[0],
+    price: "69,90"
+  }, "apply", "immediate", "admin_test", redis as never);
+
+  assert.equal(updateRes.saved, true);
+  assert.equal(updateRes.applied, true);
+
+  const audits = await getPlanAuditHistory(redis as never);
+  assert.equal(audits.length >= 1, true);
+  assert.equal(audits[0].planId, "crm-start");
 });
