@@ -6,7 +6,7 @@ import {
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, Wand2
 } from "lucide-react";
 
 type Tenant = { id: string; name: string; status: string };
@@ -14,6 +14,9 @@ type Contact = { id: string; phone: string; display_name: string | null; created
 type Conversation = { id: string; contact_id: string; status: string; mode: string; last_message_at: string | null; assigned_to: string | null };
 type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string };
 type EscalationItem = { category: string; reason: string; text?: string; timestamp?: string };
+type TagItem = { id: string; name: string; color: string };
+type ContactTagItem = { contact_id: string; tag_id: string };
+
 type Data = {
   tenants: Tenant[];
   selectedTenant: string | null;
@@ -24,6 +27,8 @@ type Data = {
   conversations: Conversation[];
   messages: Message[];
   escalations?: Record<string, EscalationItem>;
+  tags?: TagItem[];
+  contactTags?: ContactTagItem[];
   note?: string;
 };
 
@@ -212,6 +217,31 @@ export default function OperatorPage() {
   const [qrState, setQrState] = useState<"disconnected" | "connecting" | "open">("disconnected");
   const [qrNotice, setQrNotice] = useState("");
 
+  // Human Messaging state
+  const [humanInput, setHumanInput] = useState("");
+  const [sendingHumanMsg, setSendingHumanMsg] = useState(false);
+
+  // Funnel & Tags filtering state
+  const [funnelFilter, setFunnelFilter] = useState<"all" | "novo" | "ai" | "waiting_human" | "human" | "waiting_client" | "closed">("all");
+  const [tagFilter, setTagFilter] = useState<string>("all");
+
+  // Notifications & Sound state
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+
+  // Guided Setup Wizard state
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [wizardData, setWizardData] = useState({
+    storeName: "",
+    productsPrices: "",
+    hoursDelivery: "",
+    address: "",
+    faqs: "",
+    humanHandoffRules: "",
+    tone: "amigavel"
+  });
+
   const currentTenantObj = useMemo(() => data?.tenants?.find(t => t.id === tenant) ?? null, [data, tenant]);
   const instanceName = useMemo(() => {
     if (!currentTenantObj) return "novaesweb-ia-teste";
@@ -242,8 +272,28 @@ export default function OperatorPage() {
     } catch {}
   }, []);
 
-  const fetchData = useCallback(async (tenantId: string) => {
-    setLoading(true);
+  // Audio beep notification via Web Audio API
+  const playNotificationSound = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+    } catch {}
+  }, []);
+
+  const fetchData = useCallback(async (tenantId: string, silent = false) => {
+    if (!silent) setLoading(true);
     setError("");
     try {
       const url = "/api/crm/operator/data" + (tenantId ? "?tenant=" + encodeURIComponent(tenantId) : "");
@@ -256,6 +306,16 @@ export default function OperatorPage() {
       }
       if (!response.ok) throw Error(response.status === 403 ? "Empresa não autorizada." : "Falha ao consultar dados da empresa.");
       const json = await response.json() as Data;
+
+      // Check if new urgent handoffs arrived
+      if (silent && soundEnabled) {
+        const prevUrgent = data?.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
+        const newUrgent = json.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
+        if (newUrgent > prevUrgent) {
+          playNotificationSound();
+        }
+      }
+
       setData(json);
       setIsSuspended(json.isSuspended === true);
       setSuspensionReason(json.suspensionReason || "");
@@ -264,15 +324,26 @@ export default function OperatorPage() {
       if (!tenantId && activeTenant) {
         setTenant(activeTenant);
       }
-      if (activeTenant) {
+      if (activeTenant && !silent) {
         void fetchAiSettings(activeTenant);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao carregar atendimentos.");
+      if (!silent) setError(e instanceof Error ? e.message : "Falha ao carregar atendimentos.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [fetchAiSettings]);
+  }, [data, fetchAiSettings, soundEnabled, playNotificationSound]);
+
+  // Silent auto-refresh polling every 8 seconds
+  useEffect(() => {
+    if (!authenticated || !tenant) return;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void fetchData(tenant, true);
+      }
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [authenticated, tenant, fetchData]);
 
   // Check connection state for this tenant
   const checkStatus = useCallback(async () => {
@@ -593,6 +664,107 @@ export default function OperatorPage() {
     }
   }
 
+  // Send real human message via Evolution API
+  async function handleSendHumanMessage() {
+    const text = humanInput.trim();
+    if (!text || !tenant || !current || sendingHumanMsg) return;
+    setSendingHumanMsg(true);
+    try {
+      const res = await fetch("/api/crm/operator/send", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, conversationId: current.id, message: text })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.details || json.error || "Falha ao enviar mensagem.");
+      setHumanInput("");
+      await fetchData(tenant, true);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao enviar mensagem pelo WhatsApp.");
+    } finally {
+      setSendingHumanMsg(false);
+    }
+  }
+
+  // Set Funnel Status
+  async function handleSetFunnelStatus(conversationId: string, status: string) {
+    try {
+      const res = await fetch("/api/crm/operator/handoff", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, conversationId, action: "set_status", status })
+      });
+      if (!res.ok) throw new Error("Falha ao atualizar etapa do funil.");
+      await fetchData(tenant, true);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao atualizar etapa.");
+    }
+  }
+
+  // Set Commercial Tag on Contact
+  async function handleSetCommercialTag(contactId: string, tagId: string) {
+    try {
+      if (!tagId) {
+        const existing = data?.contactTags?.find(ct => ct.contact_id === contactId);
+        if (existing) {
+          await fetch("/api/crm/operator/tags", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tenantId: tenant, contactId, tagId: existing.tag_id, action: "remove" })
+          });
+        }
+      } else {
+        await fetch("/api/crm/operator/tags", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenantId: tenant, contactId, tagId, action: "set" })
+        });
+      }
+      await fetchData(tenant, true);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao atualizar etiqueta comercial.");
+    }
+  }
+
+  // Generate AI Store Knowledge from Wizard
+  function handleGenerateFromWizard() {
+    const sName = wizardData.storeName.trim() || currentTenantObj?.name || "Nossa Loja";
+    const toneDescription = wizardData.tone === "formal"
+      ? "Mantenha uma postura formal, educada, elegante e muito profissional."
+      : wizardData.tone === "direto"
+      ? "Seja muito objetivo, rápido, direto ao ponto e eficiente, sem enrolação."
+      : "Seja muito amigável, acolhedor, empático e prestativo, usando emojis leves com bom senso.";
+
+    const customPrompt = `Você é o assistente virtual oficial da loja "${sName}" no WhatsApp.
+${toneDescription}
+Responda em mensagens curtas e objetivas (1 a 3 frases).
+Nunca invente preços, promoções ou informações que não constam nas regras oficiais da loja.
+${wizardData.humanHandoffRules ? `\nQuando transferir para atendimento humano:\n${wizardData.humanHandoffRules}\n` : ""}`;
+
+    const storeInfoCompiled = `### SOBRE O NEGÓCIO
+Loja: ${sName}
+${wizardData.address.trim() ? `Endereço / Localização: ${wizardData.address.trim()}` : ""}
+
+### PRODUTOS, SERVIÇOS & VALORES
+${wizardData.productsPrices.trim() || "Consulte os preços e opções diretamente com nossa equipe."}
+
+### HORÁRIOS, REGRAS DE ENTREGA & PAGAMENTO
+${wizardData.hoursDelivery.trim() || "Horário de atendimento comercial padrão."}
+
+### DÚVIDAS FREQUENTES (FAQ)
+${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
+
+    setAgentLabel(`Assistente Virtual - ${sName}`);
+    setInstructions(customPrompt);
+    setStoreInfo(storeInfoCompiled);
+    setWizardOpen(false);
+    setAiNotice("✨ Rascunho profissional gerado pelo Assistente! Revise os campos abaixo e clique em 'Salvar Configurações da Minha IA'.");
+  }
+
   // Toggle Human Handoff (Take over or Return to AI)
   async function toggleConversationMode(conversationId: string, targetMode: "ai" | "human") {
     setClaiming(true);
@@ -625,19 +797,67 @@ export default function OperatorPage() {
   const messages = data?.messages ?? [];
   const byContact = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
 
-  const urgentCount = useMemo(() => conversations.filter(c => c.status === "urgent").length, [conversations]);
+  // Helper to determine effective operational funnel stage
+  const getEffectiveStage = useCallback((c: Conversation): "novo" | "ai" | "waiting_human" | "human" | "waiting_client" | "closed" => {
+    if (c.status === "closed") return "closed";
+    if (c.status === "urgent" || c.status === "waiting_human") return "waiting_human";
+    if (c.status === "waiting_client") return "waiting_client";
+    if (c.status === "human" || c.mode === "human") return "human";
+    if (c.status === "novo") return "novo";
+    return "ai";
+  }, []);
 
+  // Tag maps
+  const contactTagMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (data?.contactTags) {
+      for (const ct of data.contactTags) {
+        map.set(ct.contact_id, ct.tag_id);
+      }
+    }
+    return map;
+  }, [data?.contactTags]);
+
+  const tagMap = useMemo(() => {
+    const map = new Map<string, TagItem>();
+    if (data?.tags) {
+      for (const t of data.tags) {
+        map.set(t.id, t);
+      }
+    }
+    return map;
+  }, [data?.tags]);
+
+  // Counts per funnel stage
+  const funnelCounts = useMemo(() => {
+    const counts = { all: conversations.length, novo: 0, ai: 0, waiting_human: 0, human: 0, waiting_client: 0, closed: 0 };
+    for (const c of conversations) {
+      const stage = getEffectiveStage(c);
+      counts[stage] = (counts[stage] || 0) + 1;
+    }
+    return counts;
+  }, [conversations, getEffectiveStage]);
+
+  const urgentCount = funnelCounts.waiting_human;
+
+  // Filtered conversations by search, funnel stage, and commercial tag
   const filtered = useMemo(() => conversations.filter(c => {
     const contact = byContact.get(c.contact_id);
     const matchesSearch = (contact?.phone + " " + (contact?.display_name ?? "")).toLowerCase().includes(search.toLowerCase());
-    const isUrgent = c.status === "urgent";
-    const matchesFilter =
-      filterMode === "all" ||
-      (filterMode === "ai" && c.mode !== "human") ||
-      (filterMode === "human" && c.mode === "human") ||
-      (filterMode === "urgent" && isUrgent);
-    return matchesSearch && matchesFilter;
-  }), [conversations, byContact, search, filterMode]);
+
+    const stage = getEffectiveStage(c);
+    const matchesFunnel = funnelFilter === "all" || stage === funnelFilter;
+
+    const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
+    const matchesTag = tagFilter === "all" || contactTagId === tagFilter;
+
+    return matchesSearch && matchesFunnel && matchesTag;
+  }), [conversations, byContact, search, funnelFilter, tagFilter, contactTagMap, getEffectiveStage]);
+
+  // List of pending human requests for the Bell Notification Dropdown
+  const pendingHumanList = useMemo(() => {
+    return conversations.filter(c => c.status === "urgent" || c.status === "waiting_human");
+  }, [conversations]);
 
   const current = filtered.find(c => c.id === selected) ?? filtered[0] ?? null;
   const thread = current ? messages.filter(m => m.conversation_id === current.id).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) : [];
@@ -881,7 +1101,7 @@ export default function OperatorPage() {
           {/* CONTEÚDO PRINCIPAL (MAIN CONTENT) */}
           <main className="nw-main-content">
             {/* Topbar com Nome da Loja */}
-            <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", flexWrap: "wrap", gap: "12px"}}>
+            <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", flexWrap: "wrap", gap: "12px", position: "relative"}}>
               <div>
                 <h1 style={{fontSize: "26px", fontWeight: 800, margin: 0, letterSpacing: "-0.5px"}}>
                   {currentTenantObj ? currentTenantObj.name : "Painel da Loja"}
@@ -890,7 +1110,122 @@ export default function OperatorPage() {
                   Atendimento inteligente com <strong>NovaesWeb IA</strong> · Totalmente personalizado para o seu negócio.
                 </p>
               </div>
-              <div style={{display: "flex", gap: "10px", alignItems: "center"}}>
+              <div style={{display: "flex", gap: "10px", alignItems: "center", position: "relative"}}>
+                {/* Botão de Som de Notificação */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !soundEnabled;
+                    setSoundEnabled(next);
+                    if (next) playNotificationSound();
+                  }}
+                  className="op-refresh"
+                  title={soundEnabled ? "Som de notificação ativado (clique para silenciar)" : "Som de notificação silenciado (clique para ativar)"}
+                  style={{padding: "8px 12px", background: soundEnabled ? "rgba(236,72,153,0.15)" : undefined, borderColor: soundEnabled ? "#ec4899" : undefined, color: soundEnabled ? "#ec4899" : "#aba8bf"}}
+                >
+                  {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                </button>
+
+                {/* Sino de Notificações com Badge e Dropdown */}
+                <div style={{position: "relative"}}>
+                  <button
+                    type="button"
+                    onClick={() => setBellOpen(v => !v)}
+                    className="op-refresh"
+                    style={{position: "relative", padding: "8px 12px", background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.2)" : undefined, borderColor: pendingHumanList.length > 0 ? "#ef4444" : undefined, color: pendingHumanList.length > 0 ? "#fca5a5" : "#aba8bf"}}
+                    title="Notificações de atendimento humano pendente"
+                  >
+                    <Bell size={16} />
+                    {pendingHumanList.length > 0 && (
+                      <span style={{
+                        position: "absolute",
+                        top: "-5px",
+                        right: "-5px",
+                        background: "#ef4444",
+                        color: "#fff",
+                        borderRadius: "10px",
+                        padding: "1px 6px",
+                        fontSize: "10px",
+                        fontWeight: 800
+                      }}>
+                        {pendingHumanList.length}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Dropdown de Notificações Inteligentes */}
+                  {bellOpen && (
+                    <div style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "42px",
+                      width: "350px",
+                      background: "#181427",
+                      border: "1px solid #443c5e",
+                      borderRadius: "14px",
+                      boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+                      zIndex: 100,
+                      padding: "14px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #372f4d", paddingBottom: "8px"}}>
+                        <strong style={{fontSize: "13px", color: "#fff", display: "flex", alignItems: "center", gap: "6px"}}>
+                          <Bell size={14} color="#ec4899"/> Clientes Aguardando Humano ({pendingHumanList.length})
+                        </strong>
+                        <button type="button" onClick={() => setBellOpen(false)} style={{background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: "14px"}}>✕</button>
+                      </div>
+
+                      <div style={{maxHeight: "260px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px"}}>
+                        {pendingHumanList.length === 0 ? (
+                          <div style={{padding: "16px", textAlign: "center", fontSize: "12px", color: "#8e87a2"}}>
+                            Nenhum cliente aguardando atendimento humano no momento.
+                          </div>
+                        ) : (
+                          pendingHumanList.map(c => {
+                            const contact = byContact.get(c.contact_id);
+                            const escalation = data?.escalations?.[c.id];
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelected(c.id);
+                                  setActiveTab("atendimentos");
+                                  setBellOpen(false);
+                                }}
+                                style={{
+                                  textAlign: "left",
+                                  padding: "10px 12px",
+                                  borderRadius: "8px",
+                                  background: "rgba(239, 68, 68, 0.1)",
+                                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                                  cursor: "pointer",
+                                  color: "#fff",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "3px"
+                                }}
+                              >
+                                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                                  <strong style={{fontSize: "13px", color: "#fca5a5"}}>
+                                    {contact?.display_name || contact?.phone || "Cliente"}
+                                  </strong>
+                                  <small style={{fontSize: "10px", color: "#9ca3af"}}>{dateTime(c.last_message_at)}</small>
+                                </div>
+                                <span style={{fontSize: "11px", color: "#e2e8f0"}}>
+                                  {escalation?.reason ? `🚨 Motivo: ${escalation.reason}` : "🚨 Solicitou atendente humano"}
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <span style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -1054,7 +1389,254 @@ export default function OperatorPage() {
                       <small style={{color: "#c2bed4"}}>Você define o nome, a simpatia, os preços e todas as regras do atendimento.</small>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    className="op-primary"
+                    onClick={() => {
+                      setWizardData({
+                        storeName: currentTenantObj?.name || "",
+                        productsPrices: "",
+                        hoursDelivery: "",
+                        address: "",
+                        faqs: "",
+                        humanHandoffRules: "",
+                        tone: "amigavel"
+                      });
+                      setWizardStep(1);
+                      setWizardOpen(true);
+                    }}
+                    style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 18px", borderRadius: "10px", fontWeight: 700, fontSize: "13px"}}
+                  >
+                    <Wand2 size={16}/> Assistente Guiado Passo a Passo
+                  </button>
                 </div>
+
+                {/* MODAL / CARD DO ASSISTENTE GUIADO PASSO A PASSO */}
+                {wizardOpen && (
+                  <div style={{
+                    background: "linear-gradient(135deg, rgba(30, 20, 50, 0.98), rgba(20, 15, 35, 0.98))",
+                    border: "2px solid #ec4899",
+                    borderRadius: "16px",
+                    padding: "24px",
+                    boxShadow: "0 10px 40px rgba(236, 72, 153, 0.25)",
+                    position: "relative"
+                  }}>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #443c5e", paddingBottom: "14px", marginBottom: "18px"}}>
+                      <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                        <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center"}}>
+                          <Wand2 size={20} color="#fff"/>
+                        </div>
+                        <div>
+                          <h3 style={{margin: 0, fontSize: "17px", color: "#fff"}}>Assistente Guiado: Passo {wizardStep} de 5</h3>
+                          <small style={{color: "#aba8bf"}}>Responda perguntas simples para que a NovaesWeb IA crie o rascunho de atendimento da sua empresa.</small>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setWizardOpen(false)}
+                        style={{background: "none", border: "none", color: "#aba8bf", cursor: "pointer", fontSize: "18px", padding: "4px"}}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {/* Passo 1: Nome da Loja e Tom */}
+                    {wizardStep === 1 && (
+                      <div style={{display: "flex", flexDirection: "column", gap: "16px"}}>
+                        <div>
+                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
+                            1. Qual é o nome oficial do seu negócio ou loja?
+                          </label>
+                          <p style={{margin: "0 0 8px", fontSize: "13px", color: "#aba8bf"}}>
+                            A IA utilizará este nome para se apresentar em todas as mensagens no WhatsApp.
+                          </p>
+                          <input
+                            type="text"
+                            value={wizardData.storeName}
+                            onChange={e => setWizardData(prev => ({ ...prev, storeName: e.target.value }))}
+                            placeholder="Ex.: Bella Pizza Express"
+                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
+                            Qual o tom e personalidade do atendimento?
+                          </label>
+                          <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px"}}>
+                            {[
+                              { id: "amigavel", label: "😊 Amigável e Acolhedor", desc: "Usa emojis leves e tom simpático" },
+                              { id: "formal", label: "👔 Formal e Corporativo", desc: "Educado, refinado e sem gírias" },
+                              { id: "direto", label: "⚡ Ágil e Direto", desc: "Objetivo e focado em respostas rápidas" }
+                            ].map(t => (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => setWizardData(prev => ({ ...prev, tone: t.id }))}
+                                style={{
+                                  padding: "12px",
+                                  borderRadius: "10px",
+                                  border: "1px solid",
+                                  borderColor: wizardData.tone === t.id ? "#ec4899" : "#3d345c",
+                                  background: wizardData.tone === t.id ? "rgba(236, 72, 153, 0.2)" : "#141124",
+                                  color: "#fff",
+                                  textAlign: "left",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <strong style={{fontSize: "13px", display: "block"}}>{t.label}</strong>
+                                <small style={{fontSize: "11px", color: "#9ca3af"}}>{t.desc}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Passo 2: Produtos, Serviços e Preços */}
+                    {wizardStep === 2 && (
+                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
+                          2. Quais são seus principais produtos ou serviços e seus preços?
+                        </label>
+                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
+                          Coloque de forma simples o que você oferece e quanto custa. A IA consultará esta lista para responder dúvidas de cardápio e valores.
+                        </p>
+                        <textarea
+                          rows={6}
+                          value={wizardData.productsPrices}
+                          onChange={e => setWizardData(prev => ({ ...prev, productsPrices: e.target.value }))}
+                          placeholder="Ex.:
+- Pizza Calabresa Grande: R$ 49,90 | Média: R$ 39,90
+- Pizza 4 Queijos Grande: R$ 54,90
+- Coca-Cola 2L: R$ 12,00
+- Borda de Catupiry ou Cheddar: R$ 8,00"
+                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
+                        />
+                      </div>
+                    )}
+
+                    {/* Passo 3: Horários e Endereço */}
+                    {wizardStep === 3 && (
+                      <div style={{display: "flex", flexDirection: "column", gap: "16px"}}>
+                        <div>
+                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
+                            3. Quais são os dias e horários de funcionamento?
+                          </label>
+                          <input
+                            type="text"
+                            value={wizardData.hoursDelivery}
+                            onChange={e => setWizardData(prev => ({ ...prev, hoursDelivery: e.target.value }))}
+                            placeholder="Ex.: Terça a Domingo, das 18h00 às 23h30 (Segunda-feira fechado)"
+                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
+                            Qual é o endereço físico da loja (se houver retirada)?
+                          </label>
+                          <input
+                            type="text"
+                            value={wizardData.address}
+                            onChange={e => setWizardData(prev => ({ ...prev, address: e.target.value }))}
+                            placeholder="Ex.: Av. Principal, 1500 - Centro (Próximo à Praça Central)"
+                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Passo 4: FAQ (Perguntas Frequentes) */}
+                    {wizardStep === 4 && (
+                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
+                          4. Quais são as perguntas mais frequentes (FAQ) que seus clientes fazem?
+                        </label>
+                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
+                          Regras de frete/entrega, formas de pagamento aceitas (Pix, cartão, dinheiro) e dúvidas recorrentes.
+                        </p>
+                        <textarea
+                          rows={6}
+                          value={wizardData.faqs}
+                          onChange={e => setWizardData(prev => ({ ...prev, faqs: e.target.value }))}
+                          placeholder="Ex.:
+- Quanto tempo demora a entrega? Leva de 40 a 55 minutos.
+- Qual a taxa de entrega? R$ 5,00 para o Centro e R$ 8,00 para bairros vizinhos.
+- Quais formas de pagamento? Aceitamos Pix (chave: financeiro@bellapizza.com), Cartão e Dinheiro na entrega."
+                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
+                        />
+                      </div>
+                    )}
+
+                    {/* Passo 5: Regras de Transferência Humana */}
+                    {wizardStep === 5 && (
+                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
+                          5. Em quais situações a IA deverá chamar um atendente humano?
+                        </label>
+                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
+                          Especifique quando você quer ser notificado para intervir na conversa (além de reclamações e cancelamentos que já são automáticos).
+                        </p>
+                        <textarea
+                          rows={5}
+                          value={wizardData.humanHandoffRules}
+                          onChange={e => setWizardData(prev => ({ ...prev, humanHandoffRules: e.target.value }))}
+                          placeholder="Ex.: Quando o cliente solicitar orçamentos para eventos e festas grandes, pedir para falar com a gerência, solicitar parcerias ou pedir personalizações fora do cardápio."
+                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
+                        />
+                      </div>
+                    )}
+
+                    {/* Controles de Navegação do Wizard */}
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", borderTop: "1px solid #372f4d", paddingTop: "16px"}}>
+                      <button
+                        type="button"
+                        disabled={wizardStep === 1}
+                        onClick={() => setWizardStep(s => Math.max(1, s - 1))}
+                        className="op-refresh"
+                        style={{opacity: wizardStep === 1 ? 0.4 : 1}}
+                      >
+                        Voltar
+                      </button>
+
+                      <div style={{display: "flex", gap: "8px"}}>
+                        {[1, 2, 3, 4, 5].map(step => (
+                          <span
+                            key={step}
+                            style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              background: wizardStep === step ? "#ec4899" : "#443c5e"
+                            }}
+                          />
+                        ))}
+                      </div>
+
+                      {wizardStep < 5 ? (
+                        <button
+                          type="button"
+                          onClick={() => setWizardStep(s => Math.min(5, s + 1))}
+                          className="op-primary"
+                          style={{display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 18px", borderRadius: "10px", fontWeight: 700}}
+                        >
+                          Próximo <ArrowRight size={14}/>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleGenerateFromWizard}
+                          className="op-primary"
+                          style={{display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 20px", borderRadius: "10px", fontWeight: 700, background: "var(--grad-primary)"}}
+                        >
+                          <Check size={16}/> Gerar Rascunho da IA
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Modelos Prontos por Nicho */}
                 <div>
@@ -1491,71 +2073,75 @@ export default function OperatorPage() {
                       <input aria-label="Buscar contato" placeholder="Buscar por nome ou número..." value={search} onChange={e => setSearch(e.target.value)}/>
                     </label>
 
-                    {/* Filtros Rápidos */}
-                    <div style={{display: "flex", gap: "6px", marginBottom: "12px", flexWrap: "wrap"}}>
-                      <button
-                        type="button"
-                        onClick={() => setFilterMode("all")}
+                    {/* Funil de Atendimento Operacional (6 Etapas) */}
+                    <div style={{display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap"}}>
+                      {[
+                        { id: "all", label: "Todas", count: funnelCounts.all, bg: "var(--grad-primary)", border: "#ec4899", color: "#fff" },
+                        { id: "novo", label: "Novo Contato", count: funnelCounts.novo, bg: "rgba(59, 130, 246, 0.2)", border: "#3b82f6", color: "#93c5fd" },
+                        { id: "ai", label: "🤖 IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.2)", border: "#00db8c", color: "#00db8c" },
+                        { id: "waiting_human", label: "🚨 Precisa de Humano", count: funnelCounts.waiting_human, bg: "rgba(239, 68, 68, 0.25)", border: "#ef4444", color: "#fca5a5" },
+                        { id: "human", label: "👤 Atendente", count: funnelCounts.human, bg: "rgba(245, 158, 11, 0.2)", border: "#f59e0b", color: "#fcd34d" },
+                        { id: "waiting_client", label: "⏳ Aguardando", count: funnelCounts.waiting_client, bg: "rgba(14, 165, 233, 0.2)", border: "#0ea5e9", color: "#7dd3fc" },
+                        { id: "closed", label: "✅ Finalizado", count: funnelCounts.closed, bg: "rgba(107, 114, 128, 0.2)", border: "#6b7280", color: "#d1d5db" }
+                      ].map(f => {
+                        const isSelected = funnelFilter === f.id;
+                        return (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => setFunnelFilter(f.id as any)}
+                            style={{
+                              padding: "5px 9px",
+                              borderRadius: "10px",
+                              border: "1px solid",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: isSelected ? f.bg : "transparent",
+                              borderColor: isSelected ? f.border : "#3e3752",
+                              color: isSelected ? (f.id === "all" ? "#fff" : f.color) : "#aba8bf",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            <span>{f.label}</span>
+                            <span style={{
+                              background: isSelected ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.08)",
+                              padding: "1px 5px",
+                              borderRadius: "8px",
+                              fontSize: "10px"
+                            }}>
+                              {f.count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Filtro por Etiqueta Comercial */}
+                    <div style={{display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
+                      <Tag size={13} color="#aba8bf"/>
+                      <select
+                        value={tagFilter}
+                        onChange={e => setTagFilter(e.target.value)}
                         style={{
-                          padding: "6px 12px", borderRadius: "14px", border: "1px solid", fontSize: "12px", fontWeight: 600,
-                          background: filterMode === "all" ? "var(--grad-primary)" : "transparent",
-                          borderColor: filterMode === "all" ? "#ec4899" : "#3e3752",
-                          color: "#fff"
+                          flex: 1,
+                          background: "transparent",
+                          border: "none",
+                          color: "#fff",
+                          fontSize: "12px",
+                          outline: "none",
+                          cursor: "pointer"
                         }}
                       >
-                        Todas
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFilterMode("ai")}
-                        style={{
-                          padding: "6px 12px", borderRadius: "14px", border: "1px solid", fontSize: "12px", fontWeight: 600,
-                          background: filterMode === "ai" ? "rgba(0, 219, 140, 0.2)" : "transparent",
-                          borderColor: filterMode === "ai" ? "#00db8c" : "#3e3752",
-                          color: filterMode === "ai" ? "#00db8c" : "#aba8bf"
-                        }}
-                      >
-                        🤖 IA
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFilterMode("human")}
-                        style={{
-                          padding: "6px 12px", borderRadius: "14px", border: "1px solid", fontSize: "12px", fontWeight: 600,
-                          background: filterMode === "human" ? "rgba(245, 158, 11, 0.2)" : "transparent",
-                          borderColor: filterMode === "human" ? "#f59e0b" : "#3e3752",
-                          color: filterMode === "human" ? "#f59e0b" : "#aba8bf"
-                        }}
-                      >
-                        👤 Humano
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFilterMode("urgent")}
-                        style={{
-                          padding: "6px 12px", borderRadius: "14px", border: "1px solid", fontSize: "12px", fontWeight: 700,
-                          background: filterMode === "urgent" ? "linear-gradient(135deg, #ef4444, #dc2626)" : "transparent",
-                          borderColor: filterMode === "urgent" ? "#ef4444" : "#4a1e28",
-                          color: filterMode === "urgent" ? "#fff" : "#fca5a5",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "5px"
-                        }}
-                      >
-                        <ShieldAlert size={13}/> Reclamações
-                        {urgentCount > 0 && (
-                          <span style={{
-                            background: filterMode === "urgent" ? "rgba(0,0,0,0.3)" : "#ef4444",
-                            color: "#fff",
-                            fontSize: "10px",
-                            padding: "1px 6px",
-                            borderRadius: "10px",
-                            fontWeight: 800
-                          }}>
-                            {urgentCount}
-                          </span>
-                        )}
-                      </button>
+                        <option value="all" style={{background: "#181427"}}>Todas as Etiquetas Comerciais</option>
+                        {data?.tags?.map(t => (
+                          <option key={t.id} value={t.id} style={{background: "#181427"}}>
+                            🏷️ {t.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="op-list" style={{flex: 1, overflowY: "auto"}}>
@@ -1563,8 +2149,11 @@ export default function OperatorPage() {
                         const contact = byContact.get(c.contact_id);
                         const isSelected = (current?.id === c.id);
                         const isHumanMode = (c.mode === "human");
-                        const isUrgent = (c.status === "urgent");
+                        const stage = getEffectiveStage(c);
+                        const isUrgent = (stage === "waiting_human" || c.status === "urgent");
                         const escalation = data?.escalations?.[c.id];
+                        const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
+                        const contactTag = contactTagId ? tagMap.get(contactTagId) : undefined;
                         return (
                           <button
                             key={c.id}
@@ -1598,13 +2187,26 @@ export default function OperatorPage() {
                               {(contact?.display_name || contact?.phone || "C").charAt(0).toUpperCase()}
                             </div>
                             <div style={{minWidth: 0, flex: 1}}>
-                              <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                              <div style={{display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
                                 <strong style={{fontSize: "14px", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>
                                   {contact?.display_name || contact?.phone || "Contato"}
                                 </strong>
+                                {contactTag && (
+                                  <span style={{
+                                    fontSize: "9px",
+                                    padding: "1px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    background: `${contactTag.color}25`,
+                                    color: contactTag.color,
+                                    border: `1px solid ${contactTag.color}60`
+                                  }}>
+                                    {contactTag.name}
+                                  </span>
+                                )}
                               </div>
                               <span style={{fontSize: "12px", color: "#9ca3af", display: "flex", alignItems: "center", gap: "6px", marginTop: "3px", flexWrap: "wrap"}}>
-                                {isUrgent ? (
+                                {stage === "waiting_human" ? (
                                   <span style={{
                                     fontSize: "10px",
                                     padding: "2px 6px",
@@ -1617,7 +2219,51 @@ export default function OperatorPage() {
                                     alignItems: "center",
                                     gap: "3px"
                                   }}>
-                                    🚨 {escalation?.reason || "URGENTE"}
+                                    🚨 {escalation?.reason || "Precisa de Humano"}
+                                  </span>
+                                ) : stage === "human" ? (
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "2px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    background: "rgba(245, 158, 11, 0.2)",
+                                    color: "#f59e0b"
+                                  }}>
+                                    👤 Atendente
+                                  </span>
+                                ) : stage === "waiting_client" ? (
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "2px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    background: "rgba(14, 165, 233, 0.2)",
+                                    color: "#7dd3fc"
+                                  }}>
+                                    ⏳ Aguardando Cliente
+                                  </span>
+                                ) : stage === "closed" ? (
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "2px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    background: "rgba(107, 114, 128, 0.2)",
+                                    color: "#d1d5db"
+                                  }}>
+                                    ✅ Finalizado
+                                  </span>
+                                ) : stage === "novo" ? (
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "2px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    background: "rgba(59, 130, 246, 0.2)",
+                                    color: "#93c5fd"
+                                  }}>
+                                    Novo Contato
                                   </span>
                                 ) : (
                                   <span style={{
@@ -1625,10 +2271,10 @@ export default function OperatorPage() {
                                     padding: "2px 6px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
-                                    background: isHumanMode ? "rgba(245, 158, 11, 0.2)" : "rgba(0, 219, 140, 0.15)",
-                                    color: isHumanMode ? "#f59e0b" : "#00db8c"
+                                    background: "rgba(0, 219, 140, 0.15)",
+                                    color: "#00db8c"
                                   }}>
-                                    {isHumanMode ? "Humano" : "IA"}
+                                    🤖 IA
                                   </span>
                                 )}
                                 <span>{dateTime(c.last_message_at)}</span>
@@ -1653,9 +2299,7 @@ export default function OperatorPage() {
                             <strong style={{fontSize: "17px", color: "#fff", display: "block"}}>
                               {byContact.get(current.contact_id)?.display_name || byContact.get(current.contact_id)?.phone || "Contato"}
                             </strong>
-                            <span style={{fontSize: "12px", color: "#aba8bf", display: "flex", alignItems: "center", gap: "6px", marginTop: "4px"}}>
-                              <span>Status: {current.status}</span>
-                              <span>·</span>
+                            <div style={{fontSize: "12px", color: "#aba8bf", display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", flexWrap: "wrap"}}>
                               <span style={{
                                 fontSize: "11px",
                                 padding: "2px 8px",
@@ -1666,10 +2310,62 @@ export default function OperatorPage() {
                               }}>
                                 {current.mode === "human" ? "👤 Atendimento Humano Ativo" : "🤖 Atendimento com IA Ativo"}
                               </span>
-                            </span>
+                            </div>
                           </div>
 
-                          <div>
+                          {/* Controles de Funil, Etiqueta Comercial e Handoff */}
+                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}}>
+                            {/* Seletor de Etapa do Funil */}
+                            <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                              <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>Funil:</span>
+                              <select
+                                value={getEffectiveStage(current)}
+                                onChange={e => void handleSetFunnelStatus(current.id, e.target.value)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: "8px",
+                                  background: "#161325",
+                                  border: "1px solid #3d345c",
+                                  color: "#fff",
+                                  fontSize: "12px",
+                                  fontWeight: 600,
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <option value="novo">Novo Contato</option>
+                                <option value="ai">🤖 IA Atendendo</option>
+                                <option value="waiting_human">🚨 Precisa de Humano</option>
+                                <option value="human">👤 Atendente Assumiu</option>
+                                <option value="waiting_client">⏳ Aguardando Cliente</option>
+                                <option value="closed">✅ Finalizado</option>
+                              </select>
+                            </div>
+
+                            {/* Seletor de Etiqueta Comercial */}
+                            <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                              <Tag size={13} color="#aba8bf"/>
+                              <select
+                                value={byContact.get(current.contact_id) ? contactTagMap.get(current.contact_id) || "" : ""}
+                                onChange={e => void handleSetCommercialTag(current.contact_id, e.target.value)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: "8px",
+                                  background: "#161325",
+                                  border: "1px solid #3d345c",
+                                  color: "#fff",
+                                  fontSize: "12px",
+                                  fontWeight: 600,
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <option value="">Sem Etiqueta Comercial</option>
+                                {data?.tags?.map(t => (
+                                  <option key={t.id} value={t.id}>🏷️ {t.name}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Botão Devolver para IA / Assumir Atendimento Humano */}
                             {current.mode === "human" ? (
                               <button
                                 type="button"
@@ -1791,10 +2487,88 @@ export default function OperatorPage() {
                           )}
                         </div>
 
-                        <div className="op-readonly" style={{borderTop: "1px solid #372f4d", paddingTop: "12px", display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#aba8bf"}}>
-                          <ShieldCheck size={16} color="#00db8c"/>
-                          <span>Histórico seguro da sua loja. O atendente humano pode assumir e devolver para a IA a qualquer momento.</span>
-                        </div>
+                        {/* INPUT DE MENSAGEM HUMANA OU AVISO DE ATENDIMENTO IA */}
+                        {current.mode === "human" ? (
+                          <form
+                            onSubmit={e => {
+                              e.preventDefault();
+                              void handleSendHumanMessage();
+                            }}
+                            style={{
+                              borderTop: "1px solid #372f4d",
+                              paddingTop: "14px",
+                              marginTop: "10px",
+                              display: "flex",
+                              gap: "10px",
+                              alignItems: "center"
+                            }}
+                          >
+                            <input
+                              type="text"
+                              placeholder="Digite uma mensagem humana para enviar no WhatsApp oficial do cliente..."
+                              value={humanInput}
+                              onChange={e => setHumanInput(e.target.value)}
+                              disabled={sendingHumanMsg}
+                              style={{
+                                flex: 1,
+                                padding: "12px 14px",
+                                borderRadius: "10px",
+                                background: "#161325",
+                                border: "1px solid #3d345c",
+                                color: "#fff",
+                                fontSize: "14px"
+                              }}
+                            />
+                            <button
+                              type="submit"
+                              className="op-primary"
+                              disabled={sendingHumanMsg || !humanInput.trim()}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "12px 20px",
+                                borderRadius: "10px",
+                                fontWeight: 700,
+                                background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                                cursor: "pointer",
+                                flexShrink: 0
+                              }}
+                            >
+                              <Send size={15}/> {sendingHumanMsg ? "Enviando..." : "Enviar (WhatsApp)"}
+                            </button>
+                          </form>
+                        ) : (
+                          <div style={{
+                            borderTop: "1px solid #372f4d",
+                            paddingTop: "12px",
+                            marginTop: "10px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: "12px",
+                            color: "#aba8bf",
+                            background: "rgba(255,255,255,0.02)",
+                            padding: "10px 14px",
+                            borderRadius: "10px",
+                            flexWrap: "wrap",
+                            gap: "10px"
+                          }}>
+                            <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                              <Bot size={18} color="#00db8c"/>
+                              <span>A IA está conduzindo este atendimento automaticamente. Para responder manualmente pelo WhatsApp, assuma a conversa.</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="op-refresh"
+                              style={{background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", borderColor: "#f59e0b", fontWeight: 700, fontSize: "11px", padding: "6px 12px"}}
+                              disabled={claiming || loading}
+                              onClick={() => void toggleConversationMode(current.id, "human")}
+                            >
+                              <Users size={13}/> Assumir Atendimento
+                            </button>
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div className="op-centered op-thread-empty" style={{textAlign: "center", padding: "60px 20px", color: "#8c879b"}}>

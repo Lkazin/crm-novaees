@@ -37,12 +37,43 @@ export async function POST(request: NextRequest) {
 
     const redisUrl = process.env.CRM_REDIS_URL;
 
+    // Action: Set Funnel Status
+    if (action === "set_status") {
+      const newStatus = typeof data.status === "string" ? data.status : "open";
+      const allowedStatuses = ["novo", "ai", "waiting_human", "human", "waiting_client", "closed", "open", "urgent"];
+      if (!allowedStatuses.includes(newStatus)) {
+        return privateJson({ error: "invalid_status" }, 400);
+      }
+      const patchData: Record<string, unknown> = { status: newStatus };
+      if (newStatus === "ai") {
+        patchData.mode = "ai";
+        patchData.assigned_to = null;
+      } else if (newStatus === "human" || newStatus === "waiting_client") {
+        patchData.mode = "human";
+        patchData.assigned_to = operator.id;
+      }
+      await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
+        method: "PATCH",
+        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+        body: JSON.stringify(patchData)
+      });
+      if (newStatus !== "urgent" && redisUrl) {
+        try {
+          const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
+          await redis.connect();
+          await redis.del(`crm:escalation:${conversation}`);
+          redis.disconnect();
+        } catch {}
+      }
+      return privateJson({ success: true, conversationId: conversation, status: newStatus, mode: patchData.mode });
+    }
+
     // Action: Resolve Urgency
     if (action === "resolve_urgency") {
       await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
         method: "PATCH",
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "open" })
+        body: JSON.stringify({ status: "human" })
       });
       if (redisUrl) {
         try {
@@ -52,7 +83,7 @@ export async function POST(request: NextRequest) {
           redis.disconnect();
         } catch {}
       }
-      return privateJson({ resolved: true, conversationId: conversation, status: "open" });
+      return privateJson({ resolved: true, conversationId: conversation, status: "human" });
     }
 
     if (targetMode === "ai") {

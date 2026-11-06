@@ -98,10 +98,12 @@ export async function GET(request: NextRequest) {
     }
 
     const query = "tenant_id=eq." + encodeURIComponent(selected);
-    const [contacts, conversations, messages] = await Promise.all([
+    const [contacts, conversations, messages, tags, contactTags] = await Promise.all([
       supabaseRows<Contact[]>("crm_contacts?select=id,phone,display_name,created_at&" + query + "&order=created_at.desc&limit=100", user.token),
       supabaseRows<Conversation[]>("crm_conversations?select=id,contact_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token),
-      supabaseRows<Message[]>("crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token)
+      supabaseRows<Message[]>("crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token),
+      supabaseRows<Array<{ id: string; name: string; color: string }>>("crm_tags?select=id,name,color&" + query, user.token).catch(() => []),
+      supabaseRows<Array<{ contact_id: string; tag_id: string }>>("crm_contact_tags?select=contact_id,tag_id&" + query, user.token).catch(() => [])
     ]);
 
     // Fetch escalation info from Redis for urgent conversations
@@ -158,7 +160,9 @@ export async function GET(request: NextRequest) {
       contacts,
       conversations,
       messages,
-      escalations
+      escalations,
+      tags,
+      contactTags
     });
   } catch {
     return privateJson({ error: "crm_data_unavailable" }, 503);
