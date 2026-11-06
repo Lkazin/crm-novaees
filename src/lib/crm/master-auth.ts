@@ -7,6 +7,9 @@ export const MASTER_COOKIE_NAME = "nw_master_session";
 // Standardized session lifetime: exactly 12 hours (43200 seconds)
 export const MASTER_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const MASTER_SESSION_TTL_SEC = 12 * 60 * 60;
+// Extended session lifetime for "Remember me" (30 days)
+export const MASTER_REMEMBER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const MASTER_REMEMBER_TTL_SEC = 30 * 24 * 60 * 60;
 
 type Staff = { role: string; enabled: boolean };
 
@@ -52,15 +55,16 @@ export function timingSafeMatch(candidate: string, expected: string): boolean {
 
 /**
  * Create a signed, tamper-proof session token for Master administrators.
+ * Supports optional 30-day extended remember-me lifetime.
  * Requires CRM_MASTER_SESSION_SECRET in environment; throws if missing (fail-closed).
  */
-export function signMasterToken(actor = "master_admin"): string {
+export function signMasterToken(actor = "master_admin", rememberMe = false): string {
   const secret = getMasterSessionSecret();
   if (!secret) {
     throw new Error("CRM_MASTER_SESSION_SECRET_MISSING: Cannot sign session without dedicated environment secret (minimum 32 chars).");
   }
   const timestamp = Date.now().toString();
-  const payload = `${actor}:${timestamp}`;
+  const payload = rememberMe ? `${actor}:${timestamp}:remember` : `${actor}:${timestamp}`;
   const hmacKey = crypto.createHash("sha256").update(secret).digest();
   const hmac = crypto.createHmac("sha256", hmacKey).update(payload).digest("hex");
   return `${payload}:${hmac}`;
@@ -78,23 +82,45 @@ export function verifyMasterToken(token: string | undefined): { valid: boolean; 
     return { valid: false };
   }
 
-  const parts = token.split(":");
-  if (parts.length !== 3) return { valid: false };
-  const [actor, timestampStr, signature] = parts;
-  const timestamp = parseInt(timestampStr, 10);
-  if (Number.isNaN(timestamp) || Date.now() - timestamp > MASTER_SESSION_TTL_MS || timestamp > Date.now() + 60000) {
-    return { valid: false };
+  const cleanToken = token.includes("%") ? decodeURIComponent(token) : token;
+  const parts = cleanToken.split(":");
+  if (parts.length === 3) {
+    const [actor, timestampStr, signature] = parts;
+    const timestamp = parseInt(timestampStr, 10);
+    if (Number.isNaN(timestamp) || Date.now() - timestamp > MASTER_SESSION_TTL_MS || timestamp > Date.now() + 60000) {
+      return { valid: false };
+    }
+
+    const payload = `${actor}:${timestampStr}`;
+    const hmacKey = crypto.createHash("sha256").update(secret).digest();
+    const expectedHmac = crypto.createHmac("sha256", hmacKey).update(payload).digest("hex");
+
+    if (!timingSafeMatch(signature, expectedHmac)) {
+      return { valid: false };
+    }
+
+    return { valid: true, actor };
   }
 
-  const payload = `${actor}:${timestampStr}`;
-  const hmacKey = crypto.createHash("sha256").update(secret).digest();
-  const expectedHmac = crypto.createHmac("sha256", hmacKey).update(payload).digest("hex");
+  if (parts.length === 4 && parts[2] === "remember") {
+    const [actor, timestampStr, mode, signature] = parts;
+    const timestamp = parseInt(timestampStr, 10);
+    if (Number.isNaN(timestamp) || Date.now() - timestamp > MASTER_REMEMBER_TTL_MS || timestamp > Date.now() + 60000) {
+      return { valid: false };
+    }
 
-  if (!timingSafeMatch(signature, expectedHmac)) {
-    return { valid: false };
+    const payload = `${actor}:${timestampStr}:${mode}`;
+    const hmacKey = crypto.createHash("sha256").update(secret).digest();
+    const expectedHmac = crypto.createHmac("sha256", hmacKey).update(payload).digest("hex");
+
+    if (!timingSafeMatch(signature, expectedHmac)) {
+      return { valid: false };
+    }
+
+    return { valid: true, actor };
   }
 
-  return { valid: true, actor };
+  return { valid: false };
 }
 
 /**

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyOperator } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +14,14 @@ function getEvolutionConfig() {
 
 export async function POST(req: NextRequest) {
   try {
+    const [masterAuth, operator] = await Promise.all([
+      verifyMasterRequest(req),
+      verifyOperator()
+    ]);
+    if (!masterAuth.authorized && !operator) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
     const { url, key, secret } = getEvolutionConfig();
     if (!key) {
       return NextResponse.json({ error: "Evolution API Key nao configurada" }, { status: 500 });
@@ -119,6 +129,14 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const [masterAuth, operator] = await Promise.all([
+      verifyMasterRequest(req),
+      verifyOperator()
+    ]);
+    if (!masterAuth.authorized && !operator) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
     const { url, key } = getEvolutionConfig();
     if (!key) {
       return NextResponse.json({ error: "Evolution API Key nao configurada" }, { status: 500 });

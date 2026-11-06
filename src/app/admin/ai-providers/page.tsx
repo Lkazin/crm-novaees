@@ -52,7 +52,13 @@ export default function ProvidersLab() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/crm/admin/ai-lab/models", { cache: "no-store" });
+      const res = await fetch("/api/crm/admin/ai-lab/models", { cache: "no-store", credentials: "same-origin" });
+      if (res.status === 401 || res.status === 403) {
+        if (typeof window !== "undefined") {
+          window.location.href = "/";
+        }
+        return;
+      }
       if (!res.ok) {
         setError("Não foi possível carregar os modelos da Central de IAs.");
         return;

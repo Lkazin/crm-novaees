@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyOperator } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const [masterAuth, operator] = await Promise.all([
+      verifyMasterRequest(req),
+      verifyOperator()
+    ]);
+    if (!masterAuth.authorized && !operator) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
     const url = (process.env.EVOLUTION_API_URL ?? "http://host.docker.internal:8080").replace(/\/$/, "");
     const key = process.env.EVOLUTION_API_KEY ?? "";
     const instanceName = req.nextUrl.searchParams.get("instance") || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";

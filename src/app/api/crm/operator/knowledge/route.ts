@@ -47,6 +47,10 @@ export async function POST(request:NextRequest) {
   try {
     const operator=await verifyOperator();
     if(!operator)return privateJson({error:"unauthorized"},401);
+    const members=await supabaseRows<{tenant_id:string}[]>(
+      "crm_tenant_memberships?select=tenant_id&tenant_id=eq."+payload.tenantId+"&user_id=eq."+operator.id+"&limit=1",
+      operator.token);
+    if(!members.length)return privateJson({error:"tenant_forbidden"},403);
     const response=await write("crm_knowledge_articles","POST",operator,{
       tenant_id:payload.tenantId,title:(payload.title as string).trim(),
       body:(payload.body as string).trim(),status:"draft",created_by:operator.id
@@ -72,6 +76,10 @@ export async function PATCH(request:NextRequest) {
     const operator=await verifyOperator();
     if(!operator)return privateJson({error:"unauthorized"},401);
     const tenant=String(payload.tenantId),id=String(payload.id);
+    const members=await supabaseRows<{tenant_id:string}[]>(
+      "crm_tenant_memberships?select=tenant_id&tenant_id=eq."+tenant+"&user_id=eq."+operator.id+"&limit=1",
+      operator.token);
+    if(!members.length)return privateJson({error:"tenant_forbidden"},403);
     const existing=await supabaseRows<{id:string}[]>(
       "crm_knowledge_articles?select=id&id=eq."+id+"&tenant_id=eq."+tenant+"&limit=1",operator.token);
     if(!existing.length)return privateJson({error:"not_found"},404);
