@@ -6,7 +6,7 @@ import {
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, Wand2
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2
 } from "lucide-react";
 
 type Tenant = { id: string; name: string; status: string };
@@ -145,6 +145,7 @@ export default function OperatorPage() {
   const [tenant, setTenant] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("whatsapp");
   const [selected, setSelected] = useState("");
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "ai" | "human" | "urgent">("all");
   const [newContactOpen, setNewContactOpen] = useState(false);
@@ -918,13 +919,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           <h1 style={{fontSize: "20px"}}>Verificando acesso seguro...</h1>
         </section>
       ) : !authenticated ? (
-        <main className="op-card op-login" style={{maxWidth: "460px", margin: "70px auto"}}>
-          <div style={{display: "inline-grid", placeItems: "center", width: "62px", height: "62px", borderRadius: "18px", background: "var(--grad-primary)", margin: "0 auto 16px", boxShadow: "var(--glow-pink)"}}>
-            <LockKeyhole size={30} color="#fff"/>
-          </div>
-          <h1 style={{fontSize: "26px", margin: "0 0 8px", textAlign: "center", fontWeight: 800}}>Painel da Loja</h1>
-          <p style={{textAlign: "center", color: "#aba8bf", fontSize: "14px", lineHeight: "1.5", margin: "0 0 24px"}}>
-            Acesse com seu e-mail e senha para gerenciar seus atendimentos, conectar seu WhatsApp e configurar a IA da sua empresa.
+        <main className="op-card op-login" style={{maxWidth: "460px", margin: "50px auto"}}>
+          <img
+            src="/novaes-crm-logo.jpg"
+            alt="Novaes CRM IA"
+            style={{
+              width: "88px",
+              height: "88px",
+              borderRadius: "20px",
+              objectFit: "cover",
+              margin: "0 auto 16px",
+              display: "block",
+              border: "1px solid rgba(236, 72, 153, 0.4)",
+              boxShadow: "0 0 25px rgba(236, 72, 153, 0.4)"
+            }}
+          />
+          <h1 style={{fontSize: "26px", margin: "0 0 4px", textAlign: "center", fontWeight: 800}}>
+            Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
+          </h1>
+          <p style={{textAlign: "center", color: "#c084fc", fontSize: "12px", fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", margin: "0 0 18px"}}>
+            CRM Inteligente da NovaesWeb
+          </p>
+          <p style={{textAlign: "center", color: "#aba8bf", fontSize: "13px", lineHeight: "1.5", margin: "0 0 24px"}}>
+            Acesse para acompanhar suas conversas no WhatsApp, monitorar o funil e gerenciar sua IA em tempo real.
           </p>
           <form onSubmit={e => void signIn(e)} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
             <label style={{fontSize: "13px", color: "#d1c8e6"}}>
@@ -965,14 +982,25 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
         <>
           {/* MENU LATERAL FIXO (SIDEBAR) */}
           <aside className="nw-sidebar">
-            <div className="nw-sidebar-brand">
-              <div className="nw-sidebar-logo">N</div>
+            <div className="nw-sidebar-brand" style={{display: "flex", alignItems: "center", gap: "12px"}}>
+              <img
+                src="/novaes-crm-logo.jpg"
+                alt="Novaes CRM IA"
+                style={{
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "10px",
+                  objectFit: "cover",
+                  border: "1px solid rgba(236, 72, 153, 0.4)",
+                  boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)"
+                }}
+              />
               <div>
-                <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px"}}>
-                  NovaesWeb IA
+                <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800}}>
+                  Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
                 </strong>
-                <small style={{display: "block", fontSize: "11px", color: "#ec4899", fontWeight: 700, letterSpacing: "0.5px"}}>
-                  PAINEL DA LOJA
+                <small style={{display: "block", fontSize: "10px", color: "#c084fc", fontWeight: 700, letterSpacing: "0.6px", textTransform: "uppercase"}}>
+                  CRM Inteligente
                 </small>
               </div>
             </div>
@@ -2139,27 +2167,27 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               <>
                 <section className="op-workspace" style={{minHeight: "620px"}}>
                   {/* Coluna Esquerda: Lista de Conversas */}
-                  <aside className="op-card op-inbox" style={{display: "flex", flexDirection: "column"}}>
+                  <aside className={`op-card op-inbox ${mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
                     <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px"}}>
-                      <h2 style={{margin: 0, fontSize: "18px"}}>Conversas WhatsApp</h2>
-                      <span style={{fontSize: "12px", color: "#a59cb8"}}>{filtered.length} listadas</span>
+                      <h2 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Conversas WhatsApp</h2>
+                      <span style={{fontSize: "12px", color: "#a59cb8", fontWeight: 600}}>{filtered.length} listadas</span>
                     </div>
 
-                    <label className="op-search" style={{marginBottom: "10px"}}>
-                      <Search size={16}/>
+                    <label className="op-search">
+                      <Search size={16} color="#ec4899"/>
                       <input aria-label="Buscar contato" placeholder="Buscar por nome ou número..." value={search} onChange={e => setSearch(e.target.value)}/>
                     </label>
 
-                    {/* Funil de Atendimento Operacional (6 Etapas) */}
-                    <div style={{display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap"}}>
+                    {/* Funil de Atendimento Operacional (6 Etapas com rolagem suave) */}
+                    <div className="op-funnel-bar">
                       {[
                         { id: "all", label: "Todas", count: funnelCounts.all, bg: "var(--grad-primary)", border: "#ec4899", color: "#fff" },
-                        { id: "novo", label: "Novo Contato", count: funnelCounts.novo, bg: "rgba(59, 130, 246, 0.2)", border: "#3b82f6", color: "#93c5fd" },
-                        { id: "ai", label: "🤖 IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.2)", border: "#00db8c", color: "#00db8c" },
-                        { id: "waiting_human", label: "🚨 Precisa de Humano", count: funnelCounts.waiting_human, bg: "rgba(239, 68, 68, 0.25)", border: "#ef4444", color: "#fca5a5" },
-                        { id: "human", label: "👤 Atendente", count: funnelCounts.human, bg: "rgba(245, 158, 11, 0.2)", border: "#f59e0b", color: "#fcd34d" },
-                        { id: "waiting_client", label: "⏳ Aguardando", count: funnelCounts.waiting_client, bg: "rgba(14, 165, 233, 0.2)", border: "#0ea5e9", color: "#7dd3fc" },
-                        { id: "closed", label: "✅ Finalizado", count: funnelCounts.closed, bg: "rgba(107, 114, 128, 0.2)", border: "#6b7280", color: "#d1d5db" }
+                        { id: "novo", label: "Novo Contato", count: funnelCounts.novo, bg: "rgba(59, 130, 246, 0.18)", border: "#3b82f6", color: "#93c5fd" },
+                        { id: "ai", label: "🤖 IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.18)", border: "#00db8c", color: "#00db8c" },
+                        { id: "waiting_human", label: "🚨 Precisa de Humano", count: funnelCounts.waiting_human, bg: "rgba(239, 68, 68, 0.22)", border: "#ef4444", color: "#fca5a5" },
+                        { id: "human", label: "👤 Atendente", count: funnelCounts.human, bg: "rgba(245, 158, 11, 0.18)", border: "#f59e0b", color: "#fcd34d" },
+                        { id: "waiting_client", label: "⏳ Aguardando", count: funnelCounts.waiting_client, bg: "rgba(14, 165, 233, 0.18)", border: "#0ea5e9", color: "#7dd3fc" },
+                        { id: "closed", label: "✅ Finalizado", count: funnelCounts.closed, bg: "rgba(107, 114, 128, 0.18)", border: "#6b7280", color: "#d1d5db" }
                       ].map(f => {
                         const isSelected = funnelFilter === f.id;
                         return (
@@ -2168,26 +2196,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             type="button"
                             onClick={() => setFunnelFilter(f.id as any)}
                             style={{
-                              padding: "5px 9px",
+                              padding: "7px 11px",
                               borderRadius: "10px",
                               border: "1px solid",
-                              fontSize: "11px",
+                              fontSize: "12px",
                               fontWeight: 700,
+                              whiteSpace: "nowrap",
+                              flexShrink: 0,
                               background: isSelected ? f.bg : "transparent",
-                              borderColor: isSelected ? f.border : "#3e3752",
+                              borderColor: isSelected ? f.border : "rgba(255, 255, 255, 0.1)",
                               color: isSelected ? (f.id === "all" ? "#fff" : f.color) : "#aba8bf",
                               display: "inline-flex",
                               alignItems: "center",
-                              gap: "4px",
-                              cursor: "pointer"
+                              gap: "6px",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease"
                             }}
                           >
                             <span>{f.label}</span>
                             <span style={{
-                              background: isSelected ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.08)",
-                              padding: "1px 5px",
+                              background: isSelected ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.08)",
+                              padding: "1px 6px",
                               borderRadius: "8px",
-                              fontSize: "10px"
+                              fontSize: "10px",
+                              fontWeight: 800
                             }}>
                               {f.count}
                             </span>
@@ -2237,42 +2269,64 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <button
                             key={c.id}
                             className={isSelected ? "op-contact active" : "op-contact"}
-                            onClick={() => setSelected(c.id)}
+                            onClick={() => {
+                              setSelected(c.id);
+                              setMobileChatOpen(true);
+                            }}
                             style={{
                               display: "flex",
                               alignItems: "center",
                               gap: "12px",
-                              padding: "12px",
-                              borderRadius: "10px",
+                              padding: "11px 13px",
+                              borderRadius: "12px",
                               width: "100%",
                               textAlign: "left",
-                              border: isUrgent ? "1px solid rgba(239, 68, 68, 0.4)" : undefined,
-                              background: isUrgent && !isSelected ? "rgba(239, 68, 68, 0.05)" : undefined
+                              border: isSelected
+                                ? "1px solid #ec4899"
+                                : isUrgent
+                                ? "1px solid rgba(239, 68, 68, 0.45)"
+                                : "1px solid rgba(255, 255, 255, 0.05)",
+                              background: isSelected
+                                ? "linear-gradient(135deg, rgba(225, 29, 72, 0.18), rgba(139, 92, 246, 0.18))"
+                                : isUrgent
+                                ? "rgba(239, 68, 68, 0.06)"
+                                : "rgba(255, 255, 255, 0.02)",
+                              boxShadow: isSelected ? "0 4px 14px rgba(0, 0, 0, 0.25)" : "none",
+                              transition: "all 0.15s ease"
                             }}
                           >
                             <div style={{
-                              width: "40px",
-                              height: "40px",
+                              width: "42px",
+                              height: "42px",
                               borderRadius: "50%",
-                              background: isUrgent ? "linear-gradient(135deg, #ef4444, #991b1b)" : isHumanMode ? "linear-gradient(135deg, #b45309, #d97706)" : "var(--grad-primary)",
-                              boxShadow: isUrgent ? "0 0 10px rgba(239, 68, 68, 0.7)" : "none",
+                              background: isUrgent
+                                ? "linear-gradient(135deg, #ef4444, #991b1b)"
+                                : isHumanMode
+                                ? "linear-gradient(135deg, #b45309, #d97706)"
+                                : "var(--grad-primary)",
                               display: "grid",
                               placeItems: "center",
-                              fontWeight: 700,
-                              fontSize: "14px",
+                              fontWeight: 800,
+                              fontSize: "15px",
                               color: "#fff",
-                              flexShrink: 0
+                              flexShrink: 0,
+                              boxShadow: isUrgent ? "0 0 12px rgba(239, 68, 68, 0.6)" : "none"
                             }}>
                               {(contact?.display_name || contact?.phone || "C").charAt(0).toUpperCase()}
                             </div>
                             <div style={{minWidth: 0, flex: 1}}>
-                              <div style={{display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
+                              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px"}}>
                                 <strong style={{fontSize: "14px", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>
                                   {contact?.display_name || contact?.phone || "Contato"}
                                 </strong>
+                                <span style={{fontSize: "11px", color: "#9ca3af", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap"}}>
+                                  {dateTime(c.last_message_at)}
+                                </span>
+                              </div>
+                              <div style={{display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap"}}>
                                 {contactTag && (
                                   <span style={{
-                                    fontSize: "9px",
+                                    fontSize: "10px",
                                     padding: "1px 6px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
@@ -2280,18 +2334,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                     color: contactTag.color,
                                     border: `1px solid ${contactTag.color}60`
                                   }}>
-                                    {contactTag.name}
+                                    🏷️ {contactTag.name}
                                   </span>
                                 )}
-                              </div>
-                              <span style={{fontSize: "12px", color: "#9ca3af", display: "flex", alignItems: "center", gap: "6px", marginTop: "3px", flexWrap: "wrap"}}>
                                 {stage === "waiting_human" ? (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 800,
-                                    background: "rgba(239, 68, 68, 0.25)",
+                                    background: "rgba(239, 68, 68, 0.22)",
                                     color: "#fca5a5",
                                     border: "1px solid #ef4444",
                                     display: "inline-flex",
@@ -2303,61 +2355,65 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 ) : stage === "human" ? (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
                                     background: "rgba(245, 158, 11, 0.2)",
-                                    color: "#f59e0b"
+                                    color: "#f59e0b",
+                                    border: "1px solid rgba(245, 158, 11, 0.35)"
                                   }}>
                                     👤 Atendente
                                   </span>
                                 ) : stage === "waiting_client" ? (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
-                                    background: "rgba(14, 165, 233, 0.2)",
-                                    color: "#7dd3fc"
+                                    background: "rgba(14, 165, 233, 0.18)",
+                                    color: "#7dd3fc",
+                                    border: "1px solid rgba(14, 165, 233, 0.35)"
                                   }}>
-                                    ⏳ Aguardando Cliente
+                                    ⏳ Aguardando
                                   </span>
                                 ) : stage === "closed" ? (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
                                     background: "rgba(107, 114, 128, 0.2)",
-                                    color: "#d1d5db"
+                                    color: "#d1d5db",
+                                    border: "1px solid rgba(107, 114, 128, 0.3)"
                                   }}>
                                     ✅ Finalizado
                                   </span>
                                 ) : stage === "novo" ? (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
-                                    background: "rgba(59, 130, 246, 0.2)",
-                                    color: "#93c5fd"
+                                    background: "rgba(59, 130, 246, 0.18)",
+                                    color: "#93c5fd",
+                                    border: "1px solid rgba(59, 130, 246, 0.35)"
                                   }}>
                                     Novo Contato
                                   </span>
                                 ) : (
                                   <span style={{
                                     fontSize: "10px",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
                                     background: "rgba(0, 219, 140, 0.15)",
-                                    color: "#00db8c"
+                                    color: "#00db8c",
+                                    border: "1px solid rgba(0, 219, 140, 0.3)"
                                   }}>
                                     🤖 IA
                                   </span>
                                 )}
-                                <span>{dateTime(c.last_message_at)}</span>
-                              </span>
+                              </div>
                             </div>
                           </button>
                         );
@@ -2370,38 +2426,112 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </aside>
 
                   {/* Coluna Direita: Mensagens do WhatsApp */}
-                  <article className="op-card op-thread" style={{display: "flex", flexDirection: "column"}}>
+                  <article className={`op-card op-thread ${!mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
                     {current ? (
                       <>
-                        <div className="op-thread-head" style={{display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px"}}>
-                          <div>
-                            <strong style={{fontSize: "17px", color: "#fff", display: "block"}}>
-                              {byContact.get(current.contact_id)?.display_name || byContact.get(current.contact_id)?.phone || "Contato"}
-                            </strong>
-                            <div style={{fontSize: "12px", color: "#aba8bf", display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", flexWrap: "wrap"}}>
-                              <span style={{
-                                fontSize: "11px",
-                                padding: "2px 8px",
-                                borderRadius: "10px",
-                                fontWeight: 700,
-                                background: current.mode === "human" ? "rgba(245, 158, 11, 0.2)" : "rgba(0, 219, 140, 0.15)",
-                                color: current.mode === "human" ? "#f59e0b" : "#00db8c"
-                              }}>
-                                {current.mode === "human" ? "👤 Atendimento Humano Ativo" : "🤖 Atendimento com IA Ativo"}
-                              </span>
+                        <div className="op-thread-head">
+                          {/* Linha Superior: Botão Mobile Voltar + Info do Contato + Ação Principal */}
+                          <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", width: "100%"}}>
+                            <div style={{display: "flex", alignItems: "center", gap: "10px", minWidth: 0}}>
+                              <button
+                                type="button"
+                                className="op-mobile-back-btn"
+                                onClick={() => setMobileChatOpen(false)}
+                                style={{
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  background: "rgba(255, 255, 255, 0.06)",
+                                  border: "1px solid rgba(255, 255, 255, 0.12)",
+                                  borderRadius: "8px",
+                                  padding: "6px 11px",
+                                  color: "#fff",
+                                  fontSize: "12px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  flexShrink: 0
+                                }}
+                              >
+                                <ArrowLeft size={15}/>
+                                <span>Conversas</span>
+                              </button>
+
+                              <div style={{minWidth: 0}}>
+                                <strong style={{fontSize: "16px", color: "#fff", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>
+                                  {byContact.get(current.contact_id)?.display_name || byContact.get(current.contact_id)?.phone || "Contato"}
+                                </strong>
+                                <div style={{fontSize: "12px", color: "#aba8bf", display: "flex", alignItems: "center", gap: "8px", marginTop: "3px", flexWrap: "wrap"}}>
+                                  <span style={{fontVariantNumeric: "tabular-nums"}}>{byContact.get(current.contact_id)?.phone || ""}</span>
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "2px 8px",
+                                    borderRadius: "8px",
+                                    fontWeight: 700,
+                                    background: current.mode === "human" ? "rgba(245, 158, 11, 0.18)" : "rgba(0, 219, 140, 0.15)",
+                                    color: current.mode === "human" ? "#f59e0b" : "#00db8c",
+                                    border: `1px solid ${current.mode === "human" ? "rgba(245, 158, 11, 0.35)" : "rgba(0, 219, 140, 0.3)"}`
+                                  }}>
+                                    {current.mode === "human" ? "👤 Atendente Humano" : "🤖 Novaes CRM IA"}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
+
+                            {/* Botão Devolver para IA / Assumir Atendimento Humano */}
+                            {current.mode === "human" ? (
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                style={{
+                                  background: "rgba(0, 219, 140, 0.15)",
+                                  color: "#00db8c",
+                                  borderColor: "#00db8c",
+                                  fontWeight: 700,
+                                  fontSize: "12px",
+                                  padding: "7px 13px",
+                                  borderRadius: "9px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px"
+                                }}
+                                disabled={claiming || loading}
+                                onClick={() => void toggleConversationMode(current.id, "ai")}
+                              >
+                                <Bot size={15}/> {claiming ? "Reativando..." : "Devolver para a IA"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                style={{
+                                  background: "rgba(245, 158, 11, 0.15)",
+                                  color: "#f59e0b",
+                                  borderColor: "#f59e0b",
+                                  fontWeight: 700,
+                                  fontSize: "12px",
+                                  padding: "7px 13px",
+                                  borderRadius: "9px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px"
+                                }}
+                                disabled={claiming || loading}
+                                onClick={() => void toggleConversationMode(current.id, "human")}
+                              >
+                                <Users size={15}/> {claiming ? "Assumindo..." : "Assumir Atendimento"}
+                              </button>
+                            )}
                           </div>
 
-                          {/* Controles de Funil, Etiqueta Comercial e Handoff */}
-                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}}>
+                          {/* Linha Inferior: Controles de Funil e Etiqueta Comercial */}
+                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", paddingTop: "4px"}}>
                             {/* Seletor de Etapa do Funil */}
                             <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
-                              <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>Funil:</span>
+                              <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Funil:</span>
                               <select
                                 value={getEffectiveStage(current)}
                                 onChange={e => void handleSetFunnelStatus(current.id, e.target.value)}
                                 style={{
-                                  padding: "6px 10px",
+                                  padding: "5px 10px",
                                   borderRadius: "8px",
                                   background: "#161325",
                                   border: "1px solid #3d345c",
@@ -2428,7 +2558,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   value={byContact.get(current.contact_id) ? contactTagMap.get(current.contact_id) || "" : ""}
                                   onChange={e => void handleSetCommercialTag(current.contact_id, e.target.value)}
                                   style={{
-                                    padding: "6px 10px",
+                                    padding: "5px 10px",
                                     borderRadius: "8px",
                                     background: "#161325",
                                     border: "1px solid #3d345c",
@@ -2445,40 +2575,17 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 </select>
                               </div>
                             )}
-
-                            {/* Botão Devolver para IA / Assumir Atendimento Humano */}
-                            {current.mode === "human" ? (
-                              <button
-                                type="button"
-                                className="op-refresh"
-                                style={{background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", borderColor: "#00db8c", fontWeight: 700}}
-                                disabled={claiming || loading}
-                                onClick={() => void toggleConversationMode(current.id, "ai")}
-                              >
-                                <Bot size={16}/> {claiming ? "Reativando..." : "Devolver para a IA"}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="op-refresh"
-                                style={{background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", borderColor: "#f59e0b", fontWeight: 700}}
-                                disabled={claiming || loading}
-                                onClick={() => void toggleConversationMode(current.id, "human")}
-                              >
-                                <Users size={16}/> {claiming ? "Assumindo..." : "Assumir Atendimento Humano"}
-                              </button>
-                            )}
                           </div>
                         </div>
 
                         {/* ALERTA DE INSATISFAÇÃO / URGÊNCIA */}
                         {current.status === "urgent" && (
                           <div style={{
-                            background: "linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(185, 28, 28, 0.1))",
-                            border: "1px solid rgba(239, 68, 68, 0.5)",
+                            background: "linear-gradient(135deg, rgba(239, 68, 68, 0.16), rgba(185, 28, 28, 0.08))",
+                            border: "1px solid rgba(239, 68, 68, 0.45)",
                             borderRadius: "12px",
-                            padding: "12px 18px",
-                            margin: "14px 0 0",
+                            padding: "12px 16px",
+                            margin: "12px 0 0",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
@@ -2486,23 +2593,23 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             gap: "10px"
                           }}>
                             <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
-                              <div style={{background: "#ef4444", borderRadius: "8px", width: "32px", height: "32px", display: "grid", placeItems: "center", color: "#fff", flexShrink: 0}}>
-                                <ShieldAlert size={18} />
+                              <div style={{background: "rgba(239, 68, 68, 0.2)", border: "1px solid #ef4444", borderRadius: "8px", width: "32px", height: "32px", display: "grid", placeItems: "center", color: "#fca5a5", flexShrink: 0}}>
+                                <ShieldAlert size={17} />
                               </div>
                               <div>
                                 <strong style={{color: "#fca5a5", fontSize: "13px", display: "block"}}>
-                                  🚨 INSATISFAÇÃO DO CLIENTE IDENTIFICADA PELA IA
+                                  Insatisfação ou urgência identificada pela IA
                                 </strong>
                                 <span style={{color: "#fee2e2", fontSize: "12px"}}>
                                   Motivo: <strong>{data?.escalations?.[current.id]?.reason || "Reclamação ou Frustração Grave"}</strong>
-                                  {" · "}Atendimento pausado pela IA e encaminhado para você resolver com prioridade.
+                                  {" · "}Atendimento pausado pela IA para intervenção humana prioritária.
                                 </span>
                               </div>
                             </div>
                             <button
                               type="button"
                               className="op-refresh"
-                              style={{background: "rgba(239, 68, 68, 0.25)", color: "#fca5a5", borderColor: "#ef4444", fontSize: "12px", fontWeight: 700}}
+                              style={{background: "rgba(239, 68, 68, 0.2)", color: "#fca5a5", borderColor: "#ef4444", fontSize: "12px", fontWeight: 700, padding: "6px 12px", borderRadius: "8px"}}
                               onClick={() => void resolveUrgency(current.id)}
                             >
                               <CheckCircle2 size={14} /> Marcar como Resolvido
@@ -2516,8 +2623,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             background: "linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.08))",
                             border: "1px solid rgba(245, 158, 11, 0.4)",
                             borderRadius: "12px",
-                            padding: "14px 18px",
-                            margin: "14px 0 0"
+                            padding: "12px 16px",
+                            margin: "12px 0 0"
                           }}>
                             <div style={{color: "#f59e0b", fontSize: "12px", fontWeight: 800, textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px"}}>
                               <Users size={15}/> Resumo Inteligente do Atendimento
@@ -2528,7 +2635,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           </div>
                         )}
 
-                        <div className="op-bubbles" style={{flex: 1, overflowY: "auto", padding: "16px 0", display: "flex", flexDirection: "column", gap: "10px"}}>
+                        <div className="op-bubbles">
                           {thread.length ? thread.map(m => (
                             <div
                               key={m.id}
@@ -2536,15 +2643,18 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               style={{
                                 maxWidth: "80%",
                                 alignSelf: m.direction === "outbound" ? "flex-end" : "flex-start",
-                                padding: "12px 16px",
-                                borderRadius: "14px",
+                                padding: "11px 15px",
+                                borderRadius: m.direction === "outbound" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
                                 background: m.direction === "outbound"
-                                  ? (m.sender_type === "human" ? "linear-gradient(135deg, #1e3a8a, #2563eb)" : "var(--grad-primary)")
-                                  : "#1e1e2f",
+                                  ? (m.sender_type === "human"
+                                      ? "linear-gradient(135deg, #26173a, #3e1b52)"
+                                      : "var(--grad-primary)")
+                                  : "#181427",
                                 border: "1px solid",
                                 borderColor: m.direction === "outbound"
-                                  ? (m.sender_type === "human" ? "#3b82f6" : "#ec4899")
-                                  : "#34344e"
+                                  ? (m.sender_type === "human" ? "rgba(168, 85, 247, 0.45)" : "#ec4899")
+                                  : "rgba(255, 255, 255, 0.08)",
+                                boxShadow: m.direction === "outbound" ? "0 4px 12px rgba(0, 0, 0, 0.25)" : "none"
                               }}
                             >
                               <span style={{
@@ -2554,10 +2664,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 display: "block",
                                 marginBottom: "4px"
                               }}>
-                                {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 IA NovaesWeb" : "Cliente"}
+                                {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "Cliente"}
                               </span>
                               <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>
-                              <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px"}}>
+                              <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
                                 {dateTime(m.created_at)}
                               </small>
                             </div>
@@ -2576,9 +2686,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               void handleSendHumanMessage();
                             }}
                             style={{
-                              borderTop: "1px solid #372f4d",
-                              paddingTop: "14px",
-                              marginTop: "10px",
+                              borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                              paddingTop: "12px",
+                              marginTop: "8px",
                               display: "flex",
                               gap: "10px",
                               alignItems: "center"
@@ -2586,7 +2696,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           >
                             <input
                               type="text"
-                              placeholder="Digite uma mensagem humana para enviar no WhatsApp oficial do cliente..."
+                              placeholder="Digite uma mensagem humana para enviar no WhatsApp..."
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
                               disabled={sendingHumanMsg}
@@ -2594,8 +2704,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 flex: 1,
                                 padding: "12px 14px",
                                 borderRadius: "10px",
-                                background: "#161325",
-                                border: "1px solid #3d345c",
+                                background: "#141124",
+                                border: "1px solid rgba(236, 72, 153, 0.3)",
                                 color: "#fff",
                                 fontSize: "14px"
                               }}
@@ -2611,7 +2721,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 padding: "12px 20px",
                                 borderRadius: "10px",
                                 fontWeight: 700,
-                                background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                                background: "var(--grad-primary)",
                                 cursor: "pointer",
                                 flexShrink: 0
                               }}
@@ -2621,9 +2731,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           </form>
                         ) : (
                           <div style={{
-                            borderTop: "1px solid #372f4d",
+                            borderTop: "1px solid rgba(255, 255, 255, 0.08)",
                             paddingTop: "12px",
-                            marginTop: "10px",
+                            marginTop: "8px",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
@@ -2637,16 +2747,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           }}>
                             <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
                               <Bot size={18} color="#00db8c"/>
-                              <span>A IA está conduzindo este atendimento automaticamente. Para responder manualmente pelo WhatsApp, assuma a conversa.</span>
+                              <span>A IA está conduzindo este atendimento automaticamente no WhatsApp. Para responder manualmente, assuma a conversa.</span>
                             </div>
                             <button
                               type="button"
                               className="op-refresh"
-                              style={{background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", borderColor: "#f59e0b", fontWeight: 700, fontSize: "11px", padding: "6px 12px"}}
+                              style={{background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", borderColor: "#f59e0b", fontWeight: 700, fontSize: "12px", padding: "7px 13px", borderRadius: "8px"}}
                               disabled={claiming || loading}
                               onClick={() => void toggleConversationMode(current.id, "human")}
                             >
-                              <Users size={13}/> Assumir Atendimento
+                              <Users size={14}/> Assumir Atendimento
                             </button>
                           </div>
                         )}

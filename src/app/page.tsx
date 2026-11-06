@@ -174,8 +174,18 @@ export default function Dashboard() {
   return <div className="app-shell">
     {menuOpen && <button className="mobile-backdrop" aria-label="Fechar menu" onClick={() => setMenuOpen(false)} />}
     <aside className={`sidebar ${menuOpen ? "sidebar--open" : ""}`} aria-label="Navegação principal">
-      <div className="brand" role="img" aria-label="NovaesWeb CRM AI">
-        <span className="brand-mark">N</span><div><strong>NovaesWeb<span className="brand-star">✦</span></strong><span className="brand-pill">CRM AI</span></div>
+      <div className="brand" role="img" aria-label="Novaes CRM IA" style={{display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px"}}>
+        <img
+          src="/novaes-crm-logo.jpg"
+          alt="Novaes CRM IA"
+          style={{width: "42px", height: "42px", borderRadius: "10px", objectFit: "cover", border: "1px solid rgba(236, 72, 153, 0.4)", boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)"}}
+        />
+        <div>
+          <strong style={{fontSize: "16px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800}}>
+            Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
+          </strong>
+          <span className="brand-pill" style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", fontSize: "10px", padding: "2px 8px"}}>PAINEL MASTER</span>
+        </div>
       </div>
       <nav className="nav-list">
         {sections.map(({name,icon:Icon}) => <button key={name} className={`nav-item ${nav===name?"active":""}`} onClick={()=>{setNav(name);setMenuOpen(false);setInfo("");}}>
@@ -200,9 +210,15 @@ export default function Dashboard() {
           {access && <button className="crm-refresh" disabled={loading} onClick={()=>void refresh(token)}><RefreshCw size={17}/> Atualizar</button>}
         </div>
       </header>
-      {!access ? <section className="crm-lock-panel">
-        <LockKeyhole size={34}/>
-        <h2>Acessar Painel Master</h2>
+      {!access ? <section className="crm-lock-panel" style={{textAlign: "center", alignItems: "center"}}>
+        <img
+          src="/novaes-crm-logo.jpg"
+          alt="Novaes CRM IA"
+          style={{width: "80px", height: "80px", borderRadius: "18px", objectFit: "cover", margin: "0 auto 12px", border: "1px solid rgba(236, 72, 153, 0.4)", boxShadow: "0 0 25px rgba(236, 72, 153, 0.4)"}}
+        />
+        <h2 style={{fontSize: "24px", fontWeight: 800}}>
+          Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
+        </h2>
         <p>Informe a senha administrativa ou token do CRM para consultar conversas e gerenciar a IA.</p>
         <form onSubmit={e=>{e.preventDefault(); void refresh(token);}}>
           <input type="password" aria-label="Senha administrativa do CRM" autoComplete="current-password" placeholder="��������" value={token} onChange={e=>setToken(e.target.value)} required/>

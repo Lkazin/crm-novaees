@@ -820,12 +820,28 @@ export default function AdminCRM() {
       <main className="nw-layout-shell" style={{display: "grid", placeItems: "center", minHeight: "100vh", padding: "20px"}}>
         <div className="op-card" style={{width: "100%", maxWidth: "430px", padding: "38px", border: "1px solid rgba(236, 72, 153, 0.4)", boxShadow: "0 14px 50px rgba(0,0,0,0.6)"}}>
           <div style={{textAlign: "center", marginBottom: "26px"}}>
-            <div style={{width: "66px", height: "66px", margin: "0 auto 16px", borderRadius: "18px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
-              <ShieldCheck size={36} color="white"/>
-            </div>
-            <h2 style={{color: "white", margin: 0, fontSize: "24px", fontWeight: 800}}>Painel Master NovaesWeb</h2>
-            <p style={{color: "#c2bed4", fontSize: "14px", marginTop: "8px"}}>
-              Área restrita de SuperAdmin. Digite a senha Master para gerenciar clientes, planos e IAs.
+            <img
+              src="/novaes-crm-logo.jpg"
+              alt="Novaes CRM IA"
+              style={{
+                width: "88px",
+                height: "88px",
+                borderRadius: "20px",
+                objectFit: "cover",
+                margin: "0 auto 16px",
+                display: "block",
+                border: "1px solid rgba(236, 72, 153, 0.4)",
+                boxShadow: "0 0 25px rgba(236, 72, 153, 0.4)"
+              }}
+            />
+            <h2 style={{color: "white", margin: 0, fontSize: "24px", fontWeight: 800}}>
+              Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
+            </h2>
+            <p style={{color: "#f43f5e", fontSize: "11px", fontWeight: 800, letterSpacing: "0.8px", textTransform: "uppercase", margin: "4px 0 10px"}}>
+              Painel Master · SuperAdmin
+            </p>
+            <p style={{color: "#c2bed4", fontSize: "13px", marginTop: "8px", lineHeight: "1.5"}}>
+              Área de controle do catálogo comercial, limites, franquias e clientes do CRM.
             </p>
           </div>
           <form onSubmit={handleMasterLogin} style={{display: "flex", flexDirection: "column", gap: "16px"}}>
@@ -851,14 +867,25 @@ export default function AdminCRM() {
     <div className="nw-layout-shell">
       {/* MENU LATERAL FIXO MASTER (SIDEBAR) */}
       <aside className="nw-sidebar">
-        <div className="nw-sidebar-brand">
-          <div className="nw-sidebar-logo">M</div>
+        <div className="nw-sidebar-brand" style={{display: "flex", alignItems: "center", gap: "12px"}}>
+          <img
+            src="/novaes-crm-logo.jpg"
+            alt="Novaes CRM IA"
+            style={{
+              width: "42px",
+              height: "42px",
+              borderRadius: "10px",
+              objectFit: "cover",
+              border: "1px solid rgba(236, 72, 153, 0.4)",
+              boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)"
+            }}
+          />
           <div>
-            <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px"}}>
-              NovaesWeb Master
+            <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800}}>
+              Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
             </strong>
-            <small style={{display: "block", fontSize: "11px", color: "#f43f5e", fontWeight: 800, letterSpacing: "0.5px"}}>
-              SUPERADMIN
+            <small style={{display: "block", fontSize: "10px", color: "#f43f5e", fontWeight: 800, letterSpacing: "0.6px", textTransform: "uppercase"}}>
+              Painel Master
             </small>
           </div>
         </div>
