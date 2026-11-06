@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,16 +73,9 @@ export async function GET(request: NextRequest) {
     const storeInfo = articles[0]?.body ?? "";
     const storeInfoTitle = articles[0]?.title ?? "Informações da Loja e Cardápio";
 
-    // 3. Fetch tenant settings for operating hours & plan
+    // 3. Fetch effective plan & operating hours
     let operatingHours: OperatingHours = { ...DEFAULT_OPERATING_HOURS };
-    let plan = {
-      name: "CRM Start",
-      price: "149,00",
-      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-      status: "paid",
-      quotaLimit: 500,
-      quotaUsed: 0
-    };
+    const effectivePlan = await getEffectiveTenantPlan(tenant);
 
     const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenant}&limit=1`, {
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
@@ -93,9 +87,6 @@ export async function GET(request: NextRequest) {
       if (rawDesc.startsWith("{")) {
         try {
           const parsed = JSON.parse(rawDesc);
-          if (parsed.plan) {
-            plan = { ...plan, ...parsed.plan };
-          }
           if (parsed.ai_settings?.operatingHours) {
             operatingHours = { ...operatingHours, ...parsed.ai_settings.operatingHours };
           }
@@ -104,6 +95,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Read real quota used this month from Redis
+    let quotaUsed = 0;
     try {
       const monthKey = new Date().toISOString().slice(0, 7); // "YYYY-MM"
       const redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 1500, maxRetriesPerRequest: 1 });
@@ -111,9 +103,14 @@ export async function GET(request: NextRequest) {
       const usedRaw = await redis.get(`crm:quota:${tenant}:${monthKey}`);
       redis.disconnect();
       if (usedRaw) {
-        plan.quotaUsed = parseInt(usedRaw, 10) || 0;
+        quotaUsed = parseInt(usedRaw, 10) || 0;
       }
     } catch {}
+
+    const planData = {
+      ...effectivePlan,
+      quotaUsed
+    };
 
     return privateJson({
       agentId: agent.id,
@@ -123,7 +120,8 @@ export async function GET(request: NextRequest) {
       storeInfo,
       storeInfoTitle,
       operatingHours,
-      plan
+      plan: planData,
+      allowedFeatures: effectivePlan.allowedFeatures
     });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "ai_settings_unavailable" }, 503);
@@ -217,6 +215,14 @@ export async function POST(request: NextRequest) {
 
     // 3. Save operating hours in crm_tenant_settings
     if (incomingOperatingHours && typeof incomingOperatingHours === "object") {
+      const effectivePlan = await getEffectiveTenantPlan(tenantId);
+      if (incomingOperatingHours.enabled && !effectivePlan.allowedFeatures.includes("business_hours")) {
+        return privateJson({
+          error: "feature_not_included_in_plan",
+          message: "O controle de horários de atendimento requer o plano CRM Business ou Premium."
+        }, 403);
+      }
+
       const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"

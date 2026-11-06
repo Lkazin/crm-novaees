@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,22 +11,8 @@ function getAdminConfig() {
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
   const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
   const omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://host.docker.internal:20128/v1";
-  const omniKey = process.env.AI_API_KEY?.trim() || "sk-9208b8c0f2bfd069-e12668-5717db14";
+  const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, redisUrl, omniUrl, omniKey };
-}
-
-async function checkMasterAccess(request: NextRequest): Promise<boolean> {
-  const masterPassword = "NovaesWeb@2026Admin";
-  const labToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf";
-
-  const authHeader = request.headers.get("x-admin-password") || request.headers.get("authorization") || "";
-  const cleanHeader = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (cleanHeader === masterPassword || cleanHeader === labToken) return true;
-
-  const cookie = request.cookies.get("crm_admin_token")?.value || "";
-  if (cookie === masterPassword || cookie === labToken) return true;
-
-  return false;
 }
 
 const CURATED_MODELS = [
@@ -41,7 +28,8 @@ const CURATED_MODELS = [
 // GET: List available AI models and current global defaults
 export async function GET(request: NextRequest) {
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
@@ -103,7 +91,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(request.headers.get("origin"), request.url)) return privateJson({ error: "origin_forbidden" }, 403);
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 

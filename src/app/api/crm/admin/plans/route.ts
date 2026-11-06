@@ -1,68 +1,18 @@
 import { NextRequest } from "next/server";
-import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import {
+  CrmPlan,
+  TECHNICAL_FEATURES,
+  getMasterPlans,
+  saveMasterPlan,
+  syncTenantUsageLimits,
+  getRedis,
+  recordPlanAudit
+} from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-export type CrmPlan = {
-  id: string;
-  name: string;
-  price: string;
-  quotaLimit: number; // monthly conversations
-  description: string;
-  features: string[];
-  isPopular?: boolean;
-};
-
-const DEFAULT_PLANS: CrmPlan[] = [
-  {
-    id: "crm-start",
-    name: "CRM Start",
-    price: "149,00",
-    quotaLimit: 500,
-    description: "Ideal para pequenos comércios locais, lanchonetes e pizzarias.",
-    features: [
-      "Até 500 atendimentos/mês",
-      "NovaesWeb IA ativa 24h",
-      "Conexão WhatsApp (1 número)",
-      "Base de Conhecimento e Cardápio",
-      "Simulador de Teste no Painel",
-      "Atendimento Humano (Handoff)"
-    ]
-  },
-  {
-    id: "crm-business",
-    name: "CRM Business",
-    price: "249,00",
-    quotaLimit: 2000,
-    isPopular: true,
-    description: "Para empresas e lojas em crescimento com alto volume de clientes diários.",
-    features: [
-      "Até 2.000 atendimentos/mês",
-      "NovaesWeb IA com modelo de alta velocidade",
-      "Controle de Horários de Funcionamento",
-      "Resumo Inteligente para Atendentes",
-      "Fallback Automático (Zero Quedas)",
-      "Suporte Prioritário NovaesWeb"
-    ]
-  },
-  {
-    id: "crm-premium",
-    name: "CRM Premium",
-    price: "449,00",
-    quotaLimit: 5000,
-    description: "Para operações de grande porte, clínicas, imobiliárias e redes de lojas.",
-    features: [
-      "Até 5.000 atendimentos/mês",
-      "Multi-operadores ilimitados",
-      "IA dedicada com máxima prioridade",
-      "Regras personalizadas avançadas",
-      "Relatórios de métricas e conversão",
-      "Gerente de conta exclusivo"
-    ]
-  }
-];
 
 function getAdminConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
@@ -71,62 +21,64 @@ function getAdminConfig() {
   return { url, serviceKey, redisUrl };
 }
 
-async function checkMasterAccess(request: NextRequest): Promise<boolean> {
-  const masterPassword = "NovaesWeb@2026Admin";
-  const labToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf";
-
-  const authHeader = request.headers.get("x-admin-password") || request.headers.get("authorization") || "";
-  const cleanHeader = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (cleanHeader === masterPassword || cleanHeader === labToken) return true;
-
-  const cookie = request.cookies.get("crm_admin_token")?.value || "";
-  if (cookie === masterPassword || cookie === labToken) return true;
-
-  return false;
-}
-
-// GET: List all plans + client distribution count
+// GET: List all master plans, client distribution counts, and technical features catalog
 export async function GET(request: NextRequest) {
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
-    const { url, serviceKey, redisUrl } = getAdminConfig();
-    let plans = [...DEFAULT_PLANS];
+    const { url, serviceKey } = getAdminConfig();
+    const plans = await getMasterPlans();
 
-    // Read custom plans from Redis if present
-    try {
-      const redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1 });
-      await redis.connect();
-      const customPlansRaw = await redis.get("crm:master:plans");
-      redis.disconnect();
-      if (customPlansRaw) {
-        const custom = JSON.parse(customPlansRaw);
-        if (Array.isArray(custom) && custom.length > 0) {
-          plans = custom;
-        }
-      }
-    } catch {}
-
-    // Calculate how many clients are in each plan
+    // Calculate how many stores are enrolled in each plan
     const counts: Record<string, number> = {};
-    for (const p of plans) counts[p.name] = 0;
+    const enrolledStores: Record<string, Array<{ id: string; name: string; hasOverride: boolean }>> = {};
+
+    for (const p of plans) {
+      counts[p.id] = 0;
+      counts[p.name] = 0;
+      enrolledStores[p.id] = [];
+    }
 
     if (serviceKey && url) {
       try {
-        const rSettings = await fetch(url + "/rest/v1/crm_tenant_settings?select=tenant_id,business_description", {
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-          cache: "no-store"
-        });
-        if (rSettings.ok) {
+        const [rSettings, rTenants] = await Promise.all([
+          fetch(url + "/rest/v1/crm_tenant_settings?select=tenant_id,business_description", {
+            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+            cache: "no-store"
+          }),
+          fetch(url + "/rest/v1/crm_tenants?select=id,name,status", {
+            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+            cache: "no-store"
+          })
+        ]);
+
+        if (rSettings.ok && rTenants.ok) {
           const settings = (await rSettings.json()) as Array<{ tenant_id: string; business_description: string }>;
+          const tenants = (await rTenants.json()) as Array<{ id: string; name: string; status: string }>;
+          const tenantMap = new Map(tenants.map(t => [t.id, t]));
+
           for (const s of settings) {
             try {
               if (s.business_description?.startsWith("{")) {
                 const parsed = JSON.parse(s.business_description);
-                const pName = parsed?.plan?.name || "Plano IA Mensal";
-                counts[pName] = (counts[pName] || 0) + 1;
+                const pId = parsed?.plan?.planId;
+                const pName = parsed?.plan?.name || "CRM Start";
+                const hasOverride = parsed?.plan?.customQuotaOverride !== undefined && parsed?.plan?.customQuotaOverride !== null;
+                const tObj = tenantMap.get(s.tenant_id);
+
+                // Match by plan ID or plan Name
+                const matchedPlan = plans.find(p => p.id === pId || p.name.toLowerCase() === pName.toLowerCase());
+                if (matchedPlan) {
+                  counts[matchedPlan.id] = (counts[matchedPlan.id] || 0) + 1;
+                  counts[matchedPlan.name] = (counts[matchedPlan.name] || 0) + 1;
+                  if (tObj) {
+                    enrolledStores[matchedPlan.id] = enrolledStores[matchedPlan.id] || [];
+                    enrolledStores[matchedPlan.id].push({ id: tObj.id, name: tObj.name, hasOverride });
+                  }
+                }
               }
             } catch {}
           }
@@ -134,33 +86,131 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
 
-    return privateJson({ plans, clientCounts: counts });
+    return privateJson({
+      plans,
+      clientCounts: counts,
+      enrolledStores,
+      technicalFeatures: TECHNICAL_FEATURES
+    });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "plans_failed" }, 503);
   }
 }
 
-// POST: Save or update custom plans
+// POST: Save draft, apply plan to stores, duplicate, or toggle status
 export async function POST(request: NextRequest) {
-  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+  const origin = request.headers.get("origin");
+  if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
     const body = await request.json();
-    const plans = body.plans;
-    if (!Array.isArray(plans) || plans.length === 0) {
-      return privateJson({ error: "invalid_plans_array" }, 400);
+    const action = body.action || "save_and_apply";
+
+    // 1. Action: Duplicate an existing plan
+    if (action === "duplicate") {
+      const sourcePlanId = typeof body.sourcePlanId === "string" ? body.sourcePlanId : "";
+      const currentPlans = await getMasterPlans();
+      const source = currentPlans.find(p => p.id === sourcePlanId);
+      if (!source) return privateJson({ error: "source_plan_not_found" }, 404);
+
+      const newId = `crm-custom-${Date.now().toString(36)}`;
+      const duplicatedPlan: CrmPlan = {
+        ...source,
+        id: newId,
+        name: body.newName || `${source.name} (Cópia)`,
+        isPopular: false,
+        version: 1,
+        status: "active",
+        updated_at: new Date().toISOString()
+      };
+
+      const result = await saveMasterPlan(duplicatedPlan, "draft", "new_clients", auth.actor);
+      return privateJson({ duplicated: true, plan: result.plan });
     }
 
-    const { redisUrl } = getAdminConfig();
-    const redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1 });
-    await redis.connect();
-    await redis.set("crm:master:plans", JSON.stringify(plans));
-    redis.disconnect();
+    // 2. Action: Toggle Active / Inactive
+    if (action === "toggle_status") {
+      const planId = typeof body.planId === "string" ? body.planId : "";
+      const currentPlans = await getMasterPlans();
+      const plan = currentPlans.find(p => p.id === planId);
+      if (!plan) return privateJson({ error: "plan_not_found" }, 404);
 
-    return privateJson({ saved: true, plans });
+      plan.status = plan.status === "active" ? "inactive" : "active";
+      const result = await saveMasterPlan(plan, "draft", "new_clients", auth.actor);
+      return privateJson({ updated: true, plan: result.plan });
+    }
+
+    // 3. Action: Set Individual Store Contractual Exception
+    if (action === "set_client_exception") {
+      const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
+      const customQuota = typeof body.customQuota === "number" ? body.customQuota : undefined;
+      const exceptionReason = typeof body.reason === "string" ? body.reason.trim() : "Exceção contratual aprovada pelo Master";
+
+      if (!tenantId) return privateJson({ error: "missing_tenant" }, 400);
+
+      const { url, serviceKey } = getAdminConfig();
+      const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+        cache: "no-store"
+      });
+      const current = (await rGet.json()) as Array<{ business_description: string }>;
+      let dataObj: Record<string, unknown> = {};
+      try {
+        if (current[0]?.business_description?.startsWith("{")) dataObj = JSON.parse(current[0].business_description);
+      } catch {}
+
+      const planObj = (dataObj.plan as Record<string, unknown>) || {};
+      if (customQuota !== undefined) {
+        planObj.customQuotaOverride = customQuota;
+        planObj.exceptionReason = exceptionReason;
+      } else {
+        // Clear exception override
+        delete planObj.customQuotaOverride;
+        delete planObj.exceptionReason;
+      }
+      dataObj.plan = planObj;
+
+      await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+        method: "PATCH",
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
+      });
+
+      if (customQuota !== undefined) {
+        await syncTenantUsageLimits(tenantId, customQuota, url, serviceKey);
+      }
+
+      // Clear cache
+      const redis = getRedis();
+      try {
+        await redis.del(`crm:tenant:effective_plan:${tenantId}`);
+        redis.disconnect();
+      } catch {}
+
+      return privateJson({ exceptionSaved: true, tenantId, customQuota });
+    }
+
+    // 4. Action: Save Draft or Save & Apply
+    const planInput = body.plan;
+    if (!planInput || !planInput.id || !planInput.name) {
+      return privateJson({ error: "invalid_plan_payload" }, 400);
+    }
+
+    const mode = action === "save_draft" ? "draft" : "apply";
+    const vigencia = body.vigencia || "immediate";
+
+    const result = await saveMasterPlan(planInput, mode, vigencia, auth.actor);
+    return privateJson({
+      saved: true,
+      applied: result.applied,
+      affectedTenants: result.affectedTenants,
+      plan: result.plan
+    });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "save_plans_failed" }, 503);
   }
@@ -168,19 +218,25 @@ export async function POST(request: NextRequest) {
 
 // PATCH: Assign a plan to a specific store tenant
 export async function PATCH(request: NextRequest) {
-  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+  const origin = request.headers.get("origin");
+  if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
     const body = await request.json();
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
+    const planId = typeof body.planId === "string" ? body.planId : "";
     const planName = typeof body.planName === "string" ? body.planName : "";
     const planPrice = typeof body.planPrice === "string" ? body.planPrice : "";
     const quotaLimit = typeof body.quotaLimit === "number" ? body.quotaLimit : 500;
+    const customQuotaOverride = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
+    const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
 
-    if (!tenantId || !planName) return privateJson({ error: "missing_required_fields" }, 400);
+    if (!tenantId || (!planId && !planName)) return privateJson({ error: "missing_required_fields" }, 400);
 
     const { url, serviceKey } = getAdminConfig();
     const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
@@ -196,9 +252,15 @@ export async function PATCH(request: NextRequest) {
     } catch {}
 
     const planObj = (dataObj.plan as Record<string, unknown>) ?? {};
-    planObj.name = planName;
+    planObj.planId = planId || planObj.planId || "crm-start";
+    planObj.name = planName || planObj.name || "CRM Start";
     if (planPrice) planObj.price = planPrice;
     planObj.quotaLimit = quotaLimit;
+
+    if (customQuotaOverride !== null) {
+      planObj.customQuotaOverride = customQuotaOverride;
+      planObj.exceptionReason = exceptionReason;
+    }
 
     dataObj.plan = planObj;
 
@@ -208,9 +270,18 @@ export async function PATCH(request: NextRequest) {
       body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
     });
 
+    const effectiveLimit = customQuotaOverride !== null ? customQuotaOverride : quotaLimit;
+    await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
+
+    // Clear Redis cache
+    const redis = getRedis();
+    try {
+      await redis.del(`crm:tenant:effective_plan:${tenantId}`);
+      redis.disconnect();
+    } catch {}
+
     return privateJson({ updated: true, tenantId, plan: planObj });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "assign_plan_failed" }, 503);
   }
 }
-

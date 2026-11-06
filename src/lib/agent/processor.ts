@@ -10,6 +10,7 @@ import {
   handoffToHuman
 } from "@/lib/crm/supabase-ingest";
 import { detectCustomerEscalation } from "./escalation";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export type ProcessResult = {
   status: "ignored" | "duplicate" | "disabled" | "sent" | "buffered";
@@ -128,11 +129,22 @@ async function getStoreAiContext(instanceName: string): Promise<{
       ? articles.map(a => `### ${a.title}\n${a.body}`).join("\n\n")
       : "";
 
-    // 5. Fetch operating hours and quota from tenant settings
+    // 5. Fetch effective plan & operating hours
     let operatingHours = undefined;
     let quotaLimit = 500;
     let primaryModel = agents?.[0]?.provider_route || undefined;
     let fallbackModel = undefined;
+
+    const effectivePlan = await getEffectiveTenantPlan(tenantId);
+    if (effectivePlan.isSuspended || (effectivePlan.autoBlock && effectivePlan.isOverdue)) {
+      return { isBlocked: true, channelFound: true, tenantId };
+    }
+    quotaLimit = effectivePlan.quotaLimit;
+
+    // Feature gating: check if AI Chat is allowed
+    if (!effectivePlan.allowedFeatures.includes("ai_chat")) {
+      return { isBlocked: true, channelFound: true, tenantId };
+    }
 
     const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -144,10 +156,13 @@ async function getStoreAiContext(instanceName: string): Promise<{
       if (rawDesc.startsWith("{")) {
         try {
           const parsed = JSON.parse(rawDesc);
-          if (parsed.plan?.quotaLimit) quotaLimit = Number(parsed.plan.quotaLimit);
-          if (parsed.ai_settings?.operatingHours) operatingHours = parsed.ai_settings.operatingHours;
+          if (parsed.ai_settings?.operatingHours && effectivePlan.allowedFeatures.includes("business_hours")) {
+            operatingHours = parsed.ai_settings.operatingHours;
+          }
           if (parsed.ai_settings?.primaryModel) primaryModel = parsed.ai_settings.primaryModel;
-          if (parsed.ai_settings?.fallbackModel) fallbackModel = parsed.ai_settings.fallbackModel;
+          if (parsed.ai_settings?.fallbackModel && effectivePlan.allowedFeatures.includes("model_fallback")) {
+            fallbackModel = parsed.ai_settings.fallbackModel;
+          }
         } catch {}
       }
     }
@@ -227,11 +242,13 @@ export async function processWebhook(
         }
       }
 
-      for (const it of items) {
-        if (it.id) {
-          await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
+      const markItemsDone = async () => {
+        for (const it of items) {
+          if (it.id) {
+            await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
+          }
         }
-      }
+      };
 
       const combinedText = items.map(it => it.text.trim()).filter(Boolean).join("\n") || incoming.text;
 
@@ -286,6 +303,7 @@ export async function processWebhook(
 
         const escalationReply = escalation.customerReply || "Com certeza! Estou transferindo seu atendimento para a nossa equipe humana agora mesmo. Em instantes alguém irá continuar por aqui com você! 😊";
         await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
+        await markItemsDone();
         try {
           await persistOutboundInSupabase(incoming.instance, incoming.number, escalationReply);
         } catch {}
@@ -345,6 +363,7 @@ export async function processWebhook(
 
       // 12. Send response
       await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+      await markItemsDone();
       try {
         await persistOutboundInSupabase(incoming.instance, incoming.number, answer);
       } catch {}

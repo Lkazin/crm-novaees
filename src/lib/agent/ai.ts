@@ -95,7 +95,7 @@ export async function generateAnswer(
 ): Promise<string> {
   const url = cfg.aiUrl.replace(/\/$/, "") + "/chat/completions";
   const primary = storeContext?.primaryModel || cfg.aiModel || "auto/best-chat";
-  const fallback = storeContext?.fallbackModel || "auto/best-fast";
+  const fallback = storeContext?.fallbackModel;
   const models = approvedModels(primary, fallback);
   if (!models.length) throw new Error("Modelo de IA nao autorizado");
 
@@ -148,13 +148,16 @@ export async function generateAnswer(
           console.warn(`[ai-fallback] Model ${currentModel} returned ${response.status}. Switching to fallback: ${models[index + 1]}`);
           continue;
         }
-        throw new Error(`Provedor IA retornou HTTP ${response.status}`);
+        const nonRetryableErr = new Error(`Provedor IA retornou HTTP ${response.status}`);
+        (nonRetryableErr as unknown as { nonRetryable: boolean }).nonRetryable = true;
+        throw nonRetryableErr;
       }
       const data: unknown = await response.json();
       const answer = (data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
       if (typeof answer !== "string" || !answer.trim()) throw new Error("IA retornou resposta vazia");
       return answer.trim().slice(0, 1400);
     } catch (error) {
+      if ((error as { nonRetryable?: boolean })?.nonRetryable) throw error;
       if (index + 1 < models.length && Date.now() < deadline) {
         console.warn(`[ai-fallback] Error on model ${currentModel}. Switching to fallback: ${models[index + 1]}`);
         continue;

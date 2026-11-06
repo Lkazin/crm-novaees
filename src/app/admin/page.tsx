@@ -6,7 +6,8 @@ import {
   BrainCircuit, AlertCircle, PlusCircle, CheckCircle2, Ban, RotateCcw,
   Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
-  Zap, Sparkles, Check
+  Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
+  CheckSquare, Square
 } from "lucide-react";
 
 type Client = {
@@ -19,6 +20,7 @@ type Client = {
   instanceName?: string | null;
   whatsappStatus?: string;
   plan: {
+    planId?: string;
     name: string;
     price: string;
     dueDate: string;
@@ -27,8 +29,21 @@ type Client = {
     isOverdue: boolean;
     quotaLimit?: number;
     quotaUsed?: number;
+    customQuotaOverride?: number | null;
+    exceptionReason?: string | null;
   };
 };
+
+type FeatureId =
+  | "ai_chat"
+  | "human_handoff"
+  | "business_hours"
+  | "commercial_tags"
+  | "handoff_summary"
+  | "sound_notifications"
+  | "simulator"
+  | "model_fallback"
+  | "advanced_reports";
 
 type PlanItem = {
   id: string;
@@ -37,8 +52,38 @@ type PlanItem = {
   quotaLimit: number;
   description: string;
   features: string[];
+  allowedFeatures?: FeatureId[];
+  maxOperators?: number;
+  maxWhatsAppConnections?: number;
   isPopular?: boolean;
+  isActive?: boolean;
+  enrolledStores?: Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>;
 };
+
+type AuditEntry = {
+  id: string;
+  timestamp: string;
+  planId: string;
+  planName: string;
+  action: string;
+  vigencia: string;
+  actor: string;
+  impactedCount: number;
+  diffSummary?: string;
+  changes?: Record<string, { from: unknown; to: unknown }>;
+};
+
+const TECHNICAL_FEATURES_LIST: Array<{ id: FeatureId; name: string; category: string; description: string; isCore?: boolean }> = [
+  { id: "ai_chat", name: "IA de Atendimento 24h", category: "IA", description: "Respostas inteligentes automatizadas com IA no WhatsApp." },
+  { id: "human_handoff", name: "Atendimento Humano Básico", category: "Atendimento", description: "Operador humano assume o chat e pausa a IA naquela conversa.", isCore: true },
+  { id: "business_hours", name: "Horários de Atendimento", category: "Gestão", description: "Configuração de expediente e mensagem automática fora do horário." },
+  { id: "commercial_tags", name: "Etiquetas Comerciais & Funil", category: "Atendimento", description: "Organização por etapas: Interessado, Orçamento, Venda, Perdido." },
+  { id: "handoff_summary", name: "Resumo Inteligente de Transferência", category: "IA", description: "Síntese automática em 3 linhas gerada para o atendente humano." },
+  { id: "sound_notifications", name: "Notificações Sonoras & Visuais", category: "Atendimento", description: "Alerta em áudio real e contagem no sino quando cliente solicita humano." },
+  { id: "simulator", name: "Simulador de Testes no Painel", category: "IA", description: "Ambiente para o lojista simular diálogos antes de ativar o WhatsApp." },
+  { id: "model_fallback", name: "IA Principal + Modelo Reserva", category: "Segurança", description: "Fallback automático de rota de IA garantindo zero indisponibilidade." },
+  { id: "advanced_reports", name: "Relatórios Comerciais Avançados", category: "Gestão", description: "Métricas consolidadas de conversão, tempos de resposta e uso." }
+];
 
 const DEFAULT_PLANS: PlanItem[] = [
   {
@@ -46,14 +91,18 @@ const DEFAULT_PLANS: PlanItem[] = [
     name: "CRM Start",
     price: "149,00",
     quotaLimit: 500,
+    maxOperators: 1,
+    maxWhatsAppConnections: 1,
+    isActive: true,
     description: "Ideal para pequenos comércios locais, lanchonetes e pizzarias.",
+    allowedFeatures: ["ai_chat", "human_handoff", "simulator"],
     features: [
       "Até 500 atendimentos/mês",
       "NovaesWeb IA ativa 24h",
       "Conexão WhatsApp (1 número)",
       "Base de Conhecimento e Cardápio",
       "Simulador de Teste no Painel",
-      "Atendimento Humano (Handoff)"
+      "Atendimento Humano Básico"
     ]
   },
   {
@@ -61,14 +110,28 @@ const DEFAULT_PLANS: PlanItem[] = [
     name: "CRM Business",
     price: "249,00",
     quotaLimit: 2000,
+    maxOperators: 2,
+    maxWhatsAppConnections: 1,
     isPopular: true,
+    isActive: true,
     description: "Para empresas e lojas em crescimento com alto volume de clientes diários.",
+    allowedFeatures: [
+      "ai_chat",
+      "human_handoff",
+      "business_hours",
+      "commercial_tags",
+      "handoff_summary",
+      "sound_notifications",
+      "simulator",
+      "model_fallback"
+    ],
     features: [
       "Até 2.000 atendimentos/mês",
-      "NovaesWeb IA com modelo de alta velocidade",
+      "NovaesWeb IA com modelo reserva autorizado",
       "Controle de Horários de Funcionamento",
       "Resumo Inteligente para Atendentes",
-      "Fallback Automático (Zero Quedas)",
+      "Etiquetas Comerciais e Funil Completo",
+      "Notificações Sonoras e Visuais",
       "Suporte Prioritário NovaesWeb"
     ]
   },
@@ -77,13 +140,28 @@ const DEFAULT_PLANS: PlanItem[] = [
     name: "CRM Premium",
     price: "449,00",
     quotaLimit: 5000,
+    maxOperators: 5,
+    maxWhatsAppConnections: 2,
+    isActive: true,
     description: "Para operações de grande porte, clínicas, imobiliárias e redes de lojas.",
+    allowedFeatures: [
+      "ai_chat",
+      "human_handoff",
+      "business_hours",
+      "commercial_tags",
+      "handoff_summary",
+      "sound_notifications",
+      "simulator",
+      "model_fallback",
+      "advanced_reports"
+    ],
     features: [
       "Até 5.000 atendimentos/mês",
-      "Multi-operadores ilimitados",
+      "Até 5 operadores humanos simultâneos",
+      "Até 2 conexões WhatsApp",
+      "Recursos Business completos",
+      "Relatórios Comerciais Avançados",
       "IA dedicada com máxima prioridade",
-      "Regras personalizadas avançadas",
-      "Relatórios de métricas e conversão",
       "Gerente de conta exclusivo"
     ]
   }
@@ -92,6 +170,8 @@ const DEFAULT_PLANS: PlanItem[] = [
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
   const [plans, setPlans] = useState<PlanItem[]>(DEFAULT_PLANS);
+  const [clientCountsMap, setClientCountsMap] = useState<Record<string, number>>({});
+  const [enrolledStoresMap, setEnrolledStoresMap] = useState<Record<string, Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -101,14 +181,8 @@ export default function AdminCRM() {
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "overdue" | "suspended">("all");
   const [currentNav, setCurrentNav] = useState<"clients" | "kpis" | "plans">("clients");
 
-  // Master Authentication
-  const [masterKey, setMasterKey] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("crm_admin_token") || "NovaesWeb@2026Admin";
-    }
-    return "NovaesWeb@2026Admin";
-  });
-  const [authenticated, setAuthenticated] = useState<boolean>(true);
+  // Master Authentication (secure session cookie)
+  const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [inputKey, setInputKey] = useState("");
 
   // Create client form state
@@ -133,6 +207,50 @@ export default function AdminCRM() {
   const [selectedClientForPlan, setSelectedClientForPlan] = useState<Client | null>(null);
   const [targetPlanToAssign, setTargetPlanToAssign] = useState<PlanItem>(DEFAULT_PLANS[0]);
   const [assigningPlan, setAssigningPlan] = useState(false);
+  const [customQuotaChecked, setCustomQuotaChecked] = useState(false);
+  const [customQuotaValue, setCustomQuotaValue] = useState<number>(0);
+  const [customQuotaReason, setCustomQuotaReason] = useState("");
+
+  // Plan Edit / Create Modal state
+  const [editPlanModalOpen, setEditPlanModalOpen] = useState(false);
+  const [isCreatingNewPlan, setIsCreatingNewPlan] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<PlanItem>({
+    id: "",
+    name: "",
+    price: "199,00",
+    quotaLimit: 1000,
+    maxOperators: 1,
+    maxWhatsAppConnections: 1,
+    description: "",
+    features: [],
+    allowedFeatures: ["ai_chat", "human_handoff"],
+    isPopular: false,
+    isActive: true
+  });
+  const [editingFeaturesText, setEditingFeaturesText] = useState("");
+
+  // Impact Confirmation Modal ("Salvar e Aplicar")
+  const [impactModalOpen, setImpactModalOpen] = useState(false);
+  const [planToApply, setPlanToApply] = useState<PlanItem | null>(null);
+  const [originalPlan, setOriginalPlan] = useState<PlanItem | null>(null);
+  const [vigencia, setVigencia] = useState<"immediate" | "new_clients" | "next_renewal">("immediate");
+  const [applyingPlan, setApplyingPlan] = useState(false);
+
+  // Duplicate Plan Modal
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
+  const [sourcePlanForDuplicate, setSourcePlanForDuplicate] = useState<PlanItem | null>(null);
+  const [duplicateNewId, setDuplicateNewId] = useState("");
+  const [duplicateNewName, setDuplicateNewName] = useState("");
+  const [duplicating, setDuplicating] = useState(false);
+
+  // Enrolled Stores Modal
+  const [enrolledModalOpen, setEnrolledModalOpen] = useState(false);
+  const [selectedPlanForStores, setSelectedPlanForStores] = useState<PlanItem | null>(null);
+
+  // Audit History Modal
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Password reset modal state
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -141,12 +259,12 @@ export default function AdminCRM() {
   const [newPassword, setNewPassword] = useState("");
   const [resetting, setResetting] = useState(false);
 
-  const fetchClients = useCallback(async (keyToUse = masterKey) => {
+  // Fetch Clients
+  const fetchClients = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/crm/admin/clients", {
-        headers: { "x-admin-password": keyToUse },
         credentials: "same-origin",
         cache: "no-store"
       });
@@ -167,12 +285,12 @@ export default function AdminCRM() {
     } finally {
       setLoading(false);
     }
-  }, [masterKey]);
+  }, []);
 
-  const fetchPlans = useCallback(async (keyToUse = masterKey) => {
+  // Fetch Plans
+  const fetchPlans = useCallback(async () => {
     try {
       const res = await fetch("/api/crm/admin/plans", {
-        headers: { "x-admin-password": keyToUse },
         credentials: "same-origin",
         cache: "no-store"
       });
@@ -181,14 +299,74 @@ export default function AdminCRM() {
         if (Array.isArray(data.plans)) {
           setPlans(data.plans);
         }
+        if (data.clientCounts) {
+          setClientCountsMap(data.clientCounts);
+        }
+        if (data.enrolledStores) {
+          setEnrolledStoresMap(data.enrolledStores);
+        }
       }
     } catch {}
-  }, [masterKey]);
+  }, []);
 
+  // Check Master session on initial mount
   useEffect(() => {
-    void fetchClients();
-    void fetchPlans();
+    async function checkMasterSession() {
+      try {
+        const res = await fetch("/api/crm/admin/session", { credentials: "same-origin", cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated) {
+            setAuthenticated(true);
+            void fetchClients();
+            void fetchPlans();
+            return;
+          }
+        }
+      } catch {}
+      setAuthenticated(false);
+      setLoading(false);
+    }
+    void checkMasterSession();
   }, [fetchClients, fetchPlans]);
+
+  // Master Login
+  const handleMasterLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputKey.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/admin/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ password: inputKey.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || data.error || "Senha incorreta ou acesso não autorizado.");
+        return;
+      }
+      setAuthenticated(true);
+      setInputKey("");
+      await fetchClients();
+      await fetchPlans();
+    } catch {
+      setError("Falha de comunicação com o servidor.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Master Logout
+  const handleMasterLogout = async () => {
+    try {
+      await fetch("/api/crm/admin/session", { method: "DELETE", credentials: "same-origin" });
+    } catch {}
+    setAuthenticated(false);
+    setInputKey("");
+  };
 
   // KPIs
   const kpis = useMemo(() => {
@@ -205,13 +383,13 @@ export default function AdminCRM() {
   // Client counts per plan
   const planDistribution = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const p of plans) counts[p.name] = 0;
+    for (const p of plans) counts[p.name] = clientCountsMap[p.id] ?? 0;
     for (const c of clients) {
       const pName = c.plan.name || "CRM Start";
-      counts[pName] = (counts[pName] || 0) + 1;
+      if (!counts[pName]) counts[pName] = (counts[pName] || 0) + 1;
     }
     return counts;
-  }, [plans, clients]);
+  }, [plans, clients, clientCountsMap]);
 
   // Filtered clients
   const filteredClients = useMemo(() => {
@@ -226,41 +404,24 @@ export default function AdminCRM() {
     });
   }, [clients, searchTerm, filterStatus]);
 
-  const handleMasterLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputKey.trim()) return;
-    const clean = inputKey.trim();
-    localStorage.setItem("crm_admin_token", clean);
-    document.cookie = `crm_admin_token=${encodeURIComponent(clean)}; path=/; max-age=2592000; SameSite=Lax`;
-    setMasterKey(clean);
-    await fetchClients(clean);
-    await fetchPlans(clean);
-  };
-
-  const handleMasterLogout = () => {
-    localStorage.removeItem("crm_admin_token");
-    document.cookie = "crm_admin_token=; path=/; max-age=0;";
-    setAuthenticated(false);
-    setInputKey("");
-  };
-
+  // Create Client
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setError("");
     setNotice("");
     try {
+      const selectedPlanObj = plans.find(p => p.name === planName);
+      const planId = selectedPlanObj?.id || "crm-start";
       const res = await fetch("/api/crm/admin/clients", {
         method: "POST",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": masterKey
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeName,
           email,
           password,
+          planId,
           planName,
           planPrice,
           dueDate,
@@ -280,11 +441,214 @@ export default function AdminCRM() {
       setPassword("");
       setFormOpen(false);
       await fetchClients();
+      await fetchPlans();
     } catch {
       setError("Falha ao salvar novo cliente.");
     } finally {
       setCreating(false);
     }
+  };
+
+  // Plan Management Handlers
+  const handleOpenCreatePlan = () => {
+    setIsCreatingNewPlan(true);
+    const newId = `crm-custom-${Date.now().toString().slice(-4)}`;
+    setEditingPlan({
+      id: newId,
+      name: "Novo Plano CRM",
+      price: "199,00",
+      quotaLimit: 1000,
+      maxOperators: 1,
+      maxWhatsAppConnections: 1,
+      description: "Plano comercial personalizado para lojistas.",
+      allowedFeatures: ["ai_chat", "human_handoff", "simulator"],
+      features: [
+        "Até 1.000 atendimentos/mês",
+        "NovaesWeb IA ativa 24h",
+        "Conexão WhatsApp (1 número)",
+        "Atendimento Humano Básico"
+      ],
+      isPopular: false,
+      isActive: true
+    });
+    setEditingFeaturesText("Até 1.000 atendimentos/mês\nNovaesWeb IA ativa 24h\nConexão WhatsApp (1 número)\nAtendimento Humano Básico");
+    setEditPlanModalOpen(true);
+  };
+
+  const handleOpenEditPlan = (plan: PlanItem) => {
+    setIsCreatingNewPlan(false);
+    setEditingPlan({
+      ...plan,
+      allowedFeatures: plan.allowedFeatures || ["ai_chat", "human_handoff"]
+    });
+    setEditingFeaturesText((plan.features || []).join("\n"));
+    setEditPlanModalOpen(true);
+  };
+
+  const handleToggleFeatureInEditor = (featId: FeatureId) => {
+    const current = editingPlan.allowedFeatures || [];
+    if (current.includes(featId)) {
+      setEditingPlan({ ...editingPlan, allowedFeatures: current.filter(id => id !== featId) });
+    } else {
+      setEditingPlan({ ...editingPlan, allowedFeatures: [...current, featId] });
+    }
+  };
+
+  const handleSavePlanDraft = async () => {
+    try {
+      const lines = editingFeaturesText.split("\n").map(l => l.trim()).filter(Boolean);
+      const planPayload = { ...editingPlan, features: lines };
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action: "save_draft", plan: planPayload })
+      });
+      if (!res.ok) throw new Error();
+      setNotice(`Plano "${editingPlan.name}" salvo como rascunho com sucesso.`);
+      setEditPlanModalOpen(false);
+      await fetchPlans();
+    } catch {
+      setError("Falha ao salvar rascunho do plano.");
+    }
+  };
+
+  const handleTriggerApplyPlan = () => {
+    const lines = editingFeaturesText.split("\n").map(l => l.trim()).filter(Boolean);
+    const planPayload = { ...editingPlan, features: lines };
+    setPlanToApply(planPayload);
+    const orig = plans.find(p => p.id === editingPlan.id) || null;
+    setOriginalPlan(orig);
+    setVigencia("immediate");
+    setEditPlanModalOpen(false);
+    setImpactModalOpen(true);
+  };
+
+  const handleConfirmApplyPlan = async () => {
+    if (!planToApply) return;
+    setApplyingPlan(true);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          action: "save_and_apply",
+          plan: planToApply,
+          vigencia
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Falha ao aplicar plano");
+      const affectedCount = data.impactedCount || 0;
+      setNotice(
+        `Plano "${planToApply.name}" aplicado com sucesso! ${affectedCount} loja(s) vinculada(s) sincronizada(s) automaticamente.`
+      );
+      setImpactModalOpen(false);
+      setPlanToApply(null);
+      await fetchPlans();
+      await fetchClients();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao aplicar plano.");
+    } finally {
+      setApplyingPlan(false);
+    }
+  };
+
+  const handleOpenDuplicate = (plan: PlanItem) => {
+    setSourcePlanForDuplicate(plan);
+    setDuplicateNewId(`${plan.id}-copia`);
+    setDuplicateNewName(`${plan.name} (Cópia)`);
+    setDuplicateModalOpen(true);
+  };
+
+  const handleConfirmDuplicate = async () => {
+    if (!sourcePlanForDuplicate || !duplicateNewId.trim()) return;
+    setDuplicating(true);
+    try {
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          action: "duplicate",
+          sourcePlanId: sourcePlanForDuplicate.id,
+          newPlanId: duplicateNewId.trim(),
+          newName: duplicateNewName.trim()
+        })
+      });
+      if (!res.ok) throw new Error();
+      setNotice(`Plano duplicado com sucesso: "${duplicateNewName}"`);
+      setDuplicateModalOpen(false);
+      await fetchPlans();
+    } catch {
+      setError("Falha ao duplicar plano.");
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  const handleTogglePlanStatus = async (plan: PlanItem) => {
+    try {
+      const nextStatus = !(plan.isActive !== false);
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          action: "toggle_status",
+          planId: plan.id,
+          isActive: nextStatus
+        })
+      });
+      if (!res.ok) throw new Error();
+      setNotice(`Plano "${plan.name}" ${nextStatus ? "ativado" : "desativado"}.`);
+      await fetchPlans();
+    } catch {
+      setError("Falha ao alterar status do plano.");
+    }
+  };
+
+  const handleViewEnrolledStores = (plan: PlanItem) => {
+    setSelectedPlanForStores(plan);
+    setEnrolledModalOpen(true);
+  };
+
+  const handleOpenAuditHistory = async () => {
+    setHistoryModalOpen(true);
+    setLoadingHistory(true);
+    try {
+      const res = await fetch("/api/crm/admin/plans/history", {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data.history || []);
+      }
+    } catch {
+      setError("Falha ao carregar histórico de alterações.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Open Assign Plan Modal for a client
+  const handleOpenAssignModal = (client: Client) => {
+    setSelectedClientForPlan(client);
+    const cur = plans.find(p => p.id === client.plan.planId || p.name === client.plan.name) || plans[0];
+    setTargetPlanToAssign(cur);
+    if (client.plan.customQuotaOverride) {
+      setCustomQuotaChecked(true);
+      setCustomQuotaValue(client.plan.customQuotaOverride);
+      setCustomQuotaReason(client.plan.exceptionReason || "");
+    } else {
+      setCustomQuotaChecked(false);
+      setCustomQuotaValue(cur.quotaLimit);
+      setCustomQuotaReason("");
+    }
+    setChangePlanModalOpen(true);
   };
 
   const handleAssignPlan = async () => {
@@ -294,21 +658,27 @@ export default function AdminCRM() {
     try {
       const res = await fetch("/api/crm/admin/plans", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": masterKey
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({
           tenantId: selectedClientForPlan.id,
+          planId: targetPlanToAssign.id,
           planName: targetPlanToAssign.name,
           planPrice: targetPlanToAssign.price,
-          quotaLimit: targetPlanToAssign.quotaLimit
+          quotaLimit: targetPlanToAssign.quotaLimit,
+          customQuotaOverride: customQuotaChecked ? Number(customQuotaValue) : null,
+          exceptionReason: customQuotaChecked ? customQuotaReason.trim() : null
         })
       });
       if (!res.ok) throw new Error();
-      setNotice(`Plano da loja "${selectedClientForPlan.name}" atualizado para ${targetPlanToAssign.name}!`);
+      setNotice(
+        `Plano da loja "${selectedClientForPlan.name}" atualizado para ${targetPlanToAssign.name}${
+          customQuotaChecked ? ` com exceção contratual (${customQuotaValue} msgs)` : ""
+        }!`
+      );
       setChangePlanModalOpen(false);
       await fetchClients();
+      await fetchPlans();
     } catch {
       setError("Falha ao atualizar plano da loja.");
     } finally {
@@ -327,10 +697,7 @@ export default function AdminCRM() {
       const res = await fetch("/api/crm/admin/clients", {
         method: "PATCH",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": masterKey
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: client.id,
           action: "toggle_block",
@@ -350,10 +717,7 @@ export default function AdminCRM() {
       const res = await fetch("/api/crm/admin/clients", {
         method: "PATCH",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": masterKey
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: client.id,
           action: "set_payment_status",
@@ -374,7 +738,6 @@ export default function AdminCRM() {
     try {
       const res = await fetch(`/api/crm/admin/clients?tenantId=${encodeURIComponent(client.id)}`, {
         method: "DELETE",
-        headers: { "x-admin-password": masterKey },
         credentials: "same-origin"
       });
       if (!res.ok) throw new Error();
@@ -393,10 +756,7 @@ export default function AdminCRM() {
       const res = await fetch("/api/crm/admin/clients", {
         method: "PATCH",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": masterKey
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: resetUserId,
           action: "reset_password",
@@ -415,6 +775,7 @@ export default function AdminCRM() {
     }
   };
 
+  // Login Screen if not authenticated
   if (!authenticated) {
     return (
       <main className="nw-layout-shell" style={{display: "grid", placeItems: "center", minHeight: "100vh", padding: "20px"}}>
@@ -425,7 +786,7 @@ export default function AdminCRM() {
             </div>
             <h2 style={{color: "white", margin: 0, fontSize: "24px", fontWeight: 800}}>Painel Master NovaesWeb</h2>
             <p style={{color: "#c2bed4", fontSize: "14px", marginTop: "8px"}}>
-              Área restrita de SuperAdmin. Digite a senha Master para gerenciar clientes, mensalidades e IAs.
+              Área restrita de SuperAdmin. Digite a senha Master para gerenciar clientes, planos e IAs.
             </p>
           </div>
           <form onSubmit={handleMasterLogin} style={{display: "flex", flexDirection: "column", gap: "16px"}}>
@@ -437,8 +798,8 @@ export default function AdminCRM() {
               style={{width: "100%", padding: "14px 16px", borderRadius: "10px", border: "1px solid #574366", background: "#121222", color: "white", fontSize: "15px"}}
               required
             />
-            <button type="submit" className="op-primary" style={{width: "100%", padding: "14px", fontWeight: 700, fontSize: "15px", borderRadius: "10px"}}>
-              Entrar no Painel Master
+            <button type="submit" className="op-primary" disabled={loading} style={{width: "100%", padding: "14px", fontWeight: 700, fontSize: "15px", borderRadius: "10px"}}>
+              {loading ? "Verificando..." : "Entrar no Painel Master"}
             </button>
           </form>
           {error && <p className="op-alert" role="alert" style={{marginTop: "16px"}}><AlertCircle size={16}/>{error}</p>}
@@ -562,11 +923,29 @@ export default function AdminCRM() {
             </h1>
             <p style={{color: "#c2bed4", margin: 0, fontSize: "14px"}}>
               {currentNav === "plans"
-                ? "Configure os planos disponíveis, cotas mensais de atendimentos e atribua planos às lojas."
+                ? "Gestão dinâmica de planos, limites técnicos, sincronização em lote e franquias de atendimento."
                 : "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos."}
             </p>
           </div>
           <div style={{display: "flex", gap: "10px"}}>
+            {currentNav === "plans" && (
+              <>
+                <button
+                  className="op-primary"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 18px", fontWeight: 700, borderRadius: "10px"}}
+                  onClick={handleOpenCreatePlan}
+                >
+                  <PlusCircle size={18}/> + Novo Plano
+                </button>
+                <button
+                  className="op-refresh"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 16px"}}
+                  onClick={handleOpenAuditHistory}
+                >
+                  <History size={16}/> Histórico
+                </button>
+              </>
+            )}
             {currentNav === "clients" && (
               <button
                 className="op-primary"
@@ -576,7 +955,7 @@ export default function AdminCRM() {
                 <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Novo Cliente"}
               </button>
             )}
-            <button className="op-refresh" onClick={() => void fetchClients()} disabled={loading}>
+            <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); }} disabled={loading}>
               <RefreshCw size={16}/> Atualizar
             </button>
           </div>
@@ -612,19 +991,21 @@ export default function AdminCRM() {
             }}>
               <Zap size={24} color="#ec4899"/>
               <div style={{fontSize: "14px", color: "#e2e8f0", lineHeight: "1.5"}}>
-                <strong>Franquia Mensal de Atendimentos:</strong> Cada plano inclui um volume máximo de sessões no WhatsApp (janela de 24h). Isso protege seus custos e profissionaliza a venda do CRM NovaesWeb.
+                <strong>Sincronização Automática Master:</strong> Ao editar um plano e confirmar a aplicação, as novas cotas e recursos são refletidos automaticamente em todas as lojas vinculadas elegíveis, preservando com segurança as exceções contratuais individuais.
               </div>
             </div>
 
             {/* Grid dos Planos */}
             <div style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
               gap: "24px",
               marginBottom: "36px"
             }}>
               {plans.map(p => {
-                const enrolled = planDistribution[p.name] || 0;
+                const enrolled = clientCountsMap[p.id] ?? planDistribution[p.name] ?? 0;
+                const allowedFeats = p.allowedFeatures || [];
+                const isActive = p.isActive !== false;
                 return (
                   <div
                     key={p.id}
@@ -634,71 +1015,194 @@ export default function AdminCRM() {
                       background: p.isPopular
                         ? "linear-gradient(145deg, #201533, #150f24)"
                         : "linear-gradient(145deg, #181427, #110d1d)",
-                      border: p.isPopular ? "2px solid #ec4899" : "1px solid #3d335c",
+                      border: p.isPopular ? "2px solid #ec4899" : isActive ? "1px solid #3d335c" : "1px dashed #574b6f",
                       borderRadius: "18px",
                       padding: "26px",
                       display: "flex",
-                      flexDirection: "column"
+                      flexDirection: "column",
+                      opacity: isActive ? 1 : 0.65
                     }}
                   >
-                    {p.isPopular && (
-                      <span style={{
-                        position: "absolute",
-                        top: "-12px",
-                        right: "20px",
-                        background: "var(--grad-primary)",
-                        color: "white",
-                        padding: "4px 12px",
-                        borderRadius: "20px",
-                        fontSize: "11px",
-                        fontWeight: 800,
-                        boxShadow: "var(--glow-pink)"
-                      }}>
-                        MAIS VENDIDO
-                      </span>
-                    )}
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px"}}>
+                      <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                        <span style={{
+                          background: "rgba(255,255,255,0.08)",
+                          color: "#c2bed4",
+                          padding: "2px 8px",
+                          borderRadius: "6px",
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          fontFamily: "monospace"
+                        }}>
+                          ID: {p.id}
+                        </span>
+                        {!isActive && (
+                          <span style={{
+                            background: "rgba(244, 63, 94, 0.2)",
+                            color: "#f43f5e",
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700
+                          }}>
+                            DESATIVADO
+                          </span>
+                        )}
+                      </div>
 
-                    <div style={{marginBottom: "16px"}}>
+                      {p.isPopular && (
+                        <span style={{
+                          background: "var(--grad-primary)",
+                          color: "white",
+                          padding: "4px 12px",
+                          borderRadius: "20px",
+                          fontSize: "11px",
+                          fontWeight: 800,
+                          boxShadow: "var(--glow-pink)"
+                        }}>
+                          MAIS VENDIDO
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{marginBottom: "12px"}}>
                       <h3 style={{fontSize: "22px", fontWeight: 800, margin: "0 0 6px", color: "white"}}>{p.name}</h3>
                       <p style={{fontSize: "13px", color: "#c2bed4", margin: 0, minHeight: "36px"}}>{p.description}</p>
                     </div>
 
-                    <div style={{marginBottom: "20px"}}>
+                    <div style={{marginBottom: "16px"}}>
                       <span style={{fontSize: "13px", color: "#9ca3af"}}>R$</span>
                       <strong style={{fontSize: "34px", color: "white", marginLeft: "4px"}}>{p.price}</strong>
                       <span style={{fontSize: "13px", color: "#9ca3af"}}>/mês</span>
                     </div>
 
+                    {/* Franquia & Limites Técnicos */}
                     <div style={{
                       background: "rgba(255,255,255,0.04)",
                       borderRadius: "10px",
-                      padding: "10px 14px",
-                      marginBottom: "20px",
+                      padding: "12px 14px",
+                      marginBottom: "16px",
                       display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between"
+                      flexDirection: "column",
+                      gap: "6px"
                     }}>
-                      <span style={{fontSize: "13px", color: "#e2e8f0", fontWeight: 600}}>
-                        Cota de Atendimentos:
-                      </span>
-                      <strong style={{fontSize: "14px", color: "#ec4899"}}>
-                        {p.quotaLimit.toLocaleString("pt-BR")} / mês
-                      </strong>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                        <span style={{fontSize: "13px", color: "#e2e8f0", fontWeight: 600}}>
+                          Franquia de Atendimentos:
+                        </span>
+                        <strong style={{fontSize: "14px", color: "#ec4899"}}>
+                          {p.quotaLimit.toLocaleString("pt-BR")} / mês
+                        </strong>
+                      </div>
+                      <div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#9ca3af"}}>
+                        <span>Operadores: <strong style={{color: "white"}}>{p.maxOperators || 1}</strong></span>
+                        <span>WhatsApps: <strong style={{color: "white"}}>{p.maxWhatsAppConnections || 1}</strong></span>
+                      </div>
                     </div>
 
-                    <ul style={{listStyle: "none", padding: 0, margin: "0 0 24px", flex: 1, display: "flex", flexDirection: "column", gap: "10px"}}>
+                    {/* Checklist dos 9 Recursos Técnicos */}
+                    <div style={{marginBottom: "18px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "14px"}}>
+                      <strong style={{display: "block", fontSize: "12px", color: "#a599c2", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px"}}>
+                        Recursos Técnicos Habilitados:
+                      </strong>
+                      <div style={{display: "grid", gridTemplateColumns: "1fr", gap: "6px"}}>
+                        {TECHNICAL_FEATURES_LIST.map(feat => {
+                          const hasFeat = allowedFeats.includes(feat.id);
+                          return (
+                            <div
+                              key={feat.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                fontSize: "12px",
+                                color: hasFeat ? "#e2e8f0" : "#6b7280"
+                              }}
+                            >
+                              {hasFeat ? (
+                                <Check size={14} color="#00db8c" style={{flexShrink: 0}}/>
+                              ) : (
+                                <span style={{width: "14px", textAlign: "center", color: "#6b7280", flexShrink: 0}}>—</span>
+                              )}
+                              <span style={{textDecoration: hasFeat ? "none" : "line-through"}}>{feat.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Bullets Comerciais */}
+                    <ul style={{listStyle: "none", padding: 0, margin: "0 0 20px", flex: 1, display: "flex", flexDirection: "column", gap: "8px"}}>
                       {p.features.map(f => (
                         <li key={f} style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#d1d5db"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/>
+                          <Sparkles size={14} color="#ec4899" style={{flexShrink: 0}}/>
                           <span>{f}</span>
                         </li>
                       ))}
                     </ul>
 
-                    <div style={{borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "16px", display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-                      <span style={{fontSize: "12px", color: "#9ca3af"}}>
-                        Lojas neste plano: <strong style={{color: "white"}}>{enrolled}</strong>
-                      </span>
+                    {/* Lojas vinculadas e Botões de Ação */}
+                    <div style={{borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "16px"}}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px"}}>
+                        <span style={{fontSize: "12px", color: "#9ca3af"}}>
+                          Lojas neste plano: <strong style={{color: "white"}}>{enrolled}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleViewEnrolledStores(p)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#ec4899",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px"
+                          }}
+                        >
+                          <Eye size={13}/> Ver Lojas ({enrolled})
+                        </button>
+                      </div>
+
+                      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px"}}>
+                        <button
+                          type="button"
+                          className="op-primary"
+                          style={{padding: "8px", fontSize: "12px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px"}}
+                          onClick={() => handleOpenEditPlan(p)}
+                        >
+                          <Edit3 size={14}/> Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          style={{padding: "8px", fontSize: "12px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px"}}
+                          onClick={() => handleOpenDuplicate(p)}
+                        >
+                          <Copy size={14}/> Duplicar
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePlanStatus(p)}
+                        style={{
+                          width: "100%",
+                          marginTop: "8px",
+                          padding: "6px",
+                          background: "transparent",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: "8px",
+                          color: isActive ? "#9ca3af" : "#00db8c",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          cursor: "pointer"
+                        }}
+                      >
+                        {isActive ? "Desativar Plano" : "Ativar Plano"}
+                      </button>
                     </div>
                   </div>
                 );
@@ -707,165 +1211,105 @@ export default function AdminCRM() {
 
             {/* Tabela de Lojas e Seus Planos */}
             <div className="op-card" style={{padding: "24px"}}>
-              <h3 style={{fontSize: "18px", fontWeight: 800, margin: "0 0 16px", color: "white"}}>
+              <h3 style={{fontSize: "18px", fontWeight: 800, margin: "0 0 8px", color: "white"}}>
                 Atribuição Rápida de Planos por Loja
               </h3>
               <p style={{fontSize: "13px", color: "#9ca3af", margin: "0 0 16px"}}>
-                Alterne o plano ou limite de atendimentos de qualquer cliente com um clique.
+                Alterne o plano contratado ou defina uma exceção contratual individual para qualquer loja.
               </p>
 
               <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
-                {clients.map(c => (
-                  <div
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "14px 18px",
-                      background: "rgba(255,255,255,0.03)",
-                      borderRadius: "12px",
-                      border: "1px solid #332b49",
-                      flexWrap: "wrap",
-                      gap: "12px"
-                    }}
-                  >
-                    <div>
-                      <strong style={{fontSize: "15px", color: "white"}}>{c.name}</strong>
-                      <small style={{display: "block", color: "#8e87a2", fontSize: "12px"}}>{c.email}</small>
-                    </div>
+                {clients.map(c => {
+                  const hasException = Boolean(c.plan.customQuotaOverride);
+                  return (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "14px 18px",
+                        background: "rgba(255,255,255,0.03)",
+                        borderRadius: "12px",
+                        border: "1px solid #332b49",
+                        flexWrap: "wrap",
+                        gap: "12px"
+                      }}
+                    >
+                      <div>
+                        <strong style={{fontSize: "15px", color: "white"}}>{c.name}</strong>
+                        <small style={{display: "block", color: "#8e87a2", fontSize: "12px"}}>{c.email}</small>
+                        {hasException && (
+                          <span style={{
+                            display: "inline-block",
+                            marginTop: "4px",
+                            background: "rgba(245, 158, 11, 0.15)",
+                            color: "#f59e0b",
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700
+                          }}>
+                            ⚠️ Exceção Contratual: {c.plan.customQuotaOverride} msgs ({c.plan.exceptionReason || "Personalizado"})
+                          </span>
+                        )}
+                      </div>
 
-                    <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
-                      <span style={{
-                        background: "rgba(236, 72, 153, 0.15)",
-                        color: "#ec4899",
-                        padding: "4px 12px",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        fontWeight: 700
-                      }}>
-                        {c.plan.name} (R$ {c.plan.price})
-                      </span>
+                      <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
+                        <span style={{
+                          background: "rgba(236, 72, 153, 0.15)",
+                          color: "#ec4899",
+                          padding: "4px 12px",
+                          borderRadius: "8px",
+                          fontSize: "13px",
+                          fontWeight: 700
+                        }}>
+                          {c.plan.name} (R$ {c.plan.price})
+                        </span>
 
-                      <button
-                        className="op-refresh"
-                        style={{fontSize: "12px", padding: "6px 14px", fontWeight: 600}}
-                        onClick={() => {
-                          setSelectedClientForPlan(c);
-                          const currentP = plans.find(p => p.name === c.plan.name) || plans[0];
-                          setTargetPlanToAssign(currentP);
-                          setChangePlanModalOpen(true);
-                        }}
-                      >
-                        Trocar Plano
-                      </button>
+                        <button
+                          type="button"
+                          className="op-primary"
+                          style={{padding: "8px 14px", fontSize: "12px", borderRadius: "8px"}}
+                          onClick={() => handleOpenAssignModal(c)}
+                        >
+                          Alterar Plano
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </section>
         )}
 
-        {/* ===================== VIEW: CLIENTES & FATURAMENTO ===================== */}
-        {currentNav !== "plans" && (
-          <>
-            {/* 4 CARDS DE KPI (TOP KPI GRID) */}
-            <section className="nw-kpi-grid">
-              <div className="nw-kpi-card">
-                <div className="nw-kpi-icon" style={{background: "rgba(236, 72, 153, 0.15)", color: "#ec4899"}}>
-                  <Building2 size={26}/>
-                </div>
-                <div>
-                  <span style={{fontSize: "13px", color: "#aba8bf", display: "block"}}>Lojas Cadastradas</span>
-                  <strong style={{fontSize: "26px", color: "#fff"}}>{kpis.total}</strong>
-                </div>
-              </div>
-
-              <div className="nw-kpi-card">
-                <div className="nw-kpi-icon" style={{background: "rgba(0, 219, 140, 0.15)", color: "#00db8c"}}>
-                  <Smartphone size={26}/>
-                </div>
-                <div>
-                  <span style={{fontSize: "13px", color: "#aba8bf", display: "block"}}>WhatsApp Conectados</span>
-                  <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                    <strong style={{fontSize: "26px", color: "#fff"}}>{kpis.connected}</strong>
-                    <span className="pulse-online" style={{width: "10px", height: "10px", borderRadius: "50%", background: "#00db8c", display: "inline-block"}}/>
-                  </div>
-                </div>
-              </div>
-
-              <div className="nw-kpi-card">
-                <div className="nw-kpi-icon" style={{background: "rgba(139, 92, 246, 0.15)", color: "#8b5cf6"}}>
-                  <DollarSign size={26}/>
-                </div>
-                <div>
-                  <span style={{fontSize: "13px", color: "#aba8bf", display: "block"}}>Faturamento Previsto</span>
-                  <strong style={{fontSize: "26px", color: "#fff"}}>R$ {kpis.revenue.toFixed(2).replace(".", ",")}</strong>
-                </div>
-              </div>
-
-              <div className="nw-kpi-card">
-                <div className="nw-kpi-icon" style={{background: kpis.blocked > 0 ? "rgba(244, 63, 94, 0.2)" : "rgba(255,255,255,0.05)", color: kpis.blocked > 0 ? "#f43f5e" : "#8e87a2"}}>
-                  <AlertTriangle size={26}/>
-                </div>
-                <div>
-                  <span style={{fontSize: "13px", color: "#aba8bf", display: "block"}}>Pendentes / Bloqueados</span>
-                  <strong style={{fontSize: "26px", color: kpis.blocked > 0 ? "#f43f5e" : "#fff"}}>{kpis.blocked}</strong>
-                </div>
-              </div>
-            </section>
-
-            {/* FORMULÁRIO RETRÁTIL: CRIAR CLIENTE */}
+        {/* ===================== VIEW: LOJAS & CLIENTES ===================== */}
+        {currentNav === "clients" && (
+          <section>
+            {/* FORMULÁRIO DE CADASTRO DE CLIENTE */}
             {formOpen && (
-              <section className="op-card" style={{marginBottom: "24px", borderColor: "rgba(236, 72, 153, 0.5)", boxShadow: "0 10px 40px rgba(236, 72, 153, 0.2)"}}>
-                <div style={{display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #3d344f", paddingBottom: "14px", marginBottom: "16px"}}>
-                  <PlusCircle size={24} color="#ec4899"/>
-                  <h2 style={{margin: 0, fontSize: "19px"}}>Cadastrar Novo Cliente com Acesso e Plano</h2>
+              <div className="op-card" style={{padding: "26px", marginBottom: "26px", border: "1px solid #ec4899", boxShadow: "0 8px 30px rgba(236,72,153,0.15)"}}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                    <PlusCircle size={22} color="#ec4899"/>
+                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Cadastrar Nova Loja / Cliente</h3>
+                  </div>
+                  <button type="button" className="op-refresh" onClick={() => setFormOpen(false)} style={{padding: "4px 12px", fontSize: "12px"}}>
+                    Cancelar
+                  </button>
                 </div>
 
-                {/* Seleção Rápida de Planos Pré-Configurados */}
-                <div style={{marginBottom: "16px"}}>
-                  <label style={{display: "block", fontSize: "13px", color: "#c2bed4", marginBottom: "8px", fontWeight: 700}}>
-                    Escolha Rápida do Plano Comercial:
-                  </label>
-                  <div style={{display: "flex", gap: "10px", flexWrap: "wrap"}}>
-                    {plans.map(p => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => {
-                          setPlanName(p.name);
-                          setPlanPrice(p.price);
-                          setQuotaLimit(p.quotaLimit);
-                        }}
-                        style={{
-                          padding: "8px 14px",
-                          borderRadius: "10px",
-                          border: "1px solid",
-                          borderColor: planName === p.name ? "#ec4899" : "#3d344f",
-                          background: planName === p.name ? "rgba(236, 72, 153, 0.2)" : "#161325",
-                          color: planName === p.name ? "#ec4899" : "#d1d5db",
-                          fontSize: "13px",
-                          fontWeight: 700,
-                          cursor: "pointer"
-                        }}
-                      >
-                        {p.name} (R$ {p.price} · {p.quotaLimit} atend.)
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
-                <form onSubmit={handleCreateClient} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "14px"}}>
+                <form onSubmit={handleCreateClient} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px"}}>
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Loja / Empresa</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Loja</label>
                     <input
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      required
+                      type="text"
+                      placeholder="Ex: Pizzaria Forno & Sabor"
                       value={storeName}
                       onChange={e => setStoreName(e.target.value)}
-                      placeholder="Ex.: Bella Pizza"
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
 
@@ -873,365 +1317,882 @@ export default function AdminCRM() {
                     <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login do Cliente</label>
                     <input
                       type="email"
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      required
+                      placeholder="cliente@pizzaria.com.br"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      placeholder="Ex.: contato@bellapizza.com"
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
 
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha de Acesso Inicial</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha de Acesso do Lojista</label>
                     <input
                       type="password"
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      required
-                      minLength={6}
+                      placeholder="Mínimo 6 dígitos"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      placeholder="Mínimo 6 dígitos"
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome do Plano</label>
-                    <input
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      value={planName}
-                      onChange={e => setPlanName(e.target.value)}
-                      placeholder="Ex.: CRM Start"
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Valor Mensal (R$)</label>
-                    <input
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      value={planPrice}
-                      onChange={e => setPlanPrice(e.target.value)}
-                      placeholder="149,00"
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Data do Vencimento</label>
-                    <input
-                      type="date"
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                       required
-                      value={dueDate}
-                      onChange={e => setDueDate(e.target.value)}
+                      minLength={6}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
 
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Status Inicial do Pagamento</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Plano Comercial</label>
                     <select
-                      style={{width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-                      value={paymentStatus}
-                      onChange={e => setPaymentStatus(e.target.value as "paid" | "pending")}
+                      value={planName}
+                      onChange={e => {
+                        const sel = plans.find(p => p.name === e.target.value);
+                        if (sel) {
+                          setPlanName(sel.name);
+                          setPlanPrice(sel.price);
+                          setQuotaLimit(sel.quotaLimit);
+                        }
+                      }}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
-                      <option value="paid">Pago (Painel Liberado)</option>
-                      <option value="pending">Pendente</option>
+                      {plans.map(p => (
+                        <option key={p.id} value={p.name}>
+                          {p.name} — R$ {p.price}/mês ({p.quotaLimit.toLocaleString("pt-BR")} msgs)
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <div style={{display: "flex", alignItems: "center", gap: "10px", marginTop: "24px"}}>
-                    <label style={{display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: "#ddd"}}>
-                      <input
-                        type="checkbox"
-                        checked={autoBlock}
-                        onChange={e => setAutoBlock(e.target.checked)}
-                        style={{width: "18px", height: "18px", accentColor: "#ec4899"}}
-                      />
-                      Bloquear automaticamente se vencer e não estiver pago
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Primeiro Vencimento</label>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Status do Pagamento</label>
+                    <select
+                      value={paymentStatus}
+                      onChange={e => setPaymentStatus(e.target.value as "paid" | "pending")}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    >
+                      <option value="paid">PAGO (Acesso Liberado)</option>
+                      <option value="pending">PENDENTE (Aguardando)</option>
+                    </select>
+                  </div>
+
+                  <div style={{gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "10px", padding: "10px 0"}}>
+                    <input
+                      type="checkbox"
+                      id="autoBlock"
+                      checked={autoBlock}
+                      onChange={e => setAutoBlock(e.target.checked)}
+                      style={{width: "18px", height: "18px", accentColor: "#ec4899"}}
+                    />
+                    <label htmlFor="autoBlock" style={{fontSize: "14px", color: "#e2e8f0", cursor: "pointer"}}>
+                      <strong>Bloqueio Automático por Inadimplência:</strong> Suspender automaticamente as respostas da IA caso a mensalidade vença sem confirmação de pagamento.
                     </label>
                   </div>
 
-                  <div style={{gridColumn: "1 / -1", marginTop: "10px"}}>
-                    <button
-                      type="submit"
-                      className="op-primary"
-                      disabled={creating}
-                      style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 24px", fontWeight: 700}}
-                    >
-                      <PlusCircle size={18}/> {creating ? "Cadastrando cliente..." : "Cadastrar Cliente & Ativar Acesso"}
+                  <div style={{gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: "12px"}}>
+                    <button type="submit" className="op-primary" disabled={creating} style={{padding: "14px 28px", fontWeight: 700, borderRadius: "10px"}}>
+                      {creating ? "Criando Loja e Instância..." : "Confirmar Cadastro do Cliente"}
                     </button>
                   </div>
                 </form>
-              </section>
+              </div>
             )}
 
-            {/* BARRA DE PESQUISA E FILTROS */}
-            <div style={{display: "flex", gap: "12px", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginBottom: "20px"}}>
-              <div style={{position: "relative", flex: 1, minWidth: "260px", maxWidth: "420px"}}>
-                <Search size={18} style={{position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#8e87a2"}}/>
+            {/* BARRA DE FILTROS & BUSCA */}
+            <div style={{display: "flex", gap: "14px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center"}}>
+              <div style={{position: "relative", flex: 1, minWidth: "260px"}}>
+                <Search size={18} color="#8e87a2" style={{position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)"}}/>
                 <input
                   type="text"
-                  placeholder="Buscar por nome da loja ou e-mail..."
+                  placeholder="Pesquisar loja por nome ou e-mail..."
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "11px 14px 11px 42px",
-                    borderRadius: "10px",
-                    border: "1px solid #3d344f",
-                    background: "#121222",
-                    color: "white",
-                    fontSize: "14px"
-                  }}
+                  style={{width: "100%", padding: "12px 14px 12px 42px", borderRadius: "10px", border: "1px solid #332b49", background: "#151222", color: "white", fontSize: "14px"}}
                 />
               </div>
 
               <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
                 <button
+                  type="button"
+                  className={`op-filter-chip ${filterStatus === "all" ? "active" : ""}`}
                   onClick={() => setFilterStatus("all")}
-                  style={{
-                    padding: "8px 14px", borderRadius: "10px", border: "1px solid", fontSize: "13px", fontWeight: 600,
-                    background: filterStatus === "all" ? "var(--grad-primary)" : "#161325",
-                    borderColor: filterStatus === "all" ? "#ec4899" : "#3d344f",
-                    color: "white"
-                  }}
                 >
                   Todos ({clients.length})
                 </button>
                 <button
+                  type="button"
+                  className={`op-filter-chip ${filterStatus === "active" ? "active" : ""}`}
                   onClick={() => setFilterStatus("active")}
-                  style={{
-                    padding: "8px 14px", borderRadius: "10px", border: "1px solid", fontSize: "13px", fontWeight: 600,
-                    background: filterStatus === "active" ? "rgba(0, 219, 140, 0.25)" : "#161325",
-                    borderColor: filterStatus === "active" ? "#00db8c" : "#3d344f",
-                    color: filterStatus === "active" ? "#00db8c" : "white"
-                  }}
                 >
-                  Ativos ({clients.filter(c => c.status === "active" && !c.plan.isOverdue).length})
+                  Em Dia ({clients.filter(c => c.status === "active" && !c.plan.isOverdue).length})
                 </button>
                 <button
+                  type="button"
+                  className={`op-filter-chip ${filterStatus === "overdue" ? "active" : ""}`}
                   onClick={() => setFilterStatus("overdue")}
-                  style={{
-                    padding: "8px 14px", borderRadius: "10px", border: "1px solid", fontSize: "13px", fontWeight: 600,
-                    background: filterStatus === "overdue" ? "rgba(245, 158, 11, 0.25)" : "#161325",
-                    borderColor: filterStatus === "overdue" ? "#f59e0b" : "#3d344f",
-                    color: filterStatus === "overdue" ? "#f59e0b" : "white"
-                  }}
+                  style={{borderColor: filterStatus === "overdue" ? "#f59e0b" : undefined}}
                 >
-                  Vencidos ({clients.filter(c => c.plan.isOverdue).length})
+                  Atrasados ({clients.filter(c => c.plan.isOverdue).length})
                 </button>
                 <button
+                  type="button"
+                  className={`op-filter-chip ${filterStatus === "suspended" ? "active" : ""}`}
                   onClick={() => setFilterStatus("suspended")}
-                  style={{
-                    padding: "8px 14px", borderRadius: "10px", border: "1px solid", fontSize: "13px", fontWeight: 600,
-                    background: filterStatus === "suspended" ? "rgba(244, 63, 94, 0.25)" : "#161325",
-                    borderColor: filterStatus === "suspended" ? "#f43f5e" : "#3d344f",
-                    color: filterStatus === "suspended" ? "#f43f5e" : "white"
-                  }}
+                  style={{borderColor: filterStatus === "suspended" ? "#f43f5e" : undefined}}
                 >
                   Bloqueados ({clients.filter(c => c.status === "suspended").length})
                 </button>
               </div>
             </div>
 
-            {/* LISTAGEM DE CLIENTES (CARDS MODERNOS) */}
-            <section style={{display: "flex", flexDirection: "column", gap: "16px"}}>
-              {filteredClients.length ? (
+            {/* LISTA DE LOJAS CADASTRADAS */}
+            <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+              {filteredClients.length === 0 ? (
+                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
+                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
+                  <p style={{margin: 0, fontSize: "15px"}}>Nenhuma loja encontrada com os filtros selecionados.</p>
+                </div>
+              ) : (
                 filteredClients.map(client => {
+                  const isBlocked = client.status === "suspended";
                   const isOverdue = client.plan.isOverdue;
-                  const isSuspended = client.status === "suspended";
-                  const isPaid = client.plan.status === "paid";
+                  const hasException = Boolean(client.plan.customQuotaOverride);
 
                   return (
                     <div
                       key={client.id}
                       className="op-card"
                       style={{
+                        padding: "20px 24px",
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
                         flexWrap: "wrap",
                         gap: "18px",
-                        borderLeft: `5px solid ${isSuspended ? "#f43f5e" : isOverdue ? "#f59e0b" : "#00db8c"}`,
-                        background: "linear-gradient(135deg, rgba(26, 22, 41, 0.7), rgba(17, 19, 31, 0.85))"
+                        borderLeft: isBlocked ? "4px solid #f43f5e" : isOverdue ? "4px solid #f59e0b" : "4px solid #00db8c"
                       }}
                     >
-                      {/* Info da Loja */}
-                      <div style={{display: "flex", alignItems: "center", gap: "16px", minWidth: "240px"}}>
+                      <div style={{display: "flex", alignItems: "center", gap: "16px", minWidth: "260px"}}>
                         <div style={{
-                          width: "48px",
-                          height: "48px",
-                          borderRadius: "14px",
-                          background: isSuspended ? "linear-gradient(135deg, #7f1d1d, #991b1b)" : "var(--grad-primary)",
-                          display: "grid",
-                          placeItems: "center",
-                          fontWeight: 800,
-                          fontSize: "20px",
-                          color: "white",
-                          flexShrink: 0
+                          width: "48px", height: "48px", borderRadius: "12px",
+                          background: isBlocked ? "rgba(244,63,94,0.15)" : "rgba(236,72,153,0.15)",
+                          display: "grid", placeItems: "center",
+                          color: isBlocked ? "#f43f5e" : "#ec4899",
+                          fontWeight: 800, fontSize: "18px"
                         }}>
-                          {client.name.charAt(0).toUpperCase()}
+                          {client.name.slice(0, 2).toUpperCase()}
                         </div>
+
                         <div>
-                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}}>
+                          <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
                             <strong style={{fontSize: "17px", color: "white"}}>{client.name}</strong>
-                            {isSuspended ? (
-                              <span style={{fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "10px", background: "rgba(244, 63, 94, 0.2)", color: "#f43f5e"}}>
-                                Bloqueado
-                              </span>
-                            ) : isOverdue ? (
-                              <span style={{fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b"}}>
-                                Vencido
-                              </span>
-                            ) : (
-                              <span style={{fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.2)", color: "#00db8c"}}>
-                                Ativo
-                              </span>
-                            )}
-                          </div>
-                          <small style={{color: "#aba8bf", display: "block", marginTop: "2px"}}>
-                            Login: <strong>{client.email}</strong>
-                          </small>
-                          <small style={{color: "#8e87a2", fontSize: "11px"}}>
-                            Instância: <code>{client.instanceName || "não conectada"}</code> · WhatsApp: {client.whatsappStatus === "connected" ? "🟢 Conectado" : "⚪ Desconectado"}
-                          </small>
-                        </div>
-                      </div>
-
-                      {/* Informações de Plano e Vencimento */}
-                      <div style={{display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap"}}>
-                        <div>
-                          <small style={{display: "block", fontSize: "11px", color: "#aba8bf", textTransform: "uppercase", fontWeight: 700}}>
-                            Plano &amp; Valor
-                          </small>
-                          <strong style={{fontSize: "15px", color: "white"}}>
-                            {client.plan.name}
-                          </strong>
-                          <span style={{display: "block", fontSize: "13px", color: "#c084fc", fontWeight: 700}}>
-                            R$ {client.plan.price}/mês
-                          </span>
-                        </div>
-
-                        <div>
-                          <small style={{display: "block", fontSize: "11px", color: "#aba8bf", textTransform: "uppercase", fontWeight: 700}}>
-                            Vencimento
-                          </small>
-                          <strong style={{fontSize: "14px", color: isOverdue ? "#f43f5e" : "white"}}>
-                            {client.plan.dueDate ? new Date(client.plan.dueDate).toLocaleDateString("pt-BR") : "—"}
-                          </strong>
-                          <div style={{display: "flex", alignItems: "center", gap: "6px", marginTop: "2px"}}>
                             <span style={{
-                              fontSize: "11px",
-                              fontWeight: 700,
-                              padding: "2px 6px",
-                              borderRadius: "6px",
-                              background: isPaid ? "rgba(0, 219, 140, 0.15)" : "rgba(244, 63, 94, 0.15)",
-                              color: isPaid ? "#00db8c" : "#f43f5e"
+                              background: isBlocked ? "rgba(244,63,94,0.2)" : isOverdue ? "rgba(245,158,11,0.2)" : "rgba(0,219,140,0.2)",
+                              color: isBlocked ? "#f43f5e" : isOverdue ? "#f59e0b" : "#00db8c",
+                              padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
                             }}>
-                              {isPaid ? "Pago" : "Pendente"}
+                              {isBlocked ? "BLOQUEADO" : isOverdue ? "PAGAMENTO PENDENTE" : "ATIVO"}
                             </span>
-                            {client.plan.autoBlock && (
-                              <span title="Bloqueio automático ativado" style={{fontSize: "11px", color: "#a59cb8"}}>
-                                🔒 Auto
-                              </span>
-                            )}
                           </div>
+
+                          <span style={{fontSize: "13px", color: "#8e87a2", display: "block", marginTop: "2px"}}>
+                            Login: <strong>{client.email}</strong>
+                          </span>
+
+                          <div style={{display: "flex", alignItems: "center", gap: "12px", marginTop: "6px", fontSize: "12px", color: "#b3a9c7", flexWrap: "wrap"}}>
+                            <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
+                              <Smartphone size={13} color={client.whatsappStatus === "connected" ? "#00db8c" : "#8e87a2"}/>
+                              {client.whatsappStatus === "connected" ? "WhatsApp Conectado" : "WhatsApp Desconectado"}
+                            </span>
+                            <span>•</span>
+                            <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
+                              <Calendar size={13}/> Vence em: {client.plan.dueDate}
+                            </span>
+                            <span>•</span>
+                            <span>AutoBloqueio: {client.plan.autoBlock ? "Ativado" : "Desativado"}</span>
+                          </div>
+
+                          {hasException && (
+                            <div style={{marginTop: "6px"}}>
+                              <span style={{
+                                background: "rgba(245, 158, 11, 0.15)",
+                                color: "#f59e0b",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: 700
+                              }}>
+                                ⚠️ Exceção Contratual: {client.plan.customQuotaOverride} msgs ({client.plan.exceptionReason || "Personalizado"})
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {/* Botões de Ação */}
-                      <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
-                        {/* Botão Trocar Plano */}
-                        <button
-                          className="op-refresh"
-                          style={{fontSize: "12px", padding: "8px 12px"}}
-                          onClick={() => {
-                            setSelectedClientForPlan(client);
-                            const cur = plans.find(p => p.name === client.plan.name) || plans[0];
-                            setTargetPlanToAssign(cur);
-                            setChangePlanModalOpen(true);
-                          }}
-                        >
-                          <CreditCard size={14}/> Plano
-                        </button>
-
-                        {/* Botão Marcar Pago / Pendente */}
-                        {isPaid ? (
-                          <button
-                            className="op-refresh"
-                            style={{fontSize: "12px", padding: "8px 12px", background: "rgba(245, 158, 11, 0.1)", color: "#f59e0b", borderColor: "rgba(245, 158, 11, 0.3)"}}
-                            onClick={() => void handleSetPaymentStatus(client, "pending")}
-                          >
-                            Marcar Pendente
-                          </button>
-                        ) : (
-                          <button
-                            className="op-refresh"
-                            style={{fontSize: "12px", padding: "8px 12px", background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", borderColor: "#00db8c", fontWeight: 700}}
-                            onClick={() => void handleSetPaymentStatus(client, "paid")}
-                          >
-                            <CheckCircle2 size={14}/> Marcar Pago
-                          </button>
-                        )}
-
-                        {/* Botão Bloquear / Desbloquear */}
-                        <button
-                          className="op-refresh"
-                          style={{
-                            fontSize: "12px", padding: "8px 12px",
-                            background: isSuspended ? "rgba(0, 219, 140, 0.15)" : "rgba(244, 63, 94, 0.15)",
-                            color: isSuspended ? "#00db8c" : "#f43f5e",
-                            borderColor: isSuspended ? "#00db8c" : "#f43f5e",
+                      {/* Informações do Plano & Ações Rápidas */}
+                      <div style={{display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap"}}>
+                        <div style={{textAlign: "right", marginRight: "6px"}}>
+                          <span style={{
+                            display: "inline-block",
+                            background: "rgba(236, 72, 153, 0.15)",
+                            color: "#ec4899",
+                            padding: "4px 10px",
+                            borderRadius: "8px",
+                            fontSize: "13px",
                             fontWeight: 700
-                          }}
-                          onClick={() => void handleToggleBlock(client)}
-                        >
-                          {isSuspended ? <RotateCcw size={14}/> : <Ban size={14}/>}
-                          {isSuspended ? "Desbloquear" : "Bloquear"}
-                        </button>
+                          }}>
+                            {client.plan.name}
+                          </span>
+                          <strong style={{display: "block", fontSize: "16px", color: "white", marginTop: "2px"}}>
+                            R$ {client.plan.price}/mês
+                          </strong>
+                          <small style={{color: "#8e87a2", fontSize: "11px"}}>
+                            {client.plan.customQuotaOverride || client.plan.quotaLimit || 500} atendimentos
+                          </small>
+                        </div>
 
-                        {/* Botão Alterar Senha */}
-                        <button
-                          className="op-refresh"
-                          style={{fontSize: "12px", padding: "8px 12px"}}
-                          onClick={() => {
-                            setResetUserId(client.userId || client.id);
-                            setResetStoreName(client.name);
-                            setResetModalOpen(true);
-                          }}
-                        >
-                          <KeyRound size={14}/> Senha
-                        </button>
+                        {/* Botões de Ação */}
+                        <div style={{display: "flex", gap: "6px", flexWrap: "wrap"}}>
+                          {client.plan.status === "paid" ? (
+                            <button
+                              type="button"
+                              className="op-refresh"
+                              title="Marcar como Pagamento Pendente"
+                              style={{padding: "8px 12px", color: "#f59e0b"}}
+                              onClick={() => handleSetPaymentStatus(client, "pending")}
+                            >
+                              Pendente
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="op-primary"
+                              title="Confirmar Pagamento Recebido"
+                              style={{padding: "8px 12px", background: "#00db8c", color: "#000"}}
+                              onClick={() => handleSetPaymentStatus(client, "paid")}
+                            >
+                              Marcar Pago
+                            </button>
+                          )}
 
-                        {/* Botão Apagar Loja */}
-                        <button
-                          className="op-refresh"
-                          style={{fontSize: "12px", padding: "8px 12px", background: "#2e1218", color: "#ff859a", borderColor: "#f43f5e"}}
-                          onClick={() => void handleDeleteClient(client)}
-                          title="Apagar loja e instância"
-                        >
-                          <Trash2 size={14}/> Apagar
-                        </button>
+                          <button
+                            type="button"
+                            className="op-refresh"
+                            title="Alterar Plano da Loja"
+                            style={{padding: "8px 12px"}}
+                            onClick={() => handleOpenAssignModal(client)}
+                          >
+                            <CreditCard size={15}/>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="op-refresh"
+                            title="Redefinir Senha do Cliente"
+                            style={{padding: "8px 12px"}}
+                            onClick={() => {
+                              setResetUserId(client.userId || client.id);
+                              setResetStoreName(client.name);
+                              setNewPassword("");
+                              setResetModalOpen(true);
+                            }}
+                          >
+                            <KeyRound size={15}/>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="op-refresh"
+                            title={isBlocked ? "Desbloquear Loja" : "Bloquear Loja"}
+                            style={{padding: "8px 12px", color: isBlocked ? "#00db8c" : "#f43f5e"}}
+                            onClick={() => handleToggleBlock(client)}
+                          >
+                            {isBlocked ? <RotateCcw size={15}/> : <Ban size={15}/>}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="op-refresh"
+                            title="Apagar Loja"
+                            style={{padding: "8px 12px", color: "#f43f5e"}}
+                            onClick={() => handleDeleteClient(client)}
+                          >
+                            <Trash2 size={15}/>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
                 })
-              ) : (
-                <div className="op-card" style={{textAlign: "center", padding: "50px 20px", color: "#8e87a2"}}>
-                  <Building2 size={36} color="#ec4899" style={{margin: "0 auto 12px"}}/>
-                  <h3>Nenhuma loja encontrada</h3>
-                  <p>Cadastre seu primeiro cliente clicando em &quot;+ Novo Cliente&quot; acima.</p>
-                </div>
               )}
-            </section>
-          </>
+            </div>
+          </section>
         )}
 
-        {/* MODAL: TROCAR PLANO DO CLIENTE */}
-        {changePlanModalOpen && selectedClientForPlan && (
+        {/* ===================== VIEW: FATURAMENTO & KPIS ===================== */}
+        {currentNav === "kpis" && (
+          <section>
+            <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "18px", marginBottom: "26px"}}>
+              <div className="op-card" style={{padding: "20px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Total de Clientes</span>
+                <strong style={{display: "block", fontSize: "32px", color: "white", marginTop: "4px"}}>{kpis.total}</strong>
+                <small style={{color: "#00db8c", fontSize: "12px"}}>Lojistas cadastrados</small>
+              </div>
+
+              <div className="op-card" style={{padding: "20px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>WhatsApps Conectados</span>
+                <strong style={{display: "block", fontSize: "32px", color: "#00db8c", marginTop: "4px"}}>{kpis.connected}</strong>
+                <small style={{color: "#9ca3af", fontSize: "12px"}}>Operando com NovaesWeb IA</small>
+              </div>
+
+              <div className="op-card" style={{padding: "20px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Receita Mensal Recorrente</span>
+                <strong style={{display: "block", fontSize: "32px", color: "#ec4899", marginTop: "4px"}}>
+                  R$ {kpis.revenue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </strong>
+                <small style={{color: "#9ca3af", fontSize: "12px"}}>Faturamento estimado mensal</small>
+              </div>
+
+              <div className="op-card" style={{padding: "20px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Lojas com Pendência/Bloqueio</span>
+                <strong style={{display: "block", fontSize: "32px", color: kpis.blocked > 0 ? "#f43f5e" : "#9ca3af", marginTop: "4px"}}>
+                  {kpis.blocked}
+                </strong>
+                <small style={{color: "#9ca3af", fontSize: "12px"}}>Mensalidade atrasada ou suspensa</small>
+              </div>
+            </div>
+
+            <div className="op-card" style={{padding: "24px"}}>
+              <h3 style={{fontSize: "18px", fontWeight: 800, margin: "0 0 16px", color: "white"}}>Distribuição de Clientes por Plano</h3>
+              <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px"}}>
+                {plans.map(p => {
+                  const count = clientCountsMap[p.id] ?? planDistribution[p.name] ?? 0;
+                  const priceVal = parseFloat(p.price.replace(/\./g, "").replace(",", ".")) || 0;
+                  const totalPlanRev = count * priceVal;
+                  return (
+                    <div key={p.id} style={{padding: "16px", background: "rgba(255,255,255,0.03)", borderRadius: "12px", border: "1px solid #332b49"}}>
+                      <strong style={{fontSize: "16px", color: "white", display: "block"}}>{p.name}</strong>
+                      <span style={{fontSize: "13px", color: "#ec4899", fontWeight: 700}}>R$ {p.price}/mês</span>
+                      <div style={{marginTop: "10px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
+                        <span>Lojas ativas:</span>
+                        <strong style={{color: "white"}}>{count}</strong>
+                      </div>
+                      <div style={{marginTop: "4px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
+                        <span>Receita gerada:</span>
+                        <strong style={{color: "#00db8c"}}>R$ {totalPlanRev.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ===================== MODAIS ===================== */}
+
+        {/* MODAL 1: EDITAR / CRIAR PLANO */}
+        {editPlanModalOpen && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
             display: "grid", placeItems: "center", zIndex: 100, padding: "20px"
           }}>
-            <div className="op-card" style={{width: "100%", maxWidth: "460px", padding: "28px", borderColor: "#ec4899"}}>
+            <div className="op-card" style={{
+              width: "100%", maxWidth: "620px", maxHeight: "90vh", overflowY: "auto",
+              padding: "28px", borderColor: "#ec4899"
+            }}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px"}}>
+                <Edit3 size={22} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>
+                  {isCreatingNewPlan ? "Criar Novo Plano Comercial" : `Editar Plano: ${editingPlan.name}`}
+                </h3>
+              </div>
+
+              <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px"}}>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>ID do Plano (Slug estável)</label>
+                    <input
+                      type="text"
+                      disabled={!isCreatingNewPlan}
+                      value={editingPlan.id}
+                      onChange={e => setEditingPlan({ ...editingPlan, id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: isCreatingNewPlan ? "#121222" : "#1a1628", color: "white", fontFamily: "monospace"}}
+                    />
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Nome Comercial</label>
+                    <input
+                      type="text"
+                      value={editingPlan.name}
+                      onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+                </div>
+
+                <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px"}}>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Preço Mensal (R$)</label>
+                    <input
+                      type="text"
+                      value={editingPlan.price}
+                      onChange={e => setEditingPlan({ ...editingPlan, price: e.target.value })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Franquia (Msgs/mês)</label>
+                    <input
+                      type="number"
+                      value={editingPlan.quotaLimit}
+                      onChange={e => setEditingPlan({ ...editingPlan, quotaLimit: Number(e.target.value) })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Max Operadores</label>
+                    <input
+                      type="number"
+                      value={editingPlan.maxOperators || 1}
+                      onChange={e => setEditingPlan({ ...editingPlan, maxOperators: Number(e.target.value) })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Descrição Comercial</label>
+                  <input
+                    type="text"
+                    value={editingPlan.description}
+                    onChange={e => setEditingPlan({ ...editingPlan, description: e.target.value })}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                  />
+                </div>
+
+                {/* Checklist dos 9 Recursos Técnicos */}
+                <div style={{background: "rgba(255,255,255,0.03)", padding: "14px", borderRadius: "10px", border: "1px solid #3d344f"}}>
+                  <strong style={{fontSize: "13px", color: "#fff", display: "block", marginBottom: "10px"}}>
+                    Habilitar Recursos Técnicos para este Plano:
+                  </strong>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "10px"}}>
+                    {TECHNICAL_FEATURES_LIST.map(feat => {
+                      const isChecked = (editingPlan.allowedFeatures || []).includes(feat.id);
+                      return (
+                        <div
+                          key={feat.id}
+                          onClick={() => handleToggleFeatureInEditor(feat.id)}
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: "8px",
+                            cursor: "pointer",
+                            padding: "6px 8px",
+                            borderRadius: "6px",
+                            background: isChecked ? "rgba(236,72,153,0.1)" : "transparent"
+                          }}
+                        >
+                          {isChecked ? (
+                            <CheckSquare size={16} color="#ec4899" style={{marginTop: "2px", flexShrink: 0}}/>
+                          ) : (
+                            <Square size={16} color="#6b7280" style={{marginTop: "2px", flexShrink: 0}}/>
+                          )}
+                          <div>
+                            <span style={{fontSize: "12px", fontWeight: 700, color: isChecked ? "white" : "#9ca3af", display: "block"}}>
+                              {feat.name}
+                            </span>
+                            <small style={{fontSize: "11px", color: "#8e87a2", lineHeight: "1.2", display: "block"}}>
+                              {feat.description}
+                            </small>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>
+                    Itens da Lista Comercial (1 benefício por linha)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={editingFeaturesText}
+                    onChange={e => setEditingFeaturesText(e.target.value)}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "13px"}}
+                  />
+                </div>
+
+                <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                  <input
+                    type="checkbox"
+                    id="isPopular"
+                    checked={editingPlan.isPopular || false}
+                    onChange={e => setEditingPlan({ ...editingPlan, isPopular: e.target.checked })}
+                    style={{width: "16px", height: "16px", accentColor: "#ec4899"}}
+                  />
+                  <label htmlFor="isPopular" style={{fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                    Destacar como <strong>MAIS VENDIDO</strong> no catálogo
+                  </label>
+                </div>
+              </div>
+
+              <div style={{display: "flex", gap: "10px", justifyContent: "space-between", marginTop: "24px"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setEditPlanModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <div style={{display: "flex", gap: "10px"}}>
+                  <button
+                    type="button"
+                    className="op-refresh"
+                    onClick={handleSavePlanDraft}
+                  >
+                    Salvar como Rascunho
+                  </button>
+                  <button
+                    type="button"
+                    className="op-primary"
+                    onClick={handleTriggerApplyPlan}
+                  >
+                    Salvar e Aplicar...
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 2: CONFIRMAÇÃO DE IMPACTO E APLICAÇÃO EM LOTE */}
+        {impactModalOpen && planToApply && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+            display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "560px", padding: "28px", borderColor: "#ec4899"}}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px"}}>
+                <Zap size={22} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Confirmar Aplicação e Sincronização</h3>
+              </div>
+
+              <p style={{fontSize: "13px", color: "#c2bed4", marginTop: 0}}>
+                Você está prestes a aplicar as novas definições do plano <strong>{planToApply.name}</strong>.
+              </p>
+
+              {/* Comparativo DE -> PARA */}
+              <div style={{background: "rgba(255,255,255,0.03)", borderRadius: "10px", padding: "14px", marginBottom: "16px", border: "1px solid #3d344f"}}>
+                <strong style={{fontSize: "13px", color: "white", display: "block", marginBottom: "8px"}}>
+                  Resumo das Alterações (De ➔ Para):
+                </strong>
+                <div style={{display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px"}}>
+                  <div style={{display: "flex", justifyContent: "space-between"}}>
+                    <span style={{color: "#9ca3af"}}>Preço:</span>
+                    <span>
+                      <s style={{color: "#6b7280"}}>R$ {originalPlan?.price || "—"}</s> ➔ <strong style={{color: "white"}}>R$ {planToApply.price}</strong>
+                    </span>
+                  </div>
+                  <div style={{display: "flex", justifyContent: "space-between"}}>
+                    <span style={{color: "#9ca3af"}}>Franquia Mensal:</span>
+                    <span>
+                      <s style={{color: "#6b7280"}}>{originalPlan?.quotaLimit?.toLocaleString("pt-BR") || "—"} msgs</s> ➔ <strong style={{color: "#ec4899"}}>{planToApply.quotaLimit.toLocaleString("pt-BR")} msgs</strong>
+                    </span>
+                  </div>
+                  <div style={{display: "flex", justifyContent: "space-between"}}>
+                    <span style={{color: "#9ca3af"}}>Recursos Habilitados:</span>
+                    <span><strong style={{color: "#00db8c"}}>{(planToApply.allowedFeatures || []).length} ativos</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lojas Elegíveis Afetadas */}
+              <div style={{background: "rgba(236,72,153,0.06)", borderRadius: "10px", padding: "14px", marginBottom: "16px", border: "1px solid rgba(236,72,153,0.2)"}}>
+                <strong style={{fontSize: "13px", color: "#ec4899", display: "block", marginBottom: "6px"}}>
+                  Lojas Vinculadas Elegíveis ({enrolledStoresMap[planToApply.id]?.length || clientCountsMap[planToApply.id] || 0}):
+                </strong>
+                {(enrolledStoresMap[planToApply.id]?.length || 0) > 0 ? (
+                  <div style={{maxHeight: "100px", overflowY: "auto", fontSize: "12px", color: "#d1d5db", display: "flex", flexDirection: "column", gap: "4px"}}>
+                    {enrolledStoresMap[planToApply.id].map(s => (
+                      <div key={s.id} style={{display: "flex", justifyContent: "space-between"}}>
+                        <span>• {s.name}</span>
+                        {s.customQuotaOverride && (
+                          <span style={{color: "#f59e0b", fontSize: "11px"}}>
+                            (Mantém exceção: {s.customQuotaOverride} msgs)
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span style={{fontSize: "12px", color: "#9ca3af"}}>
+                    Nenhuma loja cadastrada vinculada a este plano no momento. Novos clientes receberão as regras vigentes automaticamente.
+                  </span>
+                )}
+              </div>
+
+              {/* Escolha de Vigência */}
+              <div style={{marginBottom: "20px"}}>
+                <label style={{fontSize: "13px", color: "#e2e8f0", fontWeight: 700, display: "block", marginBottom: "8px"}}>
+                  Vigência da Aplicação:
+                </label>
+                <div style={{display: "flex", flexDirection: "column", gap: "8px"}}>
+                  <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#d1d5db", cursor: "pointer"}}>
+                    <input
+                      type="radio"
+                      name="vigencia"
+                      value="immediate"
+                      checked={vigencia === "immediate"}
+                      onChange={() => setVigencia("immediate")}
+                      style={{accentColor: "#ec4899"}}
+                    />
+                    <span><strong>Imediata:</strong> Sincronizar em todas as lojas vinculadas elegíveis agora mesmo.</span>
+                  </label>
+
+                  <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#d1d5db", cursor: "pointer"}}>
+                    <input
+                      type="radio"
+                      name="vigencia"
+                      value="new_clients"
+                      checked={vigencia === "new_clients"}
+                      onChange={() => setVigencia("new_clients")}
+                      style={{accentColor: "#ec4899"}}
+                    />
+                    <span><strong>Apenas Novos Clientes:</strong> Manter lojas existentes como estão.</span>
+                  </label>
+
+                  <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#d1d5db", cursor: "pointer"}}>
+                    <input
+                      type="radio"
+                      name="vigencia"
+                      value="next_renewal"
+                      checked={vigencia === "next_renewal"}
+                      onChange={() => setVigencia("next_renewal")}
+                      style={{accentColor: "#ec4899"}}
+                    />
+                    <span><strong>Na Próxima Renovação:</strong> Atualizar no próximo vencimento/ciclo.</span>
+                  </label>
+                </div>
+              </div>
+
+              <div style={{display: "flex", gap: "10px", justifyContent: "flex-end"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setImpactModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="op-primary"
+                  disabled={applyingPlan}
+                  onClick={handleConfirmApplyPlan}
+                >
+                  {applyingPlan ? "Sincronizando..." : "Confirmar e Sincronizar em Lote"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 3: DUPLICAR PLANO */}
+        {duplicateModalOpen && sourcePlanForDuplicate && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "440px", padding: "26px", borderColor: "#ec4899"}}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px"}}>
+                <Copy size={20} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Duplicar Plano Comercial</h3>
+              </div>
+              <p style={{fontSize: "13px", color: "#c2bed4", marginTop: 0}}>
+                Copiar a estrutura do plano <strong>{sourcePlanForDuplicate.name}</strong> para criar uma nova versão.
+              </p>
+
+              <div style={{display: "flex", flexDirection: "column", gap: "12px", marginBottom: "18px"}}>
+                <div>
+                  <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Novo ID (slug único)</label>
+                  <input
+                    type="text"
+                    value={duplicateNewId}
+                    onChange={e => setDuplicateNewId(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontFamily: "monospace"}}
+                  />
+                </div>
+                <div>
+                  <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Novo Nome Comercial</label>
+                  <input
+                    type="text"
+                    value={duplicateNewName}
+                    onChange={e => setDuplicateNewName(e.target.value)}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                  />
+                </div>
+              </div>
+
+              <div style={{display: "flex", gap: "10px", justifyContent: "flex-end"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setDuplicateModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="op-primary"
+                  disabled={duplicating || !duplicateNewId.trim()}
+                  onClick={handleConfirmDuplicate}
+                >
+                  {duplicating ? "Copiando..." : "Criar Cópia"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 4: VER LOJAS VINCULADAS */}
+        {enrolledModalOpen && selectedPlanForStores && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "520px", padding: "26px", borderColor: "#ec4899"}}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px"}}>
+                <Building2 size={20} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>
+                  Lojas Vinculadas ao {selectedPlanForStores.name}
+                </h3>
+              </div>
+
+              <div style={{maxHeight: "340px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px"}}>
+                {((enrolledStoresMap[selectedPlanForStores.id]) || []).length === 0 ? (
+                  <p style={{fontSize: "13px", color: "#9ca3af", textAlign: "center", padding: "20px 0"}}>
+                    Nenhuma loja cadastrada vinculada a este plano no momento.
+                  </p>
+                ) : (
+                  enrolledStoresMap[selectedPlanForStores.id].map(st => (
+                    <div
+                      key={st.id}
+                      style={{
+                        padding: "10px 14px",
+                        background: "rgba(255,255,255,0.03)",
+                        borderRadius: "8px",
+                        border: "1px solid #332b49",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
+                      <div>
+                        <strong style={{color: "white", display: "block", fontSize: "14px"}}>{st.name}</strong>
+                        {st.customQuotaOverride && (
+                          <small style={{color: "#f59e0b", fontSize: "11px"}}>
+                            ⚠️ Exceção: {st.customQuotaOverride} msgs ({st.exceptionReason || "Customizado"})
+                          </small>
+                        )}
+                      </div>
+                      <span style={{fontSize: "12px", color: "#a599c2"}}>
+                        {st.customQuotaOverride || selectedPlanForStores.quotaLimit} msgs/mês
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div style={{display: "flex", justifyContent: "flex-end"}}>
+                <button
+                  type="button"
+                  className="op-primary"
+                  onClick={() => setEnrolledModalOpen(false)}
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 5: HISTÓRICO DE AUDITORIA */}
+        {historyModalOpen && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+            display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
+          }}>
+            <div className="op-card" style={{
+              width: "100%", maxWidth: "660px", maxHeight: "85vh", overflowY: "auto",
+              padding: "26px", borderColor: "#ec4899"
+            }}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px"}}>
+                <History size={22} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Histórico de Alterações de Planos</h3>
+              </div>
+
+              {loadingHistory ? (
+                <p style={{textAlign: "center", color: "#9ca3af", padding: "30px 0"}}>Carregando histórico...</p>
+              ) : auditLogs.length === 0 ? (
+                <p style={{textAlign: "center", color: "#9ca3af", padding: "30px 0"}}>Nenhuma alteração registrada ainda.</p>
+              ) : (
+                <div style={{display: "flex", flexDirection: "column", gap: "10px", marginBottom: "18px"}}>
+                  {auditLogs.map(entry => (
+                    <div
+                      key={entry.id}
+                      style={{
+                        padding: "12px 16px",
+                        background: "rgba(255,255,255,0.03)",
+                        borderRadius: "10px",
+                        border: "1px solid #332b49"
+                      }}
+                    >
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px"}}>
+                        <strong style={{color: "white", fontSize: "14px"}}>{entry.planName || entry.planId}</strong>
+                        <span style={{fontSize: "11px", color: "#8e87a2"}}>
+                          {new Date(entry.timestamp).toLocaleString("pt-BR")}
+                        </span>
+                      </div>
+                      <div style={{fontSize: "12px", color: "#ec4899", fontWeight: 600}}>
+                        Ação: {entry.action} {entry.vigencia ? `• Vigência: ${entry.vigencia}` : ""}
+                        {entry.impactedCount ? ` • ${entry.impactedCount} loja(s) impactada(s)` : ""}
+                      </div>
+                      {entry.diffSummary && (
+                        <p style={{margin: "4px 0 0", fontSize: "12px", color: "#d1d5db"}}>{entry.diffSummary}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{display: "flex", justifyContent: "flex-end"}}>
+                <button
+                  type="button"
+                  className="op-primary"
+                  onClick={() => setHistoryModalOpen(false)}
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 6: ALTERAR PLANO DA LOJA (COM SUPORTE A EXCEÇÃO CONTRATUAL) */}
+        {changePlanModalOpen && selectedClientForPlan && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            display: "grid", placeItems: "center", zIndex: 100, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "480px", padding: "28px", borderColor: "#ec4899"}}>
               <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px"}}>
                 <CreditCard size={22} color="#ec4899"/>
                 <h3 style={{margin: 0, fontSize: "18px"}}>Alterar Plano da Loja</h3>
@@ -1240,11 +2201,14 @@ export default function AdminCRM() {
                 Selecione o novo plano comercial para a loja <strong>{selectedClientForPlan.name}</strong>:
               </p>
 
-              <div style={{display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px"}}>
+              <div style={{display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px"}}>
                 {plans.map(p => (
                   <div
                     key={p.id}
-                    onClick={() => setTargetPlanToAssign(p)}
+                    onClick={() => {
+                      setTargetPlanToAssign(p);
+                      if (!customQuotaChecked) setCustomQuotaValue(p.quotaLimit);
+                    }}
                     style={{
                       padding: "12px 16px",
                       borderRadius: "10px",
@@ -1264,6 +2228,57 @@ export default function AdminCRM() {
                     <strong style={{color: "#ec4899"}}>R$ {p.price}/mês</strong>
                   </div>
                 ))}
+              </div>
+
+              {/* Exceção Contratual Individual */}
+              <div style={{
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: "10px",
+                padding: "14px",
+                marginBottom: "20px",
+                border: "1px solid #3d344f"
+              }}>
+                <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "white", cursor: "pointer", fontWeight: 700}}>
+                  <input
+                    type="checkbox"
+                    checked={customQuotaChecked}
+                    onChange={e => {
+                      setCustomQuotaChecked(e.target.checked);
+                      if (e.target.checked && !customQuotaValue) {
+                        setCustomQuotaValue(targetPlanToAssign.quotaLimit);
+                      }
+                    }}
+                    style={{width: "16px", height: "16px", accentColor: "#ec4899"}}
+                  />
+                  <span>Exceção Contratual Individual</span>
+                </label>
+                <small style={{color: "#8e87a2", fontSize: "11px", display: "block", marginTop: "2px", marginBottom: "8px"}}>
+                  Define uma franquia mensal exclusiva para esta loja. Não será sobrescrita por atualizações gerais do plano.
+                </small>
+
+                {customQuotaChecked && (
+                  <div style={{display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px"}}>
+                    <div>
+                      <label style={{fontSize: "11px", color: "#a599c2", display: "block", marginBottom: "2px"}}>Franquia Customizada (Msgs/mês)</label>
+                      <input
+                        type="number"
+                        value={customQuotaValue}
+                        onChange={e => setCustomQuotaValue(Number(e.target.value))}
+                        style={{width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize: "11px", color: "#a599c2", display: "block", marginBottom: "2px"}}>Motivo da Exceção</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Acordo anual VIP com franquia ampliada"
+                        value={customQuotaReason}
+                        onChange={e => setCustomQuotaReason(e.target.value)}
+                        style={{width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div style={{display: "flex", gap: "10px", justifyContent: "flex-end"}}>
@@ -1287,7 +2302,7 @@ export default function AdminCRM() {
           </div>
         )}
 
-        {/* MODAL: REDEFINIR SENHA DO CLIENTE */}
+        {/* MODAL 7: REDEFINIR SENHA DO CLIENTE */}
         {resetModalOpen && (
           <div style={{
             position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",

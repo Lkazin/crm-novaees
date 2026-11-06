@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,11 @@ export async function GET(request: NextRequest) {
       operator.token
     );
     if (!member.length) return privateJson({ error: "not_authorized" }, 403);
+
+    const effectivePlan = await getEffectiveTenantPlan(tenantId);
+    if (!effectivePlan.allowedFeatures.includes("commercial_tags")) {
+      return privateJson({ tags: [], contactTags: [], featureLocked: true });
+    }
 
     const { url } = supabaseSettings();
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -95,6 +101,11 @@ export async function POST(request: NextRequest) {
     );
     if (!member.length) return privateJson({ error: "not_authorized" }, 403);
 
+    const effectivePlan = await getEffectiveTenantPlan(tenantId);
+    if (!effectivePlan.allowedFeatures.includes("commercial_tags")) {
+      return privateJson({ error: "feature_not_included_in_plan", message: "Etiquetas comerciais requerem o plano CRM Business ou Premium." }, 403);
+    }
+
     const { url } = supabaseSettings();
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
     if (secret.length < 30) return privateJson({ error: "service_not_configured" }, 503);
@@ -124,3 +135,4 @@ export async function POST(request: NextRequest) {
     return privateJson({ error: "failed_to_update_tags" }, 500);
   }
 }
+

@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { syncTenantUsageLimits, getMasterPlans } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type Staff = { role: string; enabled: boolean };
 
 function getAdminConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
@@ -12,40 +12,11 @@ function getAdminConfig() {
   return { url, serviceKey };
 }
 
-async function checkMasterAccess(request: NextRequest): Promise<boolean> {
-  const masterPassword = "NovaesWeb@2026Admin";
-  const labToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf";
-
-  // 1. Direct header
-  const authHeader = request.headers.get("x-admin-password") || request.headers.get("authorization") || "";
-  const cleanHeader = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (cleanHeader === masterPassword || cleanHeader === labToken) return true;
-
-  // 2. Cookie
-  const cookie = request.cookies.get("crm_admin_token")?.value || "";
-  if (cookie === masterPassword || cookie === labToken) return true;
-
-  // 3. Supabase operator session
-  try {
-    const operator = await verifyOperator();
-    if (operator) {
-      const staff = await supabaseRows<Staff[]>(
-        "platform_staff?select=role,enabled&user_id=eq." + encodeURIComponent(operator.id) + "&limit=2",
-        operator.token
-      );
-      if (staff.length === 1 && staff[0].enabled && ["MASTER", "ADMINISTRADOR"].includes(staff[0].role)) {
-        return true;
-      }
-    }
-  } catch {}
-
-  return false;
-}
-
 // GET: List all client stores with login email, plan, dueDate, paymentStatus, and block state
 export async function GET(request: NextRequest) {
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
@@ -162,7 +133,8 @@ export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.includes("application/json")) return privateJson({ error: "json_required" }, 415);
 
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
@@ -173,7 +145,7 @@ export async function POST(request: NextRequest) {
     const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
-    const planName = typeof body.planName === "string" ? body.planName.trim() : "Plano IA Mensal";
+    const planName = typeof body.planName === "string" ? body.planName.trim() : "CRM Start";
     const planPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "149,00";
     const dueDate = typeof body.dueDate === "string" ? body.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const paymentStatus = body.paymentStatus === "pending" ? "pending" : "paid";
@@ -232,14 +204,25 @@ export async function POST(request: NextRequest) {
       })
     });
 
-    // 4. Save initial Plan settings
+    // 4. Save initial Plan settings with stable planId
+    const masterPlans = await getMasterPlans();
+    const planId = typeof body.planId === "string" ? body.planId : "";
+    const matchedPlan = masterPlans.find(p => p.id === planId || p.name.toLowerCase() === planName.toLowerCase()) || masterPlans[0];
+
+    const customQuota = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
+    const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
+
     const planMeta = {
       plan: {
-        name: planName,
-        price: planPrice,
+        planId: matchedPlan.id,
+        name: matchedPlan.name,
+        price: planPrice || matchedPlan.price,
+        quotaLimit: matchedPlan.quotaLimit,
         dueDate,
         status: paymentStatus,
-        autoBlock
+        autoBlock,
+        customQuotaOverride: customQuota,
+        exceptionReason
       }
     };
     await fetch(url + "/rest/v1/crm_tenant_settings", {
@@ -251,6 +234,9 @@ export async function POST(request: NextRequest) {
         business_description: JSON.stringify(planMeta)
       })
     });
+
+    const effectiveLimit = customQuota !== null ? customQuota : matchedPlan.quotaLimit;
+    await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
 
     // 5. Create default agent in crm_agents
     await fetch(url + "/rest/v1/crm_agents", {
@@ -299,7 +285,8 @@ export async function PATCH(request: NextRequest) {
   if (!request.headers.get("content-type")?.includes("application/json")) return privateJson({ error: "json_required" }, 415);
 
   try {
-    if (!(await checkMasterAccess(request))) {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
       return privateJson({ error: "unauthorized" }, 401);
     }
 
@@ -416,7 +403,8 @@ export async function PATCH(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
-  if (!(await checkMasterAccess(request))) return privateJson({ error: "unauthorized" }, 401);
+  const auth = await verifyMasterRequest(request);
+  if (!auth.authorized) return privateJson({ error: "unauthorized" }, 401);
 
   try {
     const { url, serviceKey } = getAdminConfig();

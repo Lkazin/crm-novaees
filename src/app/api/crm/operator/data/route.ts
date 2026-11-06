@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import Redis from "ioredis";
 import { privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,46 +50,13 @@ export async function GET(request: NextRequest) {
 
     const { url, serviceKey } = getServiceConfig();
 
-    // Check plan & auto-block for the selected tenant
+    // Check effective plan & auto-block for the selected tenant
     let isSuspended = false;
     let suspensionReason = "";
-    let planData: Record<string, unknown> | null = null;
-
-    try {
-      const settings = await supabaseRows<Array<{ business_description: string }>>(
-        `crm_tenant_settings?select=business_description&tenant_id=eq.${selected}&limit=1`,
-        user.token
-      );
-      const rawDesc = settings[0]?.business_description ?? "";
-      if (rawDesc.startsWith("{")) {
-        const parsed = JSON.parse(rawDesc);
-        if (parsed.plan) {
-          planData = parsed.plan;
-          const due = new Date(parsed.plan.dueDate);
-          const now = new Date();
-          if (parsed.plan.autoBlock && parsed.plan.status !== "paid" && due < now) {
-            isSuspended = true;
-            suspensionReason = "payment_overdue";
-          }
-        }
-      }
-    } catch {
-      try {
-        const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${selected}&limit=1`, {
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "User-Agent": "NovaesWebCRM-Backend" },
-          cache: "no-store"
-        });
-        if (rSettings.ok) {
-          const settings = (await rSettings.json()) as Array<{ business_description: string }>;
-          const rawDesc = settings[0]?.business_description ?? "";
-          if (rawDesc.startsWith("{")) {
-            const parsed = JSON.parse(rawDesc);
-            if (parsed.plan) {
-              planData = parsed.plan;
-            }
-          }
-        }
-      } catch {}
+    const effectivePlan = await getEffectiveTenantPlan(selected);
+    if (effectivePlan.isSuspended || (effectivePlan.autoBlock && effectivePlan.isOverdue)) {
+      isSuspended = true;
+      suspensionReason = effectivePlan.suspensionReason || "payment_overdue";
     }
 
     const selectedTenantObj = tenants.find(t => t.id === selected);
@@ -106,13 +74,18 @@ export async function GET(request: NextRequest) {
       supabaseRows<Array<{ contact_id: string; tag_id: string }>>("crm_contact_tags?select=contact_id,tag_id&" + query, user.token).catch(() => [])
     ]);
 
-    // Fetch escalation info from Redis for urgent conversations
+    // Fetch escalation info & quota usage from Redis
     const escalations: Record<string, { category: string; reason: string; text?: string; timestamp?: string }> = {};
+    let quotaUsed = 0;
     const redisUrl = process.env.CRM_REDIS_URL;
     if (redisUrl) {
       try {
         const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 });
         await redis.connect();
+        const monthKey = new Date().toISOString().slice(0, 7);
+        const quotaUsedRaw = await redis.get(`crm:quota:${selected}:${monthKey}`);
+        quotaUsed = parseInt(quotaUsedRaw || "0", 10);
+
         const urgentConvs = conversations.filter(c => c.status === "urgent");
         for (const c of urgentConvs) {
           const raw = await redis.get(`crm:escalation:${c.id}`);
@@ -151,12 +124,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const planData = {
+      ...effectivePlan,
+      quotaUsed,
+    };
+
     return privateJson({
       tenants,
       selectedTenant: selected,
       isSuspended,
       suspensionReason,
       plan: planData,
+      allowedFeatures: effectivePlan.allowedFeatures,
       contacts,
       conversations,
       messages,

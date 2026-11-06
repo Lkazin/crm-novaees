@@ -62,7 +62,7 @@ export default function Dashboard() {
       const res = await fetch("/api/crm/inbox", { headers: { "x-crm-lab-admin-token": credential }, cache: "no-store" });
       if (res.status === 401) {
         setAccess(false); setData(null);
-        setError("Senha ou token incorreto. Use a senha administrativa (NovaesWeb@2026Admin).");
+        setError("Senha ou token incorreto. Use sua senha administrativa.");
         return;
       }
       if (!res.ok) throw new Error("A caixa de entrada está temporariamente indisponível.");
@@ -205,7 +205,7 @@ export default function Dashboard() {
         <h2>Acessar Painel Master</h2>
         <p>Informe a senha administrativa ou token do CRM para consultar conversas e gerenciar a IA.</p>
         <form onSubmit={e=>{e.preventDefault(); void refresh(token);}}>
-          <input type="password" aria-label="Senha administrativa do CRM" autoComplete="current-password" placeholder="NovaesWeb@2026Admin" value={token} onChange={e=>setToken(e.target.value)} required/>
+          <input type="password" aria-label="Senha administrativa do CRM" autoComplete="current-password" placeholder="��������" value={token} onChange={e=>setToken(e.target.value)} required/>
           <button disabled={loading || !token.trim()} type="submit">{loading?"Autenticando...":"Entrar no Painel"}</button>
         </form>
         {error && <p role="alert" className="crm-error"><AlertCircle size={16}/>{error}</p>}
@@ -329,7 +329,7 @@ export default function Dashboard() {
           </div>
           <div className="crm-info-card"><AlertCircle size={25}/><h2>Auditoria do Sistema</h2><p>Todas as interações são registradas de forma auditável e transparente para garantir segurança e qualidade no atendimento.</p></div>
         </section> : nav==="Configurações" ? <section className="crm-details-grid">
-          <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança Operacional</h2><dl><dt>Acesso Master</dt><dd>NovaesWeb@2026Admin</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
+          <div className="crm-info-card"><Settings2 size={26}/><h2>Segurança Operacional</h2><dl><dt>Acesso Master</dt><dd>Protegido (Vari�vel de Ambiente)</dd><dt>Captura de mensagens</dt><dd>{status?.captureEnabled ? "Ativa" : "Desligada"}</dd><dt>Respostas automáticas</dt><dd>{status?.repliesEnabled ? "Ativas" : "Desligadas"}</dd></dl></div>
           <div className="crm-info-card"><LockKeyhole size={25}/><h2>Isolamento Multi-lojas</h2><p>Cada cliente possui seu próprio espaço isolado no Supabase, garantindo que conversas e dados nunca se misturem.</p></div>
         </section> : (nav==="Base de Conhecimento" || nav==="Equipe" || nav==="Campanhas" || nav==="Automações") ? <section className="crm-details-grid" aria-label={nav}>
           <div className="crm-info-card">

@@ -23,6 +23,7 @@ type Data = {
   isSuspended?: boolean;
   suspensionReason?: string;
   plan?: { name: string; price: string; dueDate: string; status: string; autoBlock: boolean; quotaLimit?: number; quotaUsed?: number };
+  allowedFeatures?: string[];
   contacts: Contact[];
   conversations: Conversation[];
   messages: Message[];
@@ -229,6 +230,19 @@ export default function OperatorPage() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
 
+  // Plan Allowed Features
+  const [allowedFeatures, setAllowedFeatures] = useState<string[]>([
+    "ai_chat",
+    "human_handoff",
+    "business_hours",
+    "commercial_tags",
+    "handoff_summary",
+    "sound_notifications",
+    "simulator",
+    "model_fallback",
+    "advanced_reports"
+  ]);
+
   // Guided Setup Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -267,6 +281,9 @@ export default function OperatorPage() {
             quotaLimit: json.plan.quotaLimit || 500,
             quotaUsed: json.plan.quotaUsed || 0
           });
+        }
+        if (Array.isArray(json.allowedFeatures)) {
+          setAllowedFeatures(json.allowedFeatures);
         }
       }
     } catch {}
@@ -319,6 +336,16 @@ export default function OperatorPage() {
       setData(json);
       setIsSuspended(json.isSuspended === true);
       setSuspensionReason(json.suspensionReason || "");
+
+      if (Array.isArray(json.allowedFeatures)) {
+        setAllowedFeatures(json.allowedFeatures);
+      }
+      if (json.plan) {
+        setQuotaData({
+          quotaLimit: json.plan.quotaLimit || 500,
+          quotaUsed: json.plan.quotaUsed || 0
+        });
+      }
 
       const activeTenant = tenantId || (json.tenants?.length ? json.tenants[0].id : "");
       if (!tenantId && activeTenant) {
@@ -543,7 +570,11 @@ export default function OperatorPage() {
           operatingHours
         })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setHoursNotice(errJson.message || "Falha ao salvar horários de atendimento.");
+        return;
+      }
       setHoursNotice("Horários de atendimento salvos com sucesso! A IA respeitará esta janela no WhatsApp.");
       setTimeout(() => setHoursNotice(""), 6000);
     } catch {
@@ -705,24 +736,38 @@ export default function OperatorPage() {
 
   // Set Commercial Tag on Contact
   async function handleSetCommercialTag(contactId: string, tagId: string) {
+    if (!allowedFeatures.includes("commercial_tags")) {
+      alert("Etiquetas comerciais estão disponíveis a partir do plano CRM Business.");
+      return;
+    }
     try {
       if (!tagId) {
         const existing = data?.contactTags?.find(ct => ct.contact_id === contactId);
         if (existing) {
-          await fetch("/api/crm/operator/tags", {
+          const res = await fetch("/api/crm/operator/tags", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tenantId: tenant, contactId, tagId: existing.tag_id, action: "remove" })
           });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            alert(errJson.message || "Erro ao atualizar etiqueta comercial.");
+            return;
+          }
         }
       } else {
-        await fetch("/api/crm/operator/tags", {
+        const res = await fetch("/api/crm/operator/tags", {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tenantId: tenant, contactId, tagId, action: "set" })
         });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          alert(errJson.message || "Erro ao atualizar etiqueta comercial.");
+          return;
+        }
       }
       await fetchData(tenant, true);
     } catch (e) {
@@ -1115,13 +1160,27 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 <button
                   type="button"
                   onClick={() => {
+                    if (!allowedFeatures.includes("sound_notifications")) {
+                      alert("Notificações sonoras estão disponíveis a partir do plano CRM Business.");
+                      return;
+                    }
                     const next = !soundEnabled;
                     setSoundEnabled(next);
                     if (next) playNotificationSound();
                   }}
                   className="op-refresh"
-                  title={soundEnabled ? "Som de notificação ativado (clique para silenciar)" : "Som de notificação silenciado (clique para ativar)"}
-                  style={{padding: "8px 12px", background: soundEnabled ? "rgba(236,72,153,0.15)" : undefined, borderColor: soundEnabled ? "#ec4899" : undefined, color: soundEnabled ? "#ec4899" : "#aba8bf"}}
+                  title={
+                    !allowedFeatures.includes("sound_notifications")
+                      ? "Notificações sonoras (Recurso CRM Business / Premium)"
+                      : soundEnabled ? "Som de notificação ativado (clique para silenciar)" : "Som de notificação silenciado (clique para ativar)"
+                  }
+                  style={{
+                    padding: "8px 12px",
+                    background: soundEnabled ? "rgba(236,72,153,0.15)" : undefined,
+                    borderColor: soundEnabled ? "#ec4899" : undefined,
+                    color: soundEnabled ? "#ec4899" : "#aba8bf",
+                    opacity: !allowedFeatures.includes("sound_notifications") ? 0.6 : 1
+                  }}
                 >
                   {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
                 </button>
@@ -1941,6 +2000,24 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </div>
                 )}
 
+                {!allowedFeatures.includes("business_hours") && (
+                  <div style={{
+                    padding: "16px 20px",
+                    borderRadius: "12px",
+                    background: "rgba(245, 158, 11, 0.12)",
+                    border: "1px solid rgba(245, 158, 11, 0.35)",
+                    color: "#f59e0b",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px"
+                  }}>
+                    <LockKeyhole size={22} color="#f59e0b" style={{flexShrink: 0}}/>
+                    <div style={{fontSize: "13px", lineHeight: "1.4"}}>
+                      <strong>Recurso dos planos CRM Business e Premium:</strong> No seu plano atual, as respostas da NovaesWeb IA funcionam 24 horas por dia. O controle de horários de expediente e mensagem de fechado requerem upgrade para o plano CRM Business.
+                    </div>
+                  </div>
+                )}
+
                 <form onSubmit={handleSaveOperatingHours} style={{display: "flex", flexDirection: "column", gap: "18px"}}>
                   {/* Switch Ativar/Desativar */}
                   <div style={{display: "flex", alignItems: "center", gap: "12px", background: "rgba(255,255,255,0.03)", padding: "14px 18px", borderRadius: "12px", border: "1px solid #3a3250"}}>
@@ -2047,8 +2124,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <button
                       type="submit"
                       className="op-primary"
-                      disabled={savingHours}
-                      style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 24px", fontWeight: 700, borderRadius: "10px"}}
+                      disabled={savingHours || !allowedFeatures.includes("business_hours")}
+                      style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 24px", fontWeight: 700, borderRadius: "10px", opacity: !allowedFeatures.includes("business_hours") ? 0.5 : 1}}
                     >
                       <Save size={16}/> {savingHours ? "Salvando horários..." : "Salvar Horários de Atendimento"}
                     </button>
@@ -2120,29 +2197,31 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
 
                     {/* Filtro por Etiqueta Comercial */}
-                    <div style={{display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
-                      <Tag size={13} color="#aba8bf"/>
-                      <select
-                        value={tagFilter}
-                        onChange={e => setTagFilter(e.target.value)}
-                        style={{
-                          flex: 1,
-                          background: "transparent",
-                          border: "none",
-                          color: "#fff",
-                          fontSize: "12px",
-                          outline: "none",
-                          cursor: "pointer"
-                        }}
-                      >
-                        <option value="all" style={{background: "#181427"}}>Todas as Etiquetas Comerciais</option>
-                        {data?.tags?.map(t => (
-                          <option key={t.id} value={t.id} style={{background: "#181427"}}>
-                            🏷️ {t.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {allowedFeatures.includes("commercial_tags") && (
+                      <div style={{display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
+                        <Tag size={13} color="#aba8bf"/>
+                        <select
+                          value={tagFilter}
+                          onChange={e => setTagFilter(e.target.value)}
+                          style={{
+                            flex: 1,
+                            background: "transparent",
+                            border: "none",
+                            color: "#fff",
+                            fontSize: "12px",
+                            outline: "none",
+                            cursor: "pointer"
+                          }}
+                        >
+                          <option value="all" style={{background: "#181427"}}>Todas as Etiquetas Comerciais</option>
+                          {data?.tags?.map(t => (
+                            <option key={t.id} value={t.id} style={{background: "#181427"}}>
+                              🏷️ {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
                     <div className="op-list" style={{flex: 1, overflowY: "auto"}}>
                       {filtered.length ? filtered.map(c => {
@@ -2342,28 +2421,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             </div>
 
                             {/* Seletor de Etiqueta Comercial */}
-                            <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
-                              <Tag size={13} color="#aba8bf"/>
-                              <select
-                                value={byContact.get(current.contact_id) ? contactTagMap.get(current.contact_id) || "" : ""}
-                                onChange={e => void handleSetCommercialTag(current.contact_id, e.target.value)}
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: "8px",
-                                  background: "#161325",
-                                  border: "1px solid #3d345c",
-                                  color: "#fff",
-                                  fontSize: "12px",
-                                  fontWeight: 600,
-                                  cursor: "pointer"
-                                }}
-                              >
-                                <option value="">Sem Etiqueta Comercial</option>
-                                {data?.tags?.map(t => (
-                                  <option key={t.id} value={t.id}>🏷️ {t.name}</option>
-                                ))}
-                              </select>
-                            </div>
+                            {allowedFeatures.includes("commercial_tags") && (
+                              <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                                <Tag size={13} color="#aba8bf"/>
+                                <select
+                                  value={byContact.get(current.contact_id) ? contactTagMap.get(current.contact_id) || "" : ""}
+                                  onChange={e => void handleSetCommercialTag(current.contact_id, e.target.value)}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: "8px",
+                                    background: "#161325",
+                                    border: "1px solid #3d345c",
+                                    color: "#fff",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  <option value="">Sem Etiqueta Comercial</option>
+                                  {data?.tags?.map(t => (
+                                    <option key={t.id} value={t.id}>🏷️ {t.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
 
                             {/* Botão Devolver para IA / Assumir Atendimento Humano */}
                             {current.mode === "human" ? (

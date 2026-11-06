@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,20 +134,23 @@ export async function POST(request: NextRequest) {
         } catch {}
       }
 
-      // Generate 3-line structured handoff summary from recent messages
+      // Generate 3-line structured handoff summary only if allowed by plan
       let summary = "";
       try {
-        const rMsgs = await fetch(
-          url + `/rest/v1/crm_messages?conversation_id=eq.${conversation}&select=direction,body,sender_type&order=created_at.desc&limit=8`,
-          { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
-        );
-        if (rMsgs.ok) {
-          const msgs = (await rMsgs.json()) as Array<{ direction: string; body: string; sender_type: string }>;
-          const inbound = msgs.filter(m => m.direction === "inbound" || m.sender_type === "customer").map(m => m.body).reverse();
-          const lastCustMsg = inbound[inbound.length - 1] || "Cliente iniciou contato";
-          const prevCustMsg = inbound.length > 1 ? inbound[inbound.length - 2] : "";
+        const effectivePlan = await getEffectiveTenantPlan(tenant);
+        if (effectivePlan.allowedFeatures.includes("handoff_summary")) {
+          const rMsgs = await fetch(
+            url + `/rest/v1/crm_messages?conversation_id=eq.${conversation}&select=direction,body,sender_type&order=created_at.desc&limit=8`,
+            { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
+          );
+          if (rMsgs.ok) {
+            const msgs = (await rMsgs.json()) as Array<{ direction: string; body: string; sender_type: string }>;
+            const inbound = msgs.filter(m => m.direction === "inbound" || m.sender_type === "customer").map(m => m.body).reverse();
+            const lastCustMsg = inbound[inbound.length - 1] || "Cliente iniciou contato";
+            const prevCustMsg = inbound.length > 1 ? inbound[inbound.length - 2] : "";
 
-          summary = `${escalationHeader}👤 Atendimento transferido para operador humano.\n📌 Última mensagem do cliente: "${lastCustMsg.slice(0, 120)}"\n${prevCustMsg ? `💬 Contexto anterior: "${prevCustMsg.slice(0, 80)}"\n` : ""}⏳ Status: IA pausada nesta conversa. Atendente no comando.`;
+            summary = `${escalationHeader}👤 Atendimento transferido para operador humano.\n📌 Última mensagem do cliente: "${lastCustMsg.slice(0, 120)}"\n${prevCustMsg ? `💬 Contexto anterior: "${prevCustMsg.slice(0, 80)}"\n` : ""}⏳ Status: IA pausada nesta conversa. Atendente no comando.`;
+          }
         }
       } catch {}
 
