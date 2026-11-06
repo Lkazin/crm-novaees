@@ -21,7 +21,7 @@ export async function POST(request:NextRequest) {
     if(staff.length!==1||!staff[0].enabled||!["MASTER","ADMINISTRADOR"].includes(staff[0].role))
       return privateJson({error:"forbidden"},403);
     const {url}=supabaseSettings();
-    const secret=process.env.CRM_SUPABASE_SERVICE_ROLE_KEY??"";
+    const secret = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim() ?? "";
     if(secret.length<30)return privateJson({error:"backend_not_configured"},503);
     const response=await fetch(url+"/rest/v1/rpc/crm_admin_create_tenant",{
       method:"POST",cache:"no-store",signal:AbortSignal.timeout(8000),

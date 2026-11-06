@@ -463,8 +463,16 @@ export default function AdminCRM() {
         })
       });
       if (!res.ok) {
-        const errJson = await res.json();
-        setError(errJson.error || "Não foi possível cadastrar o cliente.");
+        const errJson = await res.json().catch(() => ({}));
+        if (errJson.error === "backend_not_configured") {
+          setError("O Supabase não está configurado no servidor. Adicione a variável CRM_SUPABASE_SERVICE_ROLE_KEY nas configurações de ambiente da hospedagem (ex: Vercel).");
+        } else if (errJson.error === "tenant_create_failed") {
+          setError("Falha ao criar o registro da loja no banco de dados do Supabase. Verifique as permissões da chave service_role.");
+        } else if (errJson.error === "user_create_failed") {
+          setError("Falha ao criar o usuário no Supabase Auth. Verifique se o e-mail já não está cadastrado.");
+        } else {
+          setError(errJson.message || errJson.error || "Não foi possível cadastrar o cliente.");
+        }
         return;
       }
       setNotice(`Loja "${storeName}" cadastrada com sucesso! Login criado para ${email}.`);
