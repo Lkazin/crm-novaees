@@ -19,3 +19,4 @@ export async function GET(request: NextRequest) {
     return privateJson({ error: e instanceof Error ? e.message : "history_failed" }, 500);
   }
 }
+
