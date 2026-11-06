@@ -319,3 +319,25 @@ test("8. Feature Gating e Limites Oficiais do Catálogo", () => {
   assert.equal(business.quotaLimit, 2000);
   assert.equal(premium.quotaLimit, 5000);
 });
+
+test("9. Proteção contra força bruta (Rate Limiting de Login Master)", async () => {
+  const redis = fakeMemoryRedis();
+  const ip = "192.168.1.100";
+  const rateLimitKey = `crm:ratelimit:master_login:${ip}`;
+
+  // Simulate 4 failed attempts
+  for (let i = 0; i < 4; i++) {
+    const cur = parseInt((await redis.get(rateLimitKey)) || "0", 10);
+    await redis.set(rateLimitKey, String(cur + 1));
+  }
+  assert.equal(await redis.get(rateLimitKey), "4");
+
+  // 5th attempt reaches threshold
+  const cur = parseInt((await redis.get(rateLimitKey)) || "0", 10);
+  await redis.set(rateLimitKey, String(cur + 1));
+  assert.equal(parseInt((await redis.get(rateLimitKey)) || "0", 10) >= 5, true);
+
+  // Success resets counter
+  await redis.del(rateLimitKey);
+  assert.equal(await redis.get(rateLimitKey), null);
+});

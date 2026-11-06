@@ -688,6 +688,30 @@ export async function saveMasterPlan(
     timestamp: new Date().toISOString()
   }, providedRedis);
 
+  // Dispatch operational alert if partial failure occurs
+  if (hasFailures) {
+    const alertWebhookUrl = process.env.CRM_ALERT_WEBHOOK_URL?.trim();
+    if (alertWebhookUrl) {
+      try {
+        await fetch(alertWebhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "plan_sync_partial_failure",
+            planId: targetPlan.id,
+            planName: targetPlan.name,
+            vigencia,
+            failedTenants,
+            succeededTenantsCount: succeededTenants.length,
+            timestamp: new Date().toISOString()
+          })
+        });
+      } catch (alertErr) {
+        console.warn("[plans] Failed to dispatch operational webhook alert:", alertErr);
+      }
+    }
+  }
+
   return {
     saved: true,
     applied,

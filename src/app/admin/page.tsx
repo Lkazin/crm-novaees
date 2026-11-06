@@ -31,6 +31,17 @@ type Client = {
     quotaUsed?: number;
     customQuotaOverride?: number | null;
     exceptionReason?: string | null;
+    contractedPlan?: {
+      quotaLimit: number;
+      price: string;
+      version: number;
+      contractedAt?: string;
+    } | null;
+    pendingPlanUpdate?: {
+      quotaLimit: number;
+      effectiveAt: string;
+      planVersion: number;
+    } | null;
   };
 };
 
@@ -1318,6 +1329,38 @@ export default function AdminCRM() {
                             ⚠️ Exceção Contratual: {c.plan.customQuotaOverride} msgs ({c.plan.exceptionReason || "Personalizado"})
                           </span>
                         )}
+                        {Boolean(c.plan.contractedPlan) && (
+                          <span style={{
+                            display: "inline-block",
+                            marginTop: "4px",
+                            marginLeft: hasException ? "6px" : "0",
+                            background: "rgba(59, 130, 246, 0.15)",
+                            color: "#60a5fa",
+                            border: "1px solid rgba(59, 130, 246, 0.3)",
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700
+                          }}>
+                            🔒 Contrato Congelado (v{c.plan.contractedPlan?.version}: {c.plan.contractedPlan?.quotaLimit} msgs)
+                          </span>
+                        )}
+                        {Boolean(c.plan.pendingPlanUpdate) && (
+                          <span style={{
+                            display: "inline-block",
+                            marginTop: "4px",
+                            marginLeft: "6px",
+                            background: "rgba(168, 85, 247, 0.15)",
+                            color: "#c084fc",
+                            border: "1px solid rgba(168, 85, 247, 0.3)",
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700
+                          }}>
+                            ⏳ Transição Agendada: {c.plan.pendingPlanUpdate?.quotaLimit} msgs em {c.plan.pendingPlanUpdate?.effectiveAt}
+                          </span>
+                        )}
                       </div>
 
                       <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
@@ -1595,6 +1638,36 @@ export default function AdminCRM() {
                                 fontWeight: 700
                               }}>
                                 ⚠️ Exceção Contratual: {client.plan.customQuotaOverride} msgs ({client.plan.exceptionReason || "Personalizado"})
+                              </span>
+                            </div>
+                          )}
+                          {Boolean(client.plan.contractedPlan) && (
+                            <div style={{marginTop: "6px"}}>
+                              <span style={{
+                                background: "rgba(59, 130, 246, 0.15)",
+                                color: "#60a5fa",
+                                border: "1px solid rgba(59, 130, 246, 0.3)",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: 700
+                              }}>
+                                🔒 Contrato Congelado (v{client.plan.contractedPlan?.version}: {client.plan.contractedPlan?.quotaLimit} msgs)
+                              </span>
+                            </div>
+                          )}
+                          {Boolean(client.plan.pendingPlanUpdate) && (
+                            <div style={{marginTop: "6px"}}>
+                              <span style={{
+                                background: "rgba(168, 85, 247, 0.15)",
+                                color: "#c084fc",
+                                border: "1px solid rgba(168, 85, 247, 0.3)",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: 700
+                              }}>
+                                ⏳ Transição Agendada: {client.plan.pendingPlanUpdate?.quotaLimit} msgs em {client.plan.pendingPlanUpdate?.effectiveAt}
                               </span>
                             </div>
                           )}

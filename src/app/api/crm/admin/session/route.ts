@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, signMasterToken, timingSafeMatch, verifyMasterRequest } from "@/lib/crm/master-auth";
+import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,26 @@ export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
 
   try {
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      request.headers.get("x-real-ip") ||
+      "local_client";
+
+    const redis = getRedis();
+    const rateLimitKey = `crm:ratelimit:master_login:${ip}`;
+    let attempts = 0;
+    try {
+      if (redis.status !== "ready" && redis.status !== "connecting") await redis.connect();
+      const raw = await redis.get(rateLimitKey);
+      attempts = raw ? parseInt(raw, 10) : 0;
+    } catch {}
+
+    if (attempts >= 5) {
+      return privateJson({
+        error: "too_many_attempts",
+        message: "Muitas tentativas incorretas. Acesso Master bloqueado temporariamente por 15 minutos para proteção."
+      }, 429);
+    }
+
     const body = await request.json().catch(() => ({}));
     const candidate = typeof body.password === "string" ? body.password.trim() : "";
     const masterPassword = process.env.CRM_MASTER_PASSWORD?.trim() || "";
@@ -34,8 +55,17 @@ export async function POST(request: NextRequest) {
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(candidate, adminToken));
 
     if (!candidate || (!isMasterPasswordMatch && !isAdminTokenMatch)) {
+      try {
+        await redis.incr(rateLimitKey);
+        await redis.expire(rateLimitKey, 15 * 60); // 15 minutes window
+      } catch {}
       return privateJson({ error: "invalid_credentials" }, 401);
     }
+
+    // Clear rate limit counter on success
+    try {
+      await redis.del(rateLimitKey);
+    } catch {}
 
     const token = signMasterToken("master_admin");
     const response = NextResponse.json({ authenticated: true, actor: "master_admin" });
