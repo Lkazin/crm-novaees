@@ -485,29 +485,40 @@ export default function OperatorPage() {
   async function handleConnectWhatsApp() {
     if (!instanceName) return;
     setQrLoading(true);
-    setQrNotice("");
+    setQrNotice("Iniciando conexão e gerando QR Code...");
     try {
       const res = await fetch("/api/crm/whatsapp/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: instanceName })
+        body: JSON.stringify({
+          instance: instanceName,
+          instanceName: instanceName,
+          tenantId: tenant,
+          tenantName: currentTenantObj?.name
+        })
       });
       const data = await res.json();
       if (!res.ok) {
-        setQrNotice(data.error === "evolution_unavailable" ? "Servidor de WhatsApp indisponível no momento." : "Falha ao conectar.");
+        const errorMsg = data.message || data.error || "Falha ao conectar com o WhatsApp.";
+        setQrNotice(errorMsg);
+        setQrState("disconnected");
         return;
       }
       if (data.connected || data.state === "open") {
         setQrState("open");
         setQrCode(null);
         setQrNotice("WhatsApp já conectado e funcionando!");
+        if (tenant) void fetchData(tenant);
       } else if (data.qrcode) {
-        setQrCode(data.qrcode);
+        const formatted = data.qrcode.startsWith("data:") ? data.qrcode : `data:image/png;base64,${data.qrcode}`;
+        setQrCode(formatted);
         setQrState("connecting");
-        setQrNotice("Escaneie o QR Code abaixo com seu WhatsApp em Aparelhos Conectados.");
+        setQrNotice(data.message || "Escaneie o QR Code abaixo com seu WhatsApp em Aparelhos Conectados.");
+      } else {
+        setQrNotice(data.message || "Aguardando geração do QR Code. Tente novamente em alguns segundos.");
       }
     } catch {
-      setQrNotice("Falha de conexão com a central de WhatsApp.");
+      setQrNotice("Falha de conexão com a central de WhatsApp. Verifique sua rede e tente novamente.");
     } finally {
       setQrLoading(false);
     }
@@ -520,15 +531,17 @@ export default function OperatorPage() {
     setDeletingQr(true);
     setQrNotice("Apagando instância e desconectando WhatsApp...");
     try {
-      const res = await fetch(`/api/crm/whatsapp/connect?instance=${encodeURIComponent(instanceName)}`, {
+      const res = await fetch(`/api/crm/whatsapp/connect?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`, {
         method: "DELETE"
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setQrCode(null);
         setQrState("disconnected");
-        setQrNotice("Instância apagada com sucesso! O WhatsApp foi desconectado.");
+        setQrNotice(data.message || "Instância apagada com sucesso! O WhatsApp foi desconectado.");
+        if (tenant) void fetchData(tenant);
       } else {
-        setQrNotice("Falha ao apagar instância.");
+        setQrNotice(data.message || data.error || "Falha ao apagar instância.");
       }
     } catch {
       setQrNotice("Falha de conexão ao apagar instância.");
@@ -539,7 +552,7 @@ export default function OperatorPage() {
 
   // Poll status while connecting
   useEffect(() => {
-    if (qrState !== "connecting") return;
+    if (qrState !== "connecting" || !instanceName) return;
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}`, { cache: "no-store" });
@@ -550,12 +563,13 @@ export default function OperatorPage() {
             setQrCode(null);
             setQrNotice("WhatsApp Conectado com Sucesso! A IA de atendimento da loja já está ativa.");
             clearInterval(interval);
+            if (tenant) void fetchData(tenant);
           }
         }
       } catch {}
     }, 3000);
     return () => clearInterval(interval);
-  }, [qrState, instanceName]);
+  }, [qrState, instanceName, tenant, fetchData]);
 
   const handleSaveAiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1544,7 +1558,15 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </div>
 
                   {qrNotice && (
-                    <div style={{padding: "12px 16px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", border: "1px solid #ec4899", color: "#fff", fontSize: "13px"}}>
+                    <div style={{
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      background: qrNotice.toLowerCase().includes("sucesso") || qrNotice.toLowerCase().includes("conectado") ? "rgba(0, 219, 140, 0.15)" : qrNotice.toLowerCase().includes("falha") || qrNotice.toLowerCase().includes("erro") || qrNotice.toLowerCase().includes("indisponível") || qrNotice.toLowerCase().includes("inacessível") || qrNotice.toLowerCase().includes("permit") ? "rgba(244, 63, 94, 0.18)" : "rgba(236, 72, 153, 0.15)",
+                      border: `1px solid ${qrNotice.toLowerCase().includes("sucesso") || qrNotice.toLowerCase().includes("conectado") ? "#00db8c" : qrNotice.toLowerCase().includes("falha") || qrNotice.toLowerCase().includes("erro") || qrNotice.toLowerCase().includes("indisponível") || qrNotice.toLowerCase().includes("inacessível") || qrNotice.toLowerCase().includes("permit") ? "#f43f5e" : "#ec4899"}`,
+                      color: "#fff",
+                      fontSize: "13px",
+                      lineHeight: "1.5"
+                    }}>
                       {qrNotice}
                     </div>
                   )}

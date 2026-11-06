@@ -78,13 +78,14 @@ export async function GET(request: NextRequest) {
       const ch = channelMap.get(t.id);
 
       // Default plan template
-      let plan = {
+      let plan: Record<string, any> = {
         name: "Plano IA Mensal",
         price: "149,00",
         dueDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
         status: "paid" as "paid" | "pending",
         autoBlock: true,
-        isOverdue: false
+        isOverdue: false,
+        isTrial: false
       };
 
       const rawDesc = settingsMap.get(t.id) || "";

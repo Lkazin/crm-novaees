@@ -31,6 +31,11 @@ type Client = {
     quotaUsed?: number;
     customQuotaOverride?: number | null;
     exceptionReason?: string | null;
+    isTrial?: boolean;
+    trialDaysLeft?: number;
+    trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted" | string;
+    trialStartedAt?: string;
+    trialExpiresAt?: string;
     contractedPlan?: {
       quotaLimit: number;
       price: string;

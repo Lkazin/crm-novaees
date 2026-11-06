@@ -966,7 +966,9 @@ export async function getEffectiveTenantPlan(
       trialStatus = "active";
     }
   } else {
-    matchedPlan = masterPlans.find(p => p.id === planId) ||
+    const planId = typeof rawTenantPlan.planId === "string" ? rawTenantPlan.planId : "";
+    const planName = typeof rawTenantPlan.name === "string" ? rawTenantPlan.name : "";
+    matchedPlan = (planId ? masterPlans.find(p => p.id === planId) : undefined) ||
       (planName ? masterPlans.find(p => p.name.toLowerCase() === planName.toLowerCase()) : undefined) ||
       masterPlans[0] || DEFAULT_PLANS[0];
   }
