@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { MASTER_COOKIE_NAME, signMasterToken, timingSafeMatch, verifyMasterRequest } from "@/lib/crm/master-auth";
+import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, signMasterToken, timingSafeMatch, verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 12 * 60 * 60 // 12 hours
+      maxAge: MASTER_SESSION_TTL_SEC // 12 hours (43200 seconds)
     });
 
     return response;

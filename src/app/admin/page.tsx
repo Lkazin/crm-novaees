@@ -57,6 +57,9 @@ type PlanItem = {
   maxWhatsAppConnections?: number;
   isPopular?: boolean;
   isActive?: boolean;
+  isDraft?: boolean;
+  hasDraft?: boolean;
+  draftPlan?: any;
   enrolledStores?: Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>;
 };
 
@@ -477,12 +480,30 @@ export default function AdminCRM() {
 
   const handleOpenEditPlan = (plan: PlanItem) => {
     setIsCreatingNewPlan(false);
+    const target = (plan.hasDraft && plan.draftPlan) ? { ...plan, ...plan.draftPlan } : plan;
     setEditingPlan({
-      ...plan,
-      allowedFeatures: plan.allowedFeatures || ["ai_chat", "human_handoff"]
+      ...target,
+      allowedFeatures: target.allowedFeatures || target.features || ["ai_chat", "human_handoff"]
     });
-    setEditingFeaturesText((plan.features || []).join("\n"));
+    setEditingFeaturesText((target.features || []).join("\n"));
     setEditPlanModalOpen(true);
+  };
+
+  const handleDiscardDraft = async (planId: string) => {
+    if (!window.confirm("Deseja descartar as alterações deste rascunho? O plano publicado voltará a ser o único exibido.")) return;
+    try {
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action: "discard_draft", planId })
+      });
+      if (!res.ok) throw new Error();
+      setNotice("Rascunho descartado com sucesso.");
+      await fetchPlans();
+    } catch {
+      setError("Falha ao descartar rascunho.");
+    }
   };
 
   const handleToggleFeatureInEditor = (featId: FeatureId) => {
@@ -540,11 +561,18 @@ export default function AdminCRM() {
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Falha ao aplicar plano");
-      const affectedCount = data.impactedCount || 0;
-      setNotice(
-        `Plano "${planToApply.name}" aplicado com sucesso! ${affectedCount} loja(s) vinculada(s) sincronizada(s) automaticamente.`
-      );
+      if (!res.ok && res.status !== 207) throw new Error(data.error || "Falha ao aplicar plano");
+
+      if (data.failedTenants && data.failedTenants.length > 0) {
+        setError(
+          `Sincronização com falhas parciais: ${data.succeededTenants?.length || 0} loja(s) sincronizada(s), mas ${data.failedTenants.length} falharam: ${data.failedTenants.map((f: any) => `${f.tenantId}: ${f.error}`).join("; ")}`
+        );
+      } else {
+        const affectedCount = data.affectedTenants?.length || data.impactedCount || 0;
+        setNotice(
+          `Plano "${planToApply.name}" aplicado com sucesso! ${affectedCount} loja(s) vinculada(s) sincronizada(s) automaticamente conforme vigência (${vigencia}).`
+        );
+      }
       setImpactModalOpen(false);
       setPlanToApply(null);
       await fetchPlans();
@@ -1048,6 +1076,19 @@ export default function AdminCRM() {
                             DESATIVADO
                           </span>
                         )}
+                        {p.hasDraft && (
+                          <span style={{
+                            background: "rgba(245, 158, 11, 0.2)",
+                            color: "#f59e0b",
+                            border: "1px solid rgba(245, 158, 11, 0.4)",
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700
+                          }}>
+                            RASCUNHO PENDENTE
+                          </span>
+                        )}
                       </div>
 
                       {p.isPopular && (
@@ -1094,6 +1135,9 @@ export default function AdminCRM() {
                           {p.quotaLimit.toLocaleString("pt-BR")} / mês
                         </strong>
                       </div>
+                      <small style={{fontSize: "11px", color: "#9ca3af", margin: "-2px 0 2px"}}>
+                        (1 atendimento = 1 conversa ativa mensal)
+                      </small>
                       <div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#9ca3af"}}>
                         <span>Operadores: <strong style={{color: "white"}}>{p.maxOperators || 1}</strong></span>
                         <span>WhatsApps: <strong style={{color: "white"}}>{p.maxWhatsAppConnections || 1}</strong></span>
@@ -1203,6 +1247,27 @@ export default function AdminCRM() {
                       >
                         {isActive ? "Desativar Plano" : "Ativar Plano"}
                       </button>
+
+                      {p.hasDraft && (
+                        <button
+                          type="button"
+                          onClick={() => handleDiscardDraft(p.id)}
+                          style={{
+                            width: "100%",
+                            marginTop: "6px",
+                            padding: "6px",
+                            background: "rgba(245, 158, 11, 0.08)",
+                            border: "1px dashed rgba(245, 158, 11, 0.35)",
+                            borderRadius: "8px",
+                            color: "#f59e0b",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            cursor: "pointer"
+                          }}
+                        >
+                          Descartar Rascunho Pendente
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

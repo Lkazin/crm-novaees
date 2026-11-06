@@ -5,10 +5,11 @@ import {
   CrmPlan,
   TECHNICAL_FEATURES,
   getMasterPlans,
+  getMasterPlansWithDrafts,
+  discardPlanDraft,
   saveMasterPlan,
   syncTenantUsageLimits,
-  getRedis,
-  recordPlanAudit
+  getRedis
 } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
@@ -21,7 +22,7 @@ function getAdminConfig() {
   return { url, serviceKey, redisUrl };
 }
 
-// GET: List all master plans, client distribution counts, and technical features catalog
+// GET: List all master plans with draft decorations, client distribution counts, and technical features catalog
 export async function GET(request: NextRequest) {
   try {
     const auth = await verifyMasterRequest(request);
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { url, serviceKey } = getAdminConfig();
-    const plans = await getMasterPlans();
+    const plans = await getMasterPlansWithDrafts();
 
     // Calculate how many stores are enrolled in each plan
     const counts: Record<string, number> = {};
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST: Save draft, apply plan to stores, duplicate, or toggle status
+// POST: Save draft, apply plan to stores, discard draft, duplicate, or toggle status
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
@@ -111,7 +112,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const action = body.action || "save_and_apply";
 
-    // 1. Action: Duplicate an existing plan
+    // 1. Action: Discard draft
+    if (action === "discard_draft") {
+      const planId = typeof body.planId === "string" ? body.planId : "";
+      if (!planId) return privateJson({ error: "missing_plan_id" }, 400);
+      await discardPlanDraft(planId, auth.actor);
+      return privateJson({ discarded: true, planId });
+    }
+
+    // 2. Action: Duplicate an existing plan
     if (action === "duplicate") {
       const sourcePlanId = typeof body.sourcePlanId === "string" ? body.sourcePlanId : "";
       const currentPlans = await getMasterPlans();
@@ -133,7 +142,7 @@ export async function POST(request: NextRequest) {
       return privateJson({ duplicated: true, plan: result.plan });
     }
 
-    // 2. Action: Toggle Active / Inactive
+    // 3. Action: Toggle Active / Inactive
     if (action === "toggle_status") {
       const planId = typeof body.planId === "string" ? body.planId : "";
       const currentPlans = await getMasterPlans();
@@ -141,11 +150,11 @@ export async function POST(request: NextRequest) {
       if (!plan) return privateJson({ error: "plan_not_found" }, 404);
 
       plan.status = plan.status === "active" ? "inactive" : "active";
-      const result = await saveMasterPlan(plan, "draft", "new_clients", auth.actor);
+      const result = await saveMasterPlan(plan, "apply", "new_clients", auth.actor);
       return privateJson({ updated: true, plan: result.plan });
     }
 
-    // 3. Action: Set Individual Store Contractual Exception
+    // 4. Action: Set Individual Store Contractual Exception
     if (action === "set_client_exception") {
       const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
       const customQuota = typeof body.customQuota === "number" ? body.customQuota : undefined;
@@ -158,6 +167,8 @@ export async function POST(request: NextRequest) {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       });
+      if (!rGet.ok) throw new Error(`Supabase read tenant settings failed: HTTP ${rGet.status}`);
+
       const current = (await rGet.json()) as Array<{ business_description: string }>;
       let dataObj: Record<string, unknown> = {};
       try {
@@ -175,11 +186,12 @@ export async function POST(request: NextRequest) {
       }
       dataObj.plan = planObj;
 
-      await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+      const rPatch = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
         method: "PATCH",
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
         body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
       });
+      if (!rPatch.ok) throw new Error(`Supabase PATCH tenant exception failed: HTTP ${rPatch.status}`);
 
       if (customQuota !== undefined) {
         await syncTenantUsageLimits(tenantId, customQuota, url, serviceKey);
@@ -195,7 +207,7 @@ export async function POST(request: NextRequest) {
       return privateJson({ exceptionSaved: true, tenantId, customQuota });
     }
 
-    // 4. Action: Save Draft or Save & Apply
+    // 5. Action: Save Draft or Save & Apply
     const planInput = body.plan;
     if (!planInput || !planInput.id || !planInput.name) {
       return privateJson({ error: "invalid_plan_payload" }, 400);
@@ -205,12 +217,17 @@ export async function POST(request: NextRequest) {
     const vigencia = body.vigencia || "immediate";
 
     const result = await saveMasterPlan(planInput, mode, vigencia, auth.actor);
+
     return privateJson({
-      saved: true,
+      saved: result.saved,
       applied: result.applied,
+      partiallyApplied: result.partiallyApplied,
+      isDraft: result.isDraft,
       affectedTenants: result.affectedTenants,
+      succeededTenants: result.succeededTenants,
+      failedTenants: result.failedTenants,
       plan: result.plan
-    });
+    }, result.partiallyApplied ? 207 : 200);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "save_plans_failed" }, 503);
   }
@@ -243,6 +260,8 @@ export async function PATCH(request: NextRequest) {
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
       cache: "no-store"
     });
+    if (!rGet.ok) throw new Error(`Supabase read tenant settings failed: HTTP ${rGet.status}`);
+
     const current = (await rGet.json()) as Array<{ business_description: string }>;
     let dataObj: Record<string, unknown> = { plan: {} };
     try {
@@ -264,11 +283,12 @@ export async function PATCH(request: NextRequest) {
 
     dataObj.plan = planObj;
 
-    await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+    const rPatch = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
       body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
     });
+    if (!rPatch.ok) throw new Error(`Supabase PATCH tenant assignment failed: HTTP ${rPatch.status}`);
 
     const effectiveLimit = customQuotaOverride !== null ? customQuotaOverride : quotaLimit;
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
