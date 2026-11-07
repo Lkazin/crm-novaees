@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { requireTenantFeature } from "@/lib/crm/plans";
+import { authorizeCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { generateAnswer, StoreAiContext } from "@/lib/agent/ai";
 import { AiConfig } from "@/lib/agent/config";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
@@ -13,7 +15,7 @@ function getServiceConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
   const omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://host.docker.internal:20128/v1";
-  const omniKey = process.env.AI_API_KEY?.trim() || "sk-9208b8c0f2bfd069-e12668-5717db14";
+  const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, omniUrl, omniKey };
 }
 
@@ -22,8 +24,6 @@ export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.includes("application/json")) return privateJson({ error: "json_required" }, 415);
 
   try {
-    const operator = await verifyOperator();
-    if (!operator) return privateJson({ error: "unauthorized" }, 401);
 
     const body = await request.json();
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
@@ -34,11 +34,10 @@ export async function POST(request: NextRequest) {
     if (!message || message.length < 1) return privateJson({ error: "empty_message" }, 400);
 
     // Verify operator belongs to this tenant
-    const members = await supabaseRows<Array<{ tenant_id: string }>>(
-      "crm_tenant_memberships?select=tenant_id&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-      operator.token
-    );
-    if (!members.length) return privateJson({ error: "tenant_forbidden" }, 403);
+    const access = await authorizeCrmTenant(request, tenantId);
+    if (!access) return privateJson({ error: "not_authorized" }, 403);
+    const featureGuard = await requireTenantFeature(tenantId, "simulator");
+    if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
 
     // Check for customer dissatisfaction / escalation first
     const escalation = detectCustomerEscalation(message);
@@ -56,6 +55,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { url, serviceKey, omniUrl, omniKey } = getServiceConfig();
+    if (!url || !serviceKey || !omniKey) return privateJson({ error: "simulator_not_configured" }, 503);
 
     // 1. Fetch store name
     const rTenant = await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=name`, {
@@ -118,7 +118,8 @@ export async function POST(request: NextRequest) {
       instructions,
       storeInfo,
       history,
-      operatingHours
+      operatingHours,
+      allowFallback: crmFeatureAllowed(featureGuard.effectivePlan, "model_fallback")
     };
 
     const cfg: AiConfig = {

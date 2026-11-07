@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyOperator } from "@/lib/crm/supabase-server";
+import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
+import { verifyOperator, isAllowedOrigin } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getEffectiveTenantPlan, getRedis } from "@/lib/crm/plans";
-import { extractSlotFromInstanceName, expectedSlotInstanceName } from "@/lib/crm/whatsapp-slots";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
 
     const dbStatus = status === "connected" ? "connected" : "disconnected";
 
-    const res = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
+    const res = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}${tenantId ? `&tenant_id=eq.${tenantId}` : ""}`, {
       method: "PATCH",
       headers: {
         apikey: supaKey,
@@ -43,9 +44,10 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
       body: JSON.stringify({ status: dbStatus })
     });
 
-    const updated = res.ok ? await res.json() : [];
+    if (!res.ok) throw new Error("channel_status_write_failed");
+    const updated = await res.json();
     if (Array.isArray(updated) && updated.length === 0 && tenantId) {
-      await fetch(`${supaUrl}/rest/v1/crm_channels`, {
+      const inserted = await fetch(`${supaUrl}/rest/v1/crm_channels`, {
         method: "POST",
         headers: {
           apikey: supaKey,
@@ -59,9 +61,10 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
           status: dbStatus
         })
       });
+      if (!inserted.ok) throw new Error("channel_insert_failed");
     }
-  } catch (err) {
-    console.warn("[syncChannelStatus] Erro ao sincronizar status do canal:", err);
+  } catch {
+    throw new Error("channel_status_sync_failed");
   }
 }
 
@@ -116,6 +119,7 @@ async function configureEvolutionWebhook(url: string, key: string, secret: strin
 }
 
 export async function POST(req: NextRequest) {
+  if (!isAllowedOrigin(req.headers.get("origin"), req.url)) return NextResponse.json({ error: "origin_forbidden" }, { status: 403 });
   try {
     const [masterAuth, operator] = await Promise.all([
       verifyMasterRequest(req),
@@ -128,7 +132,7 @@ export async function POST(req: NextRequest) {
       }, { status: 401 });
     }
 
-    let body: Record<string, any> = {};
+    let body: Record<string, unknown> = {};
     try {
       body = await req.json();
     } catch {}
@@ -169,6 +173,7 @@ export async function POST(req: NextRequest) {
       }, { status: 403 });
     }
 
+    if (body.slot !== undefined && (typeof body.slot !== "number" || !Number.isInteger(body.slot) || body.slot < 1 || body.slot > 5)) return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
     const requestedSlot = typeof body.slot === "number" && body.slot >= 1 && body.slot <= 5
       ? (body.slot as 1 | 2 | 3 | 4 | 5)
       : undefined;
@@ -189,7 +194,12 @@ export async function POST(req: NextRequest) {
       instanceName = `${instanceName.slice(0, 30)}_${requestedSlot}`;
     }
 
-    const slotNumber = requestedSlot || extractSlotFromInstanceName(instanceName);
+    const slotNumber = extractSlotFromInstanceName(instanceName);
+    if (requestedSlot !== undefined && requestedSlot !== slotNumber) return NextResponse.json({ error: "slot_instance_mismatch" }, { status: 403 });
+
+    const channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
+    if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
+    tenantId = channelAccess.tenant.id;
 
     // 2. FAIL-CLOSED verification of plan limits, slot permissions, and concurrent attempts
     if (tenantId) {
@@ -222,13 +232,14 @@ export async function POST(req: NextRequest) {
         }, { status: 503 });
       }
 
-      if (effectivePlan.isSuspended) {
+      if (effectivePlan.isSuspended || effectivePlan.featureStates?.ai_chat?.state === "suspended") {
         return NextResponse.json({
           error: "account_suspended",
           message: effectivePlan.publicSuspensionReason || "Sua conta está suspensa ou o período de avaliação terminou. Regularize seu plano para conectar o WhatsApp."
         }, { status: 403 });
       }
 
+      if (effectivePlan.featureStates?.ai_chat?.state === "maintenance") return NextResponse.json({ error: "FEATURE_MAINTENANCE" }, { status: 503 });
       // Check slot number against maxWhatsappConnections (1 for Trial/Start, 3 for Business, 5 for Premium)
       if (slotNumber > effectivePlan.maxWhatsappConnections) {
         const requiredPlan = slotNumber <= 3 ? "CRM Business" : "CRM Premium";
@@ -242,12 +253,12 @@ export async function POST(req: NextRequest) {
       }
 
       // Also verify total non-paused channels + concurrent connection attempts so user cannot bypass slot naming
-      const isAlreadyRegisteredForTenant = existingChannels.some(c => c.instance_name === instanceName);
+      
       const occupiedChannels = existingChannels.filter(
         c => c.status !== "paused" && c.instance_name !== instanceName
       );
 
-      if (!isAlreadyRegisteredForTenant && occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
+      if (occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
         return NextResponse.json({
           error: "whatsapp_limit_reached",
           maxAllowed: effectivePlan.maxWhatsappConnections,
@@ -298,8 +309,9 @@ export async function POST(req: NextRequest) {
         const stateData = await stateRes.json();
         state = stateData?.instance?.state ?? stateData?.state ?? "close";
       }
-    } catch (err: any) {
-      if (err?.name === "TimeoutError" || err?.code === "ECONNREFUSED" || err?.code === "ENOTFOUND" || err?.message?.includes("fetch failed")) {
+    } catch (err) {
+      const failure = err as { name?: string; code?: string; message?: string } | null;
+      if (failure?.name === "TimeoutError" || failure?.code === "ECONNREFUSED" || failure?.code === "ENOTFOUND" || failure?.message?.includes("fetch failed")) {
         evolutionOnline = false;
       }
     }
@@ -380,8 +392,8 @@ export async function POST(req: NextRequest) {
             );
           }
         }
-      } catch (err: any) {
-        console.warn("[WhatsApp Connect] Erro ao criar instância:", err?.message);
+      } catch (err) {
+        console.warn("[WhatsApp Connect] Erro ao criar instância:", err instanceof Error ? err.message : undefined);
       }
     }
 
@@ -406,6 +418,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  if (!isAllowedOrigin(req.headers.get("origin"), req.url)) return NextResponse.json({ error: "origin_forbidden" }, { status: 403 });
   try {
     const [masterAuth, operator] = await Promise.all([
       verifyMasterRequest(req),
@@ -442,6 +455,10 @@ export async function DELETE(req: NextRequest) {
     }
 
     const instanceName = instance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
+    const channelAccess = await authorizeCrmInstance(req,
+      req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined,
+      instanceName);
+    if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
 
     try {
       await fetch(`${url}/instance/logout/${encodeURIComponent(instanceName)}`, {
@@ -463,7 +480,7 @@ export async function DELETE(req: NextRequest) {
       deleted = delRes.ok;
     } catch {}
 
-    const tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
+    const tenantId = channelAccess.tenant.id;
     await syncChannelStatus(instanceName, tenantId, "disconnected");
 
     return NextResponse.json({

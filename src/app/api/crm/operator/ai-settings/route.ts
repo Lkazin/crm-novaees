@@ -1,7 +1,8 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
+import { authorizeCrmTenant, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
-import { isAllowedOrigin, privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
-import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { getEffectiveTenantPlan, requireTenantFeature } from "@/lib/crm/plans";
 import { buildTenantWhatsappSlots } from "@/lib/crm/whatsapp-slots";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
@@ -89,7 +90,7 @@ export function normalizeOperatingHours(
 ): OperatingHours {
   const openTime = typeof raw?.openTime === "string" && /^\d{2}:\d{2}$/.test(raw.openTime) ? raw.openTime : "08:00";
   const closeTime = typeof raw?.closeTime === "string" && /^\d{2}:\d{2}$/.test(raw.closeTime) ? raw.closeTime : "18:00";
-  const rawDays = Array.isArray(raw?.days) ? raw!.days.filter(d => ALL_DAYS.includes(d as any)) : DEFAULT_DAYS;
+  const rawDays = Array.isArray(raw?.days) ? raw!.days.filter(d => ALL_DAYS.some(day => day === d)) : DEFAULT_DAYS;
 
   const schedule: Record<string, DaySchedule> = buildDefaultSchedule(openTime, closeTime, rawDays);
   if (raw?.schedule && typeof raw.schedule === "object") {
@@ -126,20 +127,9 @@ export function normalizeOperatingHours(
   };
 }
 
-async function authorizeTenantAccess(request: NextRequest, tenantId: string): Promise<{ authorized: boolean; operatorId?: string }> {
-  const [masterAuth, operator] = await Promise.all([
-    verifyMasterRequest(request),
-    verifyOperator()
-  ]);
-  if (masterAuth.authorized) {
-    return { authorized: true, operatorId: operator?.id };
-  }
-  if (!operator) return { authorized: false };
-  const members = await supabaseRows<Array<{ tenant_id: string }>>(
-    "crm_tenant_memberships?select=tenant_id&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-    operator.token
-  );
-  return { authorized: members.length > 0, operatorId: operator.id };
+async function authorizeTenantAccess(request: NextRequest, tenantId: string) {
+  const access = await authorizeCrmTenant(request, tenantId);
+  return { authorized: Boolean(access), operatorId: access?.operatorId ?? undefined, operatorEmail: access?.operatorEmail };
 }
 
 // GET: Retrieve the client store's AI settings, knowledge, operating hours, quota, 5 WhatsApp slots, quick replies, operators, satisfaction & upgrade requests
@@ -151,6 +141,8 @@ export async function GET(request: NextRequest) {
     const access = await authorizeTenantAccess(request, tenant);
     if (!access.authorized) return privateJson({ error: "unauthorized" }, 401);
 
+    const readGuard = await requireTenantFeature(tenant, "ai_chat");
+    if (!readGuard.allowed) return privateJson({ error: readGuard.errorCode, state: readGuard.state, message: readGuard.message }, readGuard.statusHttp);
     const { url, serviceKey, redisUrl } = getServiceConfig();
 
     // 1. Fetch tenant info, agent, articles, settings, channels, and memberships in parallel
@@ -175,7 +167,7 @@ export async function GET(request: NextRequest) {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
-      fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenant}&select=user_id,role,created_at`, {
+      fetch(url + `/rest/v1/crm_tenant_memberships?is_active=eq.true&tenant_id=eq.${tenant}&select=user_id,role,created_at`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
@@ -206,7 +198,7 @@ export async function GET(request: NextRequest) {
 
     let rawOperatingHours: Partial<OperatingHours> | undefined;
     let dbTimezone = "America/Sao_Paulo";
-    let parsedSettings: Record<string, any> = {};
+    let parsedSettings: StoredTenantConfig & { ai_settings?: { operatingHours?: Partial<OperatingHours> } } = {};
 
     if (rSettings.ok) {
       const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
@@ -222,7 +214,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const allowAdvancedHours = effectivePlan.allowedFeatures.includes("business_hours");
+    const allowAdvancedHours = crmFeatureAllowed(effectivePlan, "business_hours");
     const operatingHours = normalizeOperatingHours(rawOperatingHours, dbTimezone, allowAdvancedHours);
 
     // 4. Read real quota used this month from Redis + durable fallback
@@ -231,7 +223,7 @@ export async function GET(request: NextRequest) {
       ? Number(parsedSettings?.usageCounters?.trialUsed ?? effectivePlan.quotaUsed ?? 0)
       : Number(parsedSettings?.usageCounters?.monthly?.[monthKey] ?? effectivePlan.quotaUsed ?? 0);
 
-    let quotaUsed = durableUsed;
+    let quotaUsed = Math.max(durableUsed, effectivePlan.quotaUsed || 0);
     try {
       const redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 1500, maxRetriesPerRequest: 1 });
       await redis.connect();
@@ -239,7 +231,7 @@ export async function GET(request: NextRequest) {
       const usedRaw = await redis.get(quotaKey);
       redis.disconnect();
       if (usedRaw) {
-        quotaUsed = Math.max(durableUsed, parseInt(usedRaw, 10) || 0);
+        quotaUsed = Math.max(quotaUsed, parseInt(usedRaw, 10) || 0);
       }
     } catch {}
 
@@ -249,16 +241,12 @@ export async function GET(request: NextRequest) {
       ? parsedSettings.quickReplies
       : DEFAULT_QUICK_REPLIES;
 
-    const teamOperators = Array.isArray(parsedSettings.teamOperators) && parsedSettings.teamOperators.length > 0
-      ? parsedSettings.teamOperators
-      : memberships.map((m, idx) => ({
-          id: m.user_id,
-          name: idx === 0 ? `Operador Principal (${tenantName})` : `Operador #${idx + 1}`,
-          email: "—",
-          role: m.role || "agent",
-          status: "active",
-          createdAt: m.created_at || new Date().toISOString()
-        }));
+    const operatorMetadata: Array<Record<string, unknown>> = Array.isArray(parsedSettings.teamOperators) ? parsedSettings.teamOperators : [];
+    const teamOperators = memberships.map((m, idx) => ({
+      id: m.user_id, name: idx === 0 ? "Operador Principal (" + tenantName + ")" : "Operador #" + (idx + 1),
+      email: "—", ...(operatorMetadata.find(o => o.id === m.user_id) || {}),
+      role: m.role, status: "active", createdAt: m.created_at,
+    }));
 
     const satisfactionSurveys = Array.isArray(parsedSettings.satisfactionSurveys)
       ? parsedSettings.satisfactionSurveys
@@ -284,9 +272,9 @@ export async function GET(request: NextRequest) {
       operatingHours,
       allowAdvancedHours,
       whatsappSlots,
-      quickReplies,
+      quickReplies: crmFeatureAllowed(effectivePlan, "quick_replies") ? quickReplies : [],
       teamOperators,
-      satisfactionSurveys,
+      satisfactionSurveys: crmFeatureAllowed(effectivePlan, "satisfaction_survey") ? satisfactionSurveys : [],
       upgradeRequests,
       plan: planData,
       allowedFeatures: effectivePlan.allowedFeatures,
@@ -312,7 +300,9 @@ export async function POST(request: NextRequest) {
     if (!access.authorized) return privateJson({ error: "unauthorized" }, 401);
 
     const { url, serviceKey } = getServiceConfig();
-    const effectivePlan = await getEffectiveTenantPlan(tenantId);
+    const aiGuard = await requireTenantFeature(tenantId, "ai_chat");
+    if (!aiGuard.allowed) return privateJson({ error: aiGuard.errorCode, state: aiGuard.state, message: aiGuard.message }, aiGuard.statusHttp);
+    const effectivePlan = aiGuard.effectivePlan;
 
     if (effectivePlan.isSuspended) {
       return privateJson({
@@ -325,8 +315,8 @@ export async function POST(request: NextRequest) {
     const incomingOperatingHours = body.operatingHours;
 
     // Validate operating hours permissions on backend
-    const allowAdvancedHours = effectivePlan.allowedFeatures.includes("business_hours");
-    const allowBasicHours = allowAdvancedHours || effectivePlan.allowedFeatures.includes("business_hours_basic");
+    const allowAdvancedHours = crmFeatureAllowed(effectivePlan, "business_hours");
+    const allowBasicHours = allowAdvancedHours || crmFeatureAllowed(effectivePlan, "business_hours_basic");
 
     if (incomingOperatingHours && typeof incomingOperatingHours === "object") {
       if (!allowBasicHours) {
@@ -339,9 +329,14 @@ export async function POST(request: NextRequest) {
       // Check if user tried to enable intervals/breaks without Business/Premium plan
       const sched = incomingOperatingHours.schedule || {};
       const requestedBreaks = Object.values(sched).some(
-        (d: any) => d && (d.hasBreak === true || (Array.isArray(d.intervals) && d.intervals.length > 0))
+        (d: unknown) => d && typeof d === "object" && (
+          (d as Record<string, unknown>).hasBreak === true ||
+          (Array.isArray((d as Record<string, unknown>).intervals) && ((d as Record<string, unknown>).intervals as unknown[]).length > 0)
+        )
       );
-      if (requestedBreaks && !allowAdvancedHours && body.strictAdvancedHours === true) {
+      if (requestedBreaks && !allowAdvancedHours) {
+        const hoursGuard = await requireTenantFeature(tenantId, "business_hours");
+        if (!hoursGuard.allowed) return privateJson({ error: hoursGuard.errorCode, state: hoursGuard.state, message: hoursGuard.message }, hoursGuard.statusHttp);
         return privateJson({
           error: "PLAN_FEATURE_LOCKED",
           requiredPlan: "CRM Business",
@@ -438,61 +433,19 @@ export async function POST(request: NextRequest) {
       const normalizedHours = normalizeOperatingHours(incomingOperatingHours, "America/Sao_Paulo", allowAdvancedHours);
       savedOperatingHours = normalizedHours;
 
-      const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=tenant_id,business_description&limit=1`, {
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-        cache: "no-store"
+      const rGet = await fetch(url + "/rest/v1/crm_tenant_settings?tenant_id=eq." + tenantId + "&select=business_description&limit=1", {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }, cache: "no-store",
       });
-      const current = rGet.ok ? ((await rGet.json()) as Array<{ tenant_id: string; business_description: string }>) : [];
-      let dataObj: Record<string, unknown> = {};
-      try {
-        if (current[0]?.business_description?.startsWith("{")) {
-          dataObj = JSON.parse(current[0].business_description);
-        } else if (current[0]?.business_description) {
-          dataObj = { legacy_description: current[0].business_description };
-        }
-      } catch {}
-
-      dataObj.ai_settings = {
-        ...((dataObj.ai_settings as Record<string, unknown>) || {}),
-        operatingHours: normalizedHours
-      };
-
-      const serialized = JSON.stringify(dataObj);
-
-      if (current.length > 0) {
-        const rPatchSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-          method: "PATCH",
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            timezone: normalizedHours.timezone,
-            business_description: serialized,
-            updated_at: new Date().toISOString()
-          })
-        });
-        if (!rPatchSettings.ok) {
-          const errText = await rPatchSettings.text();
-          throw new Error(`Falha ao salvar horários: ${errText}`);
-        }
-      } else {
-        const rPostSettings = await fetch(url + "/rest/v1/crm_tenant_settings", {
-          method: "POST",
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tenant_id: tenantId,
-            timezone: normalizedHours.timezone,
-            business_description: serialized,
-            human_handoff_enabled: true,
-            ai_sending_enabled: false,
-            campaigns_enabled: false,
-            automation_execution_enabled: false,
-            retention_days: 7
-          })
-        });
-        if (!rPostSettings.ok) {
-          const errText = await rPostSettings.text();
-          throw new Error(`Falha ao criar configuração de horários: ${errText}`);
-        }
-      }
+      if (!rGet.ok) throw new Error("settings_unavailable");
+      const current = await rGet.json() as Array<{business_description: string}>;
+      if (current.length !== 1) throw new Error("settings_unavailable");
+      const currentSettings = JSON.parse(current[0].business_description);
+      await patchCrmConfig(tenantId, { ai_settings: { ...(currentSettings.ai_settings || {}), operatingHours: normalizedHours } });
+      const rTimezone = await fetch(url + "/rest/v1/crm_tenant_settings?tenant_id=eq." + tenantId, {
+        method: "PATCH", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ timezone: normalizedHours.timezone }),
+      });
+      if (!rTimezone.ok) throw new Error("timezone_write_failed");
     }
 
     return privateJson({

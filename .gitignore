@@ -41,3 +41,6 @@ playwright-report/
 
 backups/
 
+
+# Local CLI state
+supabase/.temp/

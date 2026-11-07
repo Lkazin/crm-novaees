@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { requireTenantFeature } from "@/lib/crm/plans";
+import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
-import { tenantInstanceSlug } from "@/lib/crm/supabase-ingest";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +19,6 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const operator = await verifyOperator();
-    if (!operator) return privateJson({ error: "unauthorized" }, 401);
 
     const body = await request.json();
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
@@ -36,13 +36,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 1. Verify operator membership in tenant
-    const member = await supabaseRows<Array<{ role: string }>>(
-      "crm_tenant_memberships?select=role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-      operator.token
-    );
-    if (member.length !== 1 || !["owner", "admin", "agent"].includes(member[0].role)) {
-      return privateJson({ error: "not_authorized" }, 403);
-    }
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
+    if (!access) return privateJson({ error: "not_authorized" }, 403);
+    const featureGuard = await requireTenantFeature(tenantId, "human_handoff");
+    if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
+    const operator = { id: access.operatorId };
 
     const { url } = supabaseSettings();
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -72,11 +70,12 @@ export async function POST(request: NextRequest) {
     let targetInstance: string | undefined;
     if (conv.channel_id) {
       const rChannel = await fetch(
-        url + `/rest/v1/crm_channels?id=eq.${conv.channel_id}&tenant_id=eq.${tenantId}&select=instance_name&limit=1`,
+        url + `/rest/v1/crm_channels?id=eq.${conv.channel_id}&tenant_id=eq.${tenantId}&select=instance_name,status&limit=1`,
         { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
       );
       if (rChannel.ok) {
-        const channels = (await rChannel.json()) as Array<{ instance_name: string }>;
+        const channels = (await rChannel.json()) as Array<{ instance_name: string; status: string }>;
+        if (channels[0]?.status === "paused") return privateJson({ error: "channel_paused" }, 403);
         if (channels[0]?.instance_name) targetInstance = channels[0].instance_name;
       }
     }
@@ -87,20 +86,11 @@ export async function POST(request: NextRequest) {
       );
       if (rTenantChannels.ok) {
         const tChannels = (await rTenantChannels.json()) as Array<{ instance_name: string; status: string }>;
-        const connected = tChannels.find((c) => c.status === "connected");
-        targetInstance = connected?.instance_name || tChannels[0]?.instance_name;
+        const connected = tChannels.find((c) => c.status === "connected" && extractSlotFromInstanceName(c.instance_name) <= featureGuard.effectivePlan.maxWhatsappConnections);
+        targetInstance = connected?.instance_name;
       }
     }
-    if (!targetInstance) {
-      const rTenant = await fetch(
-        url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=name&limit=1`,
-        { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
-      );
-      if (rTenant.ok) {
-        const tenants = (await rTenant.json()) as Array<{ name: string }>;
-        if (tenants[0]?.name) targetInstance = tenantInstanceSlug(tenants[0].name);
-      }
-    }
+    if (!targetInstance || extractSlotFromInstanceName(targetInstance) > featureGuard.effectivePlan.maxWhatsappConnections) return privateJson({ error: "channel_unavailable_or_locked" }, 403);
 
     // 5. Send real WhatsApp message via Evolution API
     const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");

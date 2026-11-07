@@ -1,8 +1,9 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
+import { authorizeCrmTenant, ownsCrmResource, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
-import { isAllowedOrigin, privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
-import { verifyMasterRequest } from "@/lib/crm/master-auth";
-import { getEffectiveTenantPlan, requireTenantFeature, DEFAULT_PLANS } from "@/lib/crm/plans";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans } from "@/lib/crm/plans";
 import { DEFAULT_QUICK_REPLIES } from "@/app/api/crm/operator/ai-settings/route";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 
@@ -18,50 +19,28 @@ function getServiceConfig() {
   return { url, serviceKey, redisUrl };
 }
 
-async function authorizeTenant(request: NextRequest, tenantId: string): Promise<{ authorized: boolean; operatorId?: string; operatorEmail?: string }> {
-  const [masterAuth, operator] = await Promise.all([
-    verifyMasterRequest(request),
-    verifyOperator()
-  ]);
-  if (masterAuth.authorized) {
-    return { authorized: true, operatorId: operator?.id, operatorEmail: operator?.email };
-  }
-  if (!operator) return { authorized: false };
-  const members = await supabaseRows<Array<{ tenant_id: string; role: string }>>(
-    "crm_tenant_memberships?select=tenant_id,role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-    operator.token
-  );
-  return {
-    authorized: members.length > 0,
-    operatorId: operator.id,
-    operatorEmail: operator.email
-  };
+async function authorizeTenant(request: NextRequest, tenantId: string) {
+  const access = await authorizeCrmTenant(request, tenantId);
+  return { authorized: Boolean(access), operatorId: access?.operatorId ?? undefined, operatorEmail: access?.operatorEmail };
 }
 
-async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId: string): Promise<Record<string, any>> {
+async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId: string): Promise<StoredTenantConfig> {
   const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
     headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
     cache: "no-store"
   });
-  if (!rGet.ok) return {};
+  if (!rGet.ok) throw new Error("settings_unavailable");
   const rows = (await rGet.json()) as Array<{ business_description: string }>;
   if (rows[0]?.business_description?.startsWith("{")) {
     try {
       return JSON.parse(rows[0].business_description);
     } catch {}
   }
-  return {};
+  throw new Error("settings_unavailable");
 }
 
-async function saveTenantSettingsJson(url: string, serviceKey: string, tenantId: string, dataObj: Record<string, any>): Promise<void> {
-  await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-    method: "PATCH",
-    headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      business_description: JSON.stringify(dataObj),
-      updated_at: new Date().toISOString()
-    })
-  });
+async function saveTenantSettingsJson(_url: string, _serviceKey: string, tenantId: string, dataObj: StoredTenantConfig, key: string): Promise<void> {
+  await patchCrmConfig(tenantId, { [key]: dataObj[key] });
 }
 
 // GET: Retrieve Quick Replies, Team Operators, Priorities, Satisfaction Surveys, Upgrade Requests, and Tiered Reports (Start / Business / Premium)
@@ -79,6 +58,7 @@ export async function GET(request: NextRequest) {
     const effectivePlan = await getEffectiveTenantPlan(tenantId);
     const dataObj = await loadTenantSettingsJson(url, serviceKey, tenantId);
 
+    if (effectivePlan.isSuspended) return privateJson({ error: "ACCOUNT_SUSPENDED", state: "suspended" }, 403);
     // Optional filters for reports (Premium advanced filters)
     const periodFilter = request.nextUrl.searchParams.get("period") || "30d"; // "7d" | "30d" | "all"
     const channelFilter = request.nextUrl.searchParams.get("channel") || "all";
@@ -86,6 +66,13 @@ export async function GET(request: NextRequest) {
     const priorityFilter = request.nextUrl.searchParams.get("priority") || "all";
     const operatorFilter = request.nextUrl.searchParams.get("operator") || "all";
 
+    const hasAdvancedFilters = periodFilter !== "30d" || [channelFilter, tagFilter, priorityFilter, operatorFilter].some(f => f !== "all");
+    if (hasAdvancedFilters) {
+      const guard = await requireTenantFeature(tenantId, "advanced_commercial_filters");
+      if (!guard.allowed) return privateJson({ error: guard.errorCode, state: guard.state, message: guard.message }, guard.statusHttp);
+    }
+    const basicGuard = await requireTenantFeature(tenantId, "basic_indicators");
+    if (!basicGuard.allowed) return privateJson({ error: basicGuard.errorCode, state: basicGuard.state, message: basicGuard.message }, basicGuard.statusHttp);
     const [rConvs, rContacts, rChannels, rMemberships, rHandoffs] = await Promise.all([
       fetch(url + `/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,contact_id,channel_id,assigned_to,mode,status,last_message_at,created_at&order=last_message_at.desc&limit=300`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
@@ -99,7 +86,7 @@ export async function GET(request: NextRequest) {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
-      fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}&select=user_id,role,created_at`, {
+      fetch(url + `/rest/v1/crm_tenant_memberships?is_active=eq.true&tenant_id=eq.${tenantId}&select=user_id,role,created_at`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
@@ -109,28 +96,24 @@ export async function GET(request: NextRequest) {
       })
     ]);
 
-    const rawConvs = rConvs.ok ? ((await rConvs.json()) as Array<any>) : [];
-    const contacts = rContacts.ok ? ((await rContacts.json()) as Array<any>) : [];
-    const channels = rChannels.ok ? ((await rChannels.json()) as Array<any>) : [];
-    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<any>) : [];
-    const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<any>) : [];
+    const rawConvs = rConvs.ok ? ((await rConvs.json()) as Array<{ id: string; contact_id: string; channel_id: string; assigned_to?: string; mode: string; status: string; last_message_at?: string }>) : [];
+    const contacts = rContacts.ok ? ((await rContacts.json()) as Array<Record<string, unknown>>) : [];
+    const channels = rChannels.ok ? ((await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>) : [];
+    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<{ user_id: string; role: string; created_at?: string }>) : [];
+    const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<Record<string, unknown>>) : [];
 
     const conversationTags: Record<string, string> = dataObj.conversationTags || {};
     const conversationPriorities: Record<string, "low" | "normal" | "high" | "urgent"> = dataObj.conversationPriorities || {};
-    const satisfactionSurveys: Array<Record<string, any>> = Array.isArray(dataObj.satisfactionSurveys) ? dataObj.satisfactionSurveys : [];
+    const satisfactionSurveys: Array<Record<string, unknown>> = Array.isArray(dataObj.satisfactionSurveys) ? dataObj.satisfactionSurveys : [];
     const quickReplies = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0 ? dataObj.quickReplies : DEFAULT_QUICK_REPLIES;
     const upgradeRequests = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
 
-    const teamOperators: Array<Record<string, any>> = Array.isArray(dataObj.teamOperators) && dataObj.teamOperators.length > 0
-      ? dataObj.teamOperators
-      : memberships.map((m: any, idx: number) => ({
-          id: m.user_id,
-          name: idx === 0 ? "Operador Principal" : `Operador #${idx + 1}`,
-          email: auth.operatorEmail || "—",
-          role: m.role || "agent",
-          status: "active",
-          createdAt: m.created_at || new Date().toISOString()
-        }));
+    const operatorMetadata: Array<Record<string, unknown>> = Array.isArray(dataObj.teamOperators) ? dataObj.teamOperators : [];
+    const teamOperators: Array<Record<string, unknown>> = memberships.map((m, idx: number) => ({
+      id: m.user_id, name: idx === 0 ? "Operador Principal" : "Operador #" + (idx + 1),
+      email: "—", ...(operatorMetadata.find(o => o.id === m.user_id) || {}),
+      role: m.role, status: "active", createdAt: m.created_at,
+    }));
 
     // Apply report filters
     const nowMs = Date.now();
@@ -189,7 +172,7 @@ export async function GET(request: NextRequest) {
     };
 
     // 2. COMMERCIAL INDICATORS (CRM Business+)
-    const allowCommercial = effectivePlan.allowedFeatures.includes("commercial_indicators");
+    const allowCommercial = crmFeatureAllowed(effectivePlan, "commercial_indicators");
     const tagBreakdown: Record<string, number> = {
       "Interessado": 0,
       "Orçamento enviado": 0,
@@ -230,9 +213,7 @@ export async function GET(request: NextRequest) {
     } : null;
 
     // 3. ADVANCED REPORTS, SATISFACTION ANALYTICS & OPERATOR INDICATORS (CRM Premium)
-    const allowAdvanced = effectivePlan.allowedFeatures.includes("advanced_reports") ||
-      effectivePlan.allowedFeatures.includes("satisfaction_analytics") ||
-      effectivePlan.allowedFeatures.includes("operator_indicators");
+    const allowAdvanced = crmFeatureAllowed(effectivePlan, "advanced_reports");
 
     let premiumAnalytics = null;
     if (allowAdvanced) {
@@ -258,7 +239,7 @@ export async function GET(request: NextRequest) {
 
       // Per-operator performance metrics
       const activeOps = teamOperators.filter(op => op.status !== "revoked");
-      const operatorMetrics = activeOps.map((op: any) => {
+      const operatorMetrics = activeOps.map((op) => {
         const opConvs = filteredConvs.filter(c => c.assigned_to === op.id || (!c.assigned_to && c.mode === "human" && activeOps.length === 1));
         const opSurveys = satisfactionSurveys.filter(s => s.operatorId === op.id || s.operatorName === op.name);
         const opAvgRating = opSurveys.length > 0
@@ -276,12 +257,12 @@ export async function GET(request: NextRequest) {
       });
 
       premiumAnalytics = {
-        starDistribution,
-        csatPercent,
+        starDistribution: crmFeatureAllowed(effectivePlan, "satisfaction_analytics") ? starDistribution : null,
+        csatPercent: crmFeatureAllowed(effectivePlan, "satisfaction_analytics") ? csatPercent : null,
         aiAvgRating: aiRatingCount > 0 ? Number((aiRatingSum / aiRatingCount).toFixed(2)) : null,
         humanAvgRating: humanRatingCount > 0 ? Number((humanRatingSum / humanRatingCount).toFixed(2)) : null,
-        detractors,
-        operatorMetrics,
+        detractors: crmFeatureAllowed(effectivePlan, "satisfaction_analytics") ? detractors : [],
+        operatorMetrics: crmFeatureAllowed(effectivePlan, "operator_indicators") ? operatorMetrics : [],
         channelsSummary: channels.map(ch => ({
           id: ch.id,
           instanceName: ch.instance_name,
@@ -292,12 +273,12 @@ export async function GET(request: NextRequest) {
     }
 
     return privateJson({
-      quickReplies,
+      quickReplies: crmFeatureAllowed(effectivePlan, "quick_replies") ? quickReplies : [],
       teamOperators,
       maxOperators: effectivePlan.maxOperators,
-      conversationTags,
-      conversationPriorities,
-      satisfactionSurveys,
+      conversationTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? conversationTags : {},
+      conversationPriorities: crmFeatureAllowed(effectivePlan, "conversation_priority") ? conversationPriorities : {},
+      satisfactionSurveys: crmFeatureAllowed(effectivePlan, "satisfaction_survey") ? satisfactionSurveys : [],
       upgradeRequests,
       reports: {
         basicIndicators,
@@ -330,18 +311,30 @@ export async function POST(request: NextRequest) {
     const { url, serviceKey, redisUrl } = getServiceConfig();
     if (!url || !serviceKey) return privateJson({ error: "backend_not_configured" }, 503);
 
+    if (["set_priority", "submit_satisfaction"].includes(action)) {
+      const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
+      if (conversationId && !await ownsCrmResource(tenantId, "crm_conversations", conversationId)) {
+        return privateJson({ error: "conversation_not_found" }, 404);
+      }
+    }
+    if (["add_operator", "update_operator", "revoke_operator"].includes(action) &&
+      !await authorizeCrmTenant(request, tenantId, ["owner", "admin"])) {
+      return privateJson({ error: "not_authorized" }, 403);
+    }
+
     const dataObj = await loadTenantSettingsJson(url, serviceKey, tenantId);
 
     // 1. ACTION: Request Plan Upgrade (Always allowed, even when account is suspended or locked!)
     if (action === "request_upgrade") {
-      const targetPlanId = typeof body.targetPlanId === "string" ? body.targetPlanId : "crm-business";
+      const requestedPlan = typeof body.targetPlanId === "string" ? body.targetPlanId : typeof body.requestedPlan === "string" ? body.requestedPlan : "";
       const featureRequested = typeof body.featureRequested === "string" ? body.featureRequested : "";
-      const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+      const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : typeof body.notes === "string" ? body.notes.trim().slice(0, 500) : "";
 
       const effectivePlan = await getEffectiveTenantPlan(tenantId);
-      const targetPlan = DEFAULT_PLANS.find(p => p.id === targetPlanId) || DEFAULT_PLANS[1];
+      const targetPlan = (await getMasterPlans()).find(p => p.status === "active" && (p.id === requestedPlan || p.name.toLowerCase() === requestedPlan.toLowerCase()));
+      if (!targetPlan) return privateJson({ error: "invalid_upgrade_plan" }, 400);
 
-      const upgradeRequests: Array<Record<string, any>> = Array.isArray(dataObj.upgradeRequests)
+      const upgradeRequests: Array<Record<string, unknown>> = Array.isArray(dataObj.upgradeRequests)
         ? dataObj.upgradeRequests
         : [];
 
@@ -361,7 +354,7 @@ export async function POST(request: NextRequest) {
 
       upgradeRequests.unshift(newReq);
       dataObj.upgradeRequests = upgradeRequests.slice(0, 50);
-      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "upgradeRequests");
 
       return privateJson({
         requested: true,
@@ -378,12 +371,12 @@ export async function POST(request: NextRequest) {
         return privateJson({ error: guard.errorCode, state: guard.state, message: guard.message }, guard.statusHttp);
       }
 
-      const list: Array<Record<string, any>> = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0
+      const list: Array<Record<string, unknown>> = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0
         ? [...dataObj.quickReplies]
         : [...DEFAULT_QUICK_REPLIES];
 
       if (action === "delete_quick_reply") {
-        const replyId = String(body.replyId || "");
+        const replyId = String(body.replyId || body.id || "");
         dataObj.quickReplies = list.filter(r => r.id !== replyId);
       } else {
         const replyId = typeof body.id === "string" && body.id ? body.id : `qr_${Date.now()}`;
@@ -403,7 +396,7 @@ export async function POST(request: NextRequest) {
         dataObj.quickReplies = list;
       }
 
-      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "quickReplies");
       return privateJson({ saved: true, quickReplies: dataObj.quickReplies });
     }
 
@@ -425,7 +418,7 @@ export async function POST(request: NextRequest) {
         : {};
       priorities[conversationId] = priority;
       dataObj.conversationPriorities = priorities;
-      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "conversationPriorities");
 
       // Sync to Redis for real-time queue sorting
       try {
@@ -456,7 +449,7 @@ export async function POST(request: NextRequest) {
       const dayBucket = new Date().toISOString().slice(0, 10);
       const dedupKey = `${conversationId || contactPhone}:${dayBucket}`;
 
-      const surveys: Array<Record<string, any>> = Array.isArray(dataObj.satisfactionSurveys)
+      const surveys: Array<Record<string, unknown>> = Array.isArray(dataObj.satisfactionSurveys)
         ? dataObj.satisfactionSurveys
         : [];
 
@@ -485,7 +478,7 @@ export async function POST(request: NextRequest) {
       const filtered = surveys.filter(s => s.dedupKey !== dedupKey);
       filtered.unshift(entry);
       dataObj.satisfactionSurveys = filtered.slice(0, 300);
-      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "satisfactionSurveys");
 
       return privateJson({
         saved: true,
@@ -504,20 +497,18 @@ export async function POST(request: NextRequest) {
         }, 403);
       }
 
-      const teamOperators: Array<Record<string, any>> = Array.isArray(dataObj.teamOperators)
+      const teamOperators: Array<Record<string, unknown>> = Array.isArray(dataObj.teamOperators)
         ? [...dataObj.teamOperators]
         : [];
 
       if (action === "add_operator") {
-        const activeOps = teamOperators.filter(op => op.status !== "revoked");
-        if (activeOps.length >= effectivePlan.maxOperators) {
-          const nextPlan = effectivePlan.maxOperators < 3 ? "CRM Business (até 3 operadores)" : "CRM Premium (até 5 operadores)";
-          return privateJson({
-            error: "OPERATOR_LIMIT_REACHED",
-            maxOperators: effectivePlan.maxOperators,
-            message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxOperators} operador(es) ativo(s). Solicite upgrade para ${nextPlan}.`
-          }, 403);
-        }
+        const rMembers = await fetch(url + "/rest/v1/crm_tenant_memberships?is_active=eq.true&tenant_id=eq." + tenantId + "&select=user_id,role", {
+          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }, cache: "no-store",
+        });
+        if (!rMembers.ok) throw new Error("operator_limit_verification_failed");
+        const members = await rMembers.json() as Array<{user_id: string; role: string}>;
+        if (!Array.isArray(members)) throw new Error("operator_limit_verification_failed");
+        if (members.length >= effectivePlan.maxOperators) return privateJson({ error: "OPERATOR_LIMIT_REACHED", maxOperators: effectivePlan.maxOperators }, 403);
 
         const name = typeof body.name === "string" ? body.name.trim() : "";
         const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -531,30 +522,31 @@ export async function POST(request: NextRequest) {
           }, 400);
         }
 
-        // Create or resolve user in Supabase Auth
-        let userId = `op_${Date.now()}`;
+        const rUser = await fetch(url + "/auth/v1/admin/users", {
+          method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { name } }),
+        });
+        if (!rUser.ok) return privateJson({ error: "operator_account_creation_failed", message: "Não foi possível criar a conta do operador." }, rUser.status === 422 ? 409 : 503);
+        const uData = await rUser.json();
+        const userId = typeof uData.id === "string" ? uData.id : "";
+        if (!UUID.test(userId)) throw new Error("operator_account_creation_unconfirmed");
+        let membershipConfirmed = false;
         try {
-          const rUser = await fetch(url + "/auth/v1/admin/users", {
-            method: "POST",
-            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email,
-              password,
-              email_confirm: true,
-              user_metadata: { name, tenantId, role }
-            })
+          const rMember = await fetch(url + "/rest/v1/rpc/crm_add_operator_membership", {
+            method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ p_tenant: tenantId, p_user: userId, p_role: role, p_max: effectivePlan.maxOperators }),
           });
-          if (rUser.ok) {
-            const uData = await rUser.json();
-            if (uData?.id) userId = uData.id;
+          if (!rMember.ok) {
+            const detail = await rMember.text();
+            if (rMember.status === 409 || /operator_limit_reached/i.test(detail)) return privateJson({ error: "OPERATOR_LIMIT_REACHED" }, 403);
+            throw new Error("operator_membership_creation_failed");
           }
-        } catch {}
-
-        if (UUID.test(userId)) {
-          await fetch(url + "/rest/v1/crm_tenant_memberships", {
-            method: "POST",
-            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-            body: JSON.stringify({ tenant_id: tenantId, user_id: userId, role })
+          const result = await rMember.json();
+          if (result?.added !== true) throw new Error("operator_membership_creation_unconfirmed");
+          membershipConfirmed = true;
+        } finally {
+          if (!membershipConfirmed) await fetch(url + "/auth/v1/admin/users/" + userId, {
+            method: "DELETE", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
           }).catch(() => {});
         }
 
@@ -568,7 +560,7 @@ export async function POST(request: NextRequest) {
         };
         teamOperators.push(newOp);
         dataObj.teamOperators = teamOperators;
-        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");
 
         return privateJson({ saved: true, operator: newOp, teamOperators });
       }
@@ -583,41 +575,34 @@ export async function POST(request: NextRequest) {
             teamOperators[idx].name = body.name.trim();
           }
         }
-        if (UUID.test(operatorId)) {
-          await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}&user_id=eq.${operatorId}`, {
-            method: "PATCH",
-            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-            body: JSON.stringify({ role })
-          }).catch(() => {});
-        }
+        if (!UUID.test(operatorId)) return privateJson({ error: "invalid_operator" }, 400);
+        const rMember = await fetch(url + "/rest/v1/rpc/crm_update_operator_membership", {
+          method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_tenant: tenantId, p_user: operatorId, p_role: role }),
+        });
+        if (!rMember.ok) return privateJson({ error: "operator_update_denied" }, rMember.status === 404 ? 404 : 403);
+
         dataObj.teamOperators = teamOperators;
-        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");
         return privateJson({ saved: true, teamOperators });
       }
 
       if (action === "revoke_operator") {
         const operatorId = String(body.operatorId || "");
-        const activeOps = teamOperators.filter(o => o.status !== "revoked");
-        if (activeOps.length <= 1) {
-          return privateJson({
-            error: "cannot_revoke_last_operator",
-            message: "Não é permitido remover o único operador ativo do estabelecimento."
-          }, 400);
-        }
-
         const idx = teamOperators.findIndex(o => o.id === operatorId);
         if (idx >= 0) {
           teamOperators[idx].status = "revoked";
           teamOperators[idx].revokedAt = new Date().toISOString();
         }
-        if (UUID.test(operatorId)) {
-          await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}&user_id=eq.${operatorId}`, {
-            method: "DELETE",
-            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
-          }).catch(() => {});
-        }
+        if (!UUID.test(operatorId)) return privateJson({ error: "invalid_operator" }, 400);
+        const rMember = await fetch(url + "/rest/v1/rpc/crm_revoke_operator_membership", {
+          method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_tenant: tenantId, p_user: operatorId }),
+        });
+        if (!rMember.ok) return privateJson({ error: "operator_revoke_denied" }, rMember.status === 404 ? 404 : 403);
+
         dataObj.teamOperators = teamOperators;
-        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj);
+        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");
         return privateJson({ saved: true, revoked: true, teamOperators });
       }
     }

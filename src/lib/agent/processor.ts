@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { attendanceQuota, type AttendanceQuota, type AttendanceInput } from "@/lib/crm/attendance-quota";
 import type { AgentConfig } from "./config";
 import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
@@ -148,81 +149,6 @@ export function isWithinOperatingHours(
   }
 }
 
-/**
- * Persist durable quota counter in Supabase crm_tenant_settings and crm_ai_usage_events
- * so monthly/trial usage survives Redis restarts.
- */
-async function persistDurableQuotaUsage(
-  tenantId: string,
-  isTrial: boolean | undefined,
-  monthKey: string,
-  newCount: number,
-  phone: string
-): Promise<void> {
-  const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
-  const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!url || !key || !tenantId) return;
-
-  try {
-    const rGet = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store"
-    });
-    if (rGet.ok) {
-      const rows = (await rGet.json()) as Array<{ business_description: string }>;
-      let parsed: Record<string, any> = {};
-      if (rows[0]?.business_description?.startsWith("{")) {
-        try { parsed = JSON.parse(rows[0].business_description); } catch {}
-      }
-      if (!parsed.usageCounters || typeof parsed.usageCounters !== "object") {
-        parsed.usageCounters = { trialUsed: 0, monthly: {} };
-      }
-      if (isTrial) {
-        parsed.usageCounters.trialUsed = Math.max(Number(parsed.usageCounters.trialUsed || 0), newCount);
-        if (parsed.plan && typeof parsed.plan === "object") {
-          parsed.plan.trialQuotaUsed = parsed.usageCounters.trialUsed;
-        }
-      } else {
-        if (!parsed.usageCounters.monthly || typeof parsed.usageCounters.monthly !== "object") {
-          parsed.usageCounters.monthly = {};
-        }
-        parsed.usageCounters.monthly[monthKey] = Math.max(Number(parsed.usageCounters.monthly[monthKey] || 0), newCount);
-      }
-      parsed.usageCounters.lastUpdatedAt = new Date().toISOString();
-
-      await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-        method: "PATCH",
-        headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ business_description: JSON.stringify(parsed) })
-      });
-    }
-
-    // Record metering event in crm_ai_usage_events (idempotent by request_key per 24h window)
-    const dayBucket = new Date().toISOString().slice(0, 10);
-    await fetch(`${url}/rest/v1/crm_ai_usage_events`, {
-      method: "POST",
-      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenant_id: tenantId,
-        provider: "omniroute",
-        model: "ai_attendance_window_24h",
-        status: "success",
-        prompt_tokens: 1,
-        completion_tokens: 1,
-        estimated_cost_usd: 0,
-        request_key: `window:${tenantId}:${phone}:${dayBucket}:${newCount}`
-      })
-    }).catch(() => {});
-
-    // If trial reached 100, invalidate effective plan cache immediately so suspension activates
-    if (isTrial && newCount >= 100) {
-      await invalidateEffectivePlanCache(tenantId);
-    }
-  } catch (err) {
-    console.warn("[quota-durable-sync] Warning:", err);
-  }
-}
-
 async function getStoreAiContext(instanceName: string): Promise<{
   context?: StoreAiContext;
   isBlocked?: boolean;
@@ -231,18 +157,19 @@ async function getStoreAiContext(instanceName: string): Promise<{
   tenantId?: string;
   quotaLimit?: number;
   isTrial?: boolean;
+  quotaUsed?: number;
+  quotaPeriod?: string;
   allowAdvancedHours?: boolean;
 }> {
   try {
-    if (instanceName === "crmtest") return {};
     const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
     const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
-    if (!url || !key) return {};
+    if (!url || !key) throw new Error("store_context_not_configured");
 
     // 1. Resolve channel & tenant by instance_name
     const channel = await resolveChannelForInstance(instanceName).catch(() => null);
     const tenantId = channel?.tenant_id;
-    if (!tenantId) return {};
+    if (!tenantId) throw new Error("store_channel_unresolved");
 
     // Check if channel is paused (e.g. excess channel suspended on downgrade)
     if (channel?.status === "paused") {
@@ -254,8 +181,9 @@ async function getStoreAiContext(instanceName: string): Promise<{
       headers: { apikey: key, Authorization: `Bearer ${key}` },
       cache: "no-store"
     });
+    if (!rTenant.ok) throw new Error("store_status_unavailable");
     const tenants = (await rTenant.json()) as Array<{ name: string; status: string }>;
-    if (tenants?.[0]?.status === "suspended") {
+    if (tenants?.[0]?.status !== "active") {
       return { isBlocked: true, blockedReason: "store_suspended_or_overdue", channelFound: true, tenantId };
     }
 
@@ -301,12 +229,12 @@ async function getStoreAiContext(instanceName: string): Promise<{
 
     quotaLimit = effectivePlan.quotaLimit;
 
-    if (!effectivePlan.allowedFeatures.includes("ai_chat")) {
+    if (effectivePlan.featureStates?.ai_chat?.state !== "allowed") {
       return { isBlocked: true, blockedReason: "feature_locked", channelFound: true, tenantId };
     }
 
-    const allowAdvancedHours = effectivePlan.allowedFeatures.includes("business_hours");
-    const allowBasicHours = allowAdvancedHours || effectivePlan.allowedFeatures.includes("business_hours_basic");
+    const allowAdvancedHours = effectivePlan.featureStates?.business_hours?.state === "allowed";
+    const allowBasicHours = allowAdvancedHours || effectivePlan.featureStates?.business_hours_basic?.state === "allowed";
 
     const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -329,6 +257,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
                 cleanSchedule[k] = {
                   ...cleanSchedule[k],
                   hasBreak: false,
+                  intervals: [],
                   breakStart: undefined,
                   breakEnd: undefined
                 };
@@ -341,7 +270,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
             };
           }
           if (parsed.ai_settings?.primaryModel) primaryModel = parsed.ai_settings.primaryModel;
-          if (parsed.ai_settings?.fallbackModel && effectivePlan.allowedFeatures.includes("model_fallback")) {
+          if (parsed.ai_settings?.fallbackModel && effectivePlan.featureStates?.model_fallback?.state === "allowed") {
             fallbackModel = parsed.ai_settings.fallbackModel;
           }
         } catch {}
@@ -353,6 +282,8 @@ async function getStoreAiContext(instanceName: string): Promise<{
       tenantId,
       quotaLimit,
       isTrial: effectivePlan.isTrial,
+      quotaUsed: effectivePlan.quotaUsed || 0,
+      quotaPeriod: effectivePlan.quotaPeriod,
       allowAdvancedHours,
       context: {
         storeName: tenants?.[0]?.name,
@@ -361,11 +292,12 @@ async function getStoreAiContext(instanceName: string): Promise<{
         storeInfo,
         primaryModel,
         fallbackModel,
+      allowFallback: effectivePlan.featureStates?.model_fallback?.state === "allowed",
         operatingHours
       }
     };
   } catch {
-    return {};
+    return { isBlocked: true, blockedReason: "store_context_unavailable" };
   }
 }
 
@@ -374,6 +306,7 @@ export async function processWebhook(
   cfg: AgentConfig,
   deps: {
     redis?: Redis;
+    quota?: AttendanceQuota;
     generate?: typeof generateAnswer;
     send?: typeof sendText;
     maySend?: (incoming: Incoming) => Promise<boolean>;
@@ -386,16 +319,12 @@ export async function processWebhook(
   const incoming = parseIncoming(payload);
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
 
-  // Check store context & permission
-  const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
-  const { context = {}, isBlocked, blockedReason, tenantId, quotaLimit, isTrial, allowAdvancedHours = true } = storeCtx;
-  if (isBlocked) return { status: "disabled", reason: blockedReason || "store_suspended_or_overdue" };
-
-  const isAuthorizedInstance = Boolean(incoming.instance);
-  if (!isAuthorizedInstance) return { status: "ignored", reason: "wrong_instance" };
-
   if (!matchesAllowedNumber(incoming.number, cfg.allowedNumber)) return { status: "ignored", reason: "number_not_allowed" };
   if (!cfg.sendEnabled) return { status: "disabled", reason: "reply_switch_off" };
+  const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
+  const { context = {}, isBlocked, blockedReason, tenantId, quotaLimit, isTrial, quotaUsed = 0, quotaPeriod, allowAdvancedHours = false } = storeCtx;
+  if (isBlocked || !tenantId) return { status: "disabled", reason: blockedReason || "store_context_unavailable" };
+  const quotaStore = deps.quota ?? attendanceQuota();
 
   const redis = deps.redis ?? new Redis(cfg.redisUrl, { maxRetriesPerRequest: 1, connectTimeout: 3000, lazyConnect: true });
   const ownsClient = !deps.redis;
@@ -533,37 +462,14 @@ export async function processWebhook(
         return { status: "disabled", reason: "outside_operating_hours" };
       }
 
-      // 10. Pre-check Quota & 24h Session Window BEFORE generating AI response
-      const sessionKey = tenantId ? `crm:session:${tenantId}:${incoming.number}` : "";
-      const sessionMsgsKey = tenantId ? `crm:session_msgs:${tenantId}:${incoming.number}` : "";
+      // Redis is only a UI/loop projection. Admission and 24h accounting live in PostgreSQL.
+      const sessionKey = `crm:session:${tenantId}:${incoming.number}`;
+      const sessionMsgsKey = `crm:session_msgs:${tenantId}:${incoming.number}`;
       const monthKey = getBrazilMonthKey(now);
-      const quotaKey = tenantId
-        ? (isTrial ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${monthKey}`)
-        : "";
-      const maxLimit = quotaLimit || (isTrial ? 100 : 200);
-
-      if (tenantId) {
-        const hasActiveWindow = Boolean(await redis.exists(sessionKey));
-        const currentUsageRaw = await redis.get(quotaKey);
-        const currentUsage = parseInt(currentUsageRaw || "0", 10);
-
-        if (!hasActiveWindow && currentUsage >= maxLimit) {
-          console.warn(`[crm-quota-exceeded] Tenant ${tenantId} reached limit ${currentUsage}/${maxLimit}`);
-          return { status: "disabled", reason: "quota_exceeded" };
-        }
-
-        if (hasActiveWindow) {
-          const msgCountInWindow = parseInt((await redis.get(sessionMsgsKey)) || "0", 10);
-          if (msgCountInWindow >= MAX_AI_REPLIES_PER_24H_WINDOW) {
-            await (deps.handoff ?? handoffToHuman)(
-              incoming.instance,
-              incoming.number,
-              false,
-              "Limite de segurança de respostas automáticas na janela de 24h atingido"
-            );
-            return { status: "disabled", reason: "session_message_cap_handoff" };
-          }
-        }
+      const quotaKey = isTrial ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${monthKey}`;
+      if (await redis.exists(sessionKey) && Number(await redis.get(sessionMsgsKey) || 0) >= MAX_AI_REPLIES_PER_24H_WINDOW) {
+        await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Limite de segurança de respostas automáticas na janela de 24h atingido");
+        return { status: "disabled", reason: "session_message_cap_handoff" };
       }
 
       // 11. Attach conversation history to context
@@ -573,37 +479,36 @@ export async function processWebhook(
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       }
 
-      // 12. Generate answer with fallback support
-      const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
-
-      if (deps.maySend && !(await deps.maySend(incoming))) {
-        return { status: "disabled", reason: "tenant_or_conversation_blocked" };
-      }
-
-      // 13. Send response via Evolution API
-      await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
-
-      // 14. Commit 24h Window & Quota ONLY AFTER successful AI reply delivery!
-      // If send() failed above, it threw before reaching here -> 0 quota charged on send failure!
-      if (tenantId) {
-        const isNewSession = await redis.set(sessionKey, "1", "EX", 86400, "NX");
-        if (isNewSession === "OK") {
-          const newCount = await redis.incr(quotaKey);
-          await redis.expire(quotaKey, 86400 * 60);
-          await redis.set(sessionMsgsKey, "1", "EX", 86400);
-          await persistDurableQuotaUsage(tenantId, isTrial, monthKey, newCount, incoming.number);
-        } else {
-          const curMsgs = parseInt((await redis.get(sessionMsgsKey)) || "0", 10);
-          await redis.set(sessionMsgsKey, String(curMsgs + 1), "EX", 86400);
-        }
-      }
-
-      await markItemsDone();
+      if (!Number.isInteger(quotaLimit) || quotaLimit! < 0) return { status: "disabled", reason: "invalid_quota_limit" };
+      const input: AttendanceInput = { tenantId, phone: incoming.number, instance: incoming.instance, limit: quotaLimit!, floor: quotaUsed, floorPeriod: quotaPeriod, isTrial: Boolean(isTrial), now };
+      const reservation = await quotaStore.reserve(input);
+      if (!reservation.allowed || !reservation.token) return { status: "disabled", reason: reservation.reason || "quota_exceeded" };
+      let accepted = false;
       try {
-        await persistOutboundInSupabase(incoming.instance, incoming.number, answer);
-      } catch {}
-
-      return { status: "sent" };
+        const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
+        if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
+        await quotaStore.dispatch(input, reservation.token);
+        await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+        accepted = true;
+        await markItemsDone();
+        // Failed or uncertain commit keeps its durable reservation; never silently refund an accepted send.
+        const committed = await quotaStore.commit(input, reservation.token);
+        try {
+          await redis.set(quotaKey, String(committed.used));
+          if (committed.newWindow) {
+            await redis.set(sessionKey, "1", "EX", 86400);
+            await redis.set(sessionMsgsKey, "1", "EX", 86400);
+          } else {
+            await redis.set(sessionMsgsKey, String(Number(await redis.get(sessionMsgsKey) || 0) + 1), "EX", 86400);
+          }
+          await invalidateEffectivePlanCache(tenantId, deps.redis);
+        } catch { /* Projection failure never discards durable usage. */ }
+        await markItemsDone();
+        try { await persistOutboundInSupabase(incoming.instance, incoming.number, answer); } catch {}
+        return { status: "sent" };
+      } finally {
+        if (!accepted) await quotaStore.release(input, reservation.token);
+      }
     } finally {
       await redis.del(debounceKey);
     }

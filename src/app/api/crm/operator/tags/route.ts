@@ -1,6 +1,7 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
-import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { authorizeCrmTenant, ownsCrmResource, patchCrmConfig } from "@/lib/crm/tenant-access";
+import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 import { requireTenantFeature } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
@@ -17,17 +18,7 @@ const DEFAULT_TAGS = [
 ];
 
 async function verifyTenantAccess(request: NextRequest, tenantId: string): Promise<boolean> {
-  const [masterAuth, operator] = await Promise.all([
-    verifyMasterRequest(request),
-    verifyOperator()
-  ]);
-  if (masterAuth.authorized) return true;
-  if (!operator) return false;
-  const member = await supabaseRows<Array<{ role: string }>>(
-    "crm_tenant_memberships?select=role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-    operator.token
-  );
-  return member.length > 0;
+  return Boolean(await authorizeCrmTenant(request, tenantId));
 }
 
 export async function GET(request: NextRequest) {
@@ -90,7 +81,7 @@ export async function GET(request: NextRequest) {
     ]);
     const contactTags = rContactTags.ok ? ((await rContactTags.json()) as Array<{ contact_id: string; tag_id: string }>) : [];
     let conversationTags: Record<string, string> = {};
-    let tagHistory: Array<Record<string, any>> = [];
+    let tagHistory: Array<Record<string, unknown>> = [];
     if (rSettings.ok) {
       const sRows = (await rSettings.json()) as Array<{ business_description: string }>;
       if (sRows[0]?.business_description?.startsWith("{")) {
@@ -135,6 +126,10 @@ export async function POST(request: NextRequest) {
 
     const authorized = await verifyTenantAccess(request, tenantId);
     if (!authorized) return privateJson({ error: "not_authorized" }, 403);
+    for (const [table, id] of [["crm_contacts", contactId], ["crm_conversations", conversationId], ["crm_tags", tagId]] as const) {
+      if (id && !await ownsCrmResource(tenantId, table, id)) return privateJson({ error: "resource_not_found" }, 404);
+    }
+
 
     const guard = await requireTenantFeature(tenantId, "commercial_tags");
     if (!guard.allowed) {
@@ -178,14 +173,14 @@ export async function POST(request: NextRequest) {
       });
       if (rGet.ok) {
         const sRows = (await rGet.json()) as Array<{ business_description: string }>;
-        let parsed: Record<string, any> = {};
+        let parsed: StoredTenantConfig = {};
         if (sRows[0]?.business_description?.startsWith("{")) {
           try { parsed = JSON.parse(sRows[0].business_description); } catch {}
         }
         const convTags: Record<string, string> = parsed.conversationTags && typeof parsed.conversationTags === "object"
           ? parsed.conversationTags
           : {};
-        const tagHistory: Array<Record<string, any>> = Array.isArray(parsed.tagHistory)
+        const tagHistory: Array<Record<string, unknown>> = Array.isArray(parsed.tagHistory)
           ? parsed.tagHistory
           : [];
 
@@ -208,11 +203,7 @@ export async function POST(request: NextRequest) {
         parsed.conversationTags = convTags;
         parsed.tagHistory = tagHistory.slice(0, 200);
 
-        await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-          method: "PATCH",
-          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-          body: JSON.stringify({ business_description: JSON.stringify(parsed), updated_at: new Date().toISOString() })
-        });
+        await patchCrmConfig(tenantId, { conversationTags: convTags, tagHistory: tagHistory.slice(0, 200) });
       }
     }
 

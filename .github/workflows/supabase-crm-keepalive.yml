@@ -1,0 +1,44 @@
+name: CRM AI - Supabase keepalive
+
+on:
+  schedule:
+    - cron: "17 10,22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-ai-supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Consultar RPC de leitura no Supabase
+        env:
+          SUPABASE_PUBLISHABLE_KEY: "sb_publishable_gIWHZVByFBV26ubp02UxkQ_gE3y1uLd"
+        run: |
+          set -euo pipefail
+          url="https://mpteambmrlflllfqtkmq.supabase.co/rest/v1/rpc/nw_crm_keepalive"
+          for attempt in 1 2 3; do
+            response_file="$(mktemp)"
+            status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' --max-time 15 \
+              --request POST \
+              --header "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              --header 'Content-Type: application/json' \
+              --data '{}' \
+              "$url")" || status="000"
+            if [ "$status" = "200" ] && [ "$(cat "$response_file")" = "true" ]; then
+              rm -f "$response_file"
+              echo "CRM AI Supabase RPC: HTTP 200, resposta true."
+              exit 0
+            fi
+            rm -f "$response_file"
+            echo "Tentativa $attempt falhou (HTTP $status)."
+            sleep 5
+          done
+          echo "::error::Falha na consulta SQL de keepalive."
+          exit 1

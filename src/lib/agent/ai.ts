@@ -48,6 +48,7 @@ export type StoreAiContext = {
   history?: ChatHistoryMessage[];
   primaryModel?: string;
   fallbackModel?: string;
+  allowFallback?: boolean;
   operatingHours?: {
     enabled: boolean;
     timezone?: string;
@@ -255,7 +256,7 @@ export async function generateAnswer(
   const url = cfg.aiUrl.replace(/\/$/, "") + "/chat/completions";
   const primary = storeContext?.primaryModel || cfg.aiModel || "auto/best-chat";
   const fallback = storeContext?.fallbackModel;
-  const models = approvedModels(primary, fallback);
+  const models = storeContext?.allowFallback === true ? approvedModels(primary, fallback) : (/^[a-zA-Z0-9_.:/-]{1,140}$/.test(primary) ? [primary] : []);
   if (!models.length) throw new Error("Modelo de IA nao autorizado");
 
   const deadline = Date.now() + 25_000;

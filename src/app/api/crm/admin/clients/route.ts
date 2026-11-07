@@ -1,9 +1,14 @@
+import type { StoredTenantConfig, StoredTenantPlan } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { patchCrmConfig, TENANT_UUID } from "@/lib/crm/tenant-access";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import {
   syncTenantUsageLimits,
+  replaceTenantPlan,
+  enforceTenantOperatorLimit,
   getMasterPlans,
+  getEffectiveTenantPlan,
   checkTrialEligibility,
   recordTrialRegistration,
   convertTrialToPaidPlan,
@@ -44,7 +49,7 @@ export async function GET(request: NextRequest) {
     const tenants = (await rTenants.json()) as Array<{ id: string; name: string; status: string; created_at: string }>;
 
     // 2. Fetch memberships
-    const rMemb = await fetch(url + "/rest/v1/crm_tenant_memberships?select=tenant_id,user_id,role,created_at", {
+    const rMemb = await fetch(url + "/rest/v1/crm_tenant_memberships?is_active=eq.true&select=tenant_id,user_id,role,created_at", {
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
       cache: "no-store"
     });
@@ -56,7 +61,7 @@ export async function GET(request: NextRequest) {
       cache: "no-store"
     });
     const usersData = await rUsers.json();
-    const users = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, any> }>;
+    const users = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, unknown> }>;
     const userMap = new Map(users.map(u => [u.id, u]));
 
     // 4. Fetch tenant settings
@@ -80,9 +85,8 @@ export async function GET(request: NextRequest) {
       channelsByTenant.set(ch.tenant_id, list);
     }
 
-    const now = new Date();
     const clients = [];
-    const allUpgradeRequests: Array<Record<string, any>> = [];
+    const allUpgradeRequests: Array<Record<string, unknown>> = [];
 
     for (const t of tenants) {
       const tenantMemberships = memberships.filter(m => m.tenant_id === t.id);
@@ -93,12 +97,12 @@ export async function GET(request: NextRequest) {
       const tenantChannels = channelsByTenant.get(t.id) || [];
       const primaryChannel = tenantChannels.find(c => c.status === "connected") || tenantChannels[0];
 
-      const isNovaesOwn = t.name.toLowerCase().includes("novaesweb");
+      const isNovaesOwn = process.env.CRM_MASTER_OWN_TENANT_ID ? t.id === process.env.CRM_MASTER_OWN_TENANT_ID.trim() : t.name.trim().toLowerCase() === "novaesweb";
       const defaultCatalogPlan = isNovaesOwn
         ? (masterPlans.find(p => p.id === "crm-premium") || DEFAULT_PLANS[2])
         : (masterPlans.find(p => p.id === "crm-start") || DEFAULT_PLANS[0]);
 
-      let plan: Record<string, any> = {
+      let plan: StoredTenantPlan = {
         planId: defaultCatalogPlan.id,
         name: defaultCatalogPlan.name,
         price: defaultCatalogPlan.price,
@@ -113,9 +117,8 @@ export async function GET(request: NextRequest) {
       };
 
       let suspension: { isSuspended?: boolean; publicReason?: string; internalNote?: string; updatedAt?: string } = {};
-      let paymentHistory: Array<Record<string, any>> = [];
-      let upgradeRequests: Array<Record<string, any>> = [];
-      let teamOperators: Array<Record<string, any>> = [];
+      let paymentHistory: Array<Record<string, unknown>> = [];
+      let upgradeRequests: Array<Record<string, unknown>> = [];
 
       const rawDesc = settingsMap.get(t.id) || "";
       try {
@@ -133,86 +136,21 @@ export async function GET(request: NextRequest) {
           if (Array.isArray(parsed.upgradeRequests)) {
             upgradeRequests = parsed.upgradeRequests;
           }
-          if (Array.isArray(parsed.teamOperators)) {
-            teamOperators = parsed.teamOperators;
-          }
         }
       } catch {}
 
-      // Normalize legacy plan names/prices ("Plano IA Mensal" / "149,00" / 500) so old bugs never resurface
-      const matchedCatalog = masterPlans.find(
-        p => p.id === plan.planId || p.name.toLowerCase() === String(plan.name || "").toLowerCase()
-      ) || defaultCatalogPlan;
-
-      if (plan.name === "Plano IA Mensal" || !plan.name) {
-        plan.planId = matchedCatalog.id;
-        plan.name = matchedCatalog.name;
-      }
-      if (plan.price === "149,00" && !plan.customPriceApproved) {
-        plan.price = matchedCatalog.price;
-      }
-      if ((plan.quotaLimit === 500 || !plan.quotaLimit) && !plan.customQuotaOverride) {
-        plan.quotaLimit = plan.isTrial ? 100 : matchedCatalog.quotaLimit;
-      }
-      plan.maxOperators = plan.isTrial ? 1 : matchedCatalog.maxOperators;
-      plan.maxWhatsappConnections = plan.isTrial ? 1 : matchedCatalog.maxWhatsappConnections;
-
-      // Trial handling & lifecycle check
-      if (plan.isTrial || plan.planId === "crm-trial" || plan.status === "trial") {
-        plan.isTrial = true;
-        plan.planId = "crm-trial";
-        plan.name = TRIAL_PLAN.name;
-        plan.price = "0,00";
-        plan.quotaLimit = 100;
-        plan.maxOperators = 1;
-        plan.maxWhatsappConnections = 1;
-
-        const trialExpires = plan.trialExpiresAt
-          ? new Date(plan.trialExpiresAt)
-          : new Date(new Date(t.created_at).getTime() + 7 * 86400000);
-        plan.trialExpiresAt = trialExpires.toISOString();
-        const diffMs = trialExpires.getTime() - now.getTime();
-        plan.trialDaysLeft = Math.max(0, Math.ceil(diffMs / 86400000));
-
-        if (now >= trialExpires) {
-          plan.trialStatus = "expired";
-          if (t.status === "active") {
-            t.status = "suspended";
-            try {
-              await fetch(url + `/rest/v1/crm_tenants?id=eq.${t.id}`, {
-                method: "PATCH",
-                headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "suspended" })
-              });
-            } catch {}
-          }
-        } else if (plan.trialDaysLeft <= 3) {
-          plan.trialStatus = "expiring_soon";
-        } else {
-          plan.trialStatus = "active";
-        }
-      } else {
-        const due = new Date(plan.dueDate);
-        if (plan.autoBlock && plan.status !== "paid" && due < now) {
-          plan.isOverdue = true;
-          if (t.status === "active") {
-            t.status = "suspended";
-            try {
-              await fetch(url + `/rest/v1/crm_tenants?id=eq.${t.id}`, {
-                method: "PATCH",
-                headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "suspended" })
-              });
-            } catch {}
-          }
-        }
+      try {
+        const effective = await getEffectiveTenantPlan(t.id);
+        plan = { ...plan, ...effective, name:effective.planName };
+      } catch {
+        plan = { ...plan, name:"Configuração indisponível",quotaLimit:0,quotaUsed:0,maxOperators:1,maxWhatsappConnections:1,isSuspended:true,suspensionReason:"plan_verification_unavailable" };
       }
 
       const whatsappSlots = buildTenantWhatsappSlots(t.name, tenantChannels, {
         maxWhatsappConnections: plan.maxWhatsappConnections || 1,
-        isSuspended: t.status === "suspended"
+        isSuspended: plan.isSuspended || t.status !== "active"
       });
-      const connectedWhatsappCount = tenantChannels.filter(c => c.status === "connected" || c.status === "open").length;
+      const connectedWhatsappCount = whatsappSlots.filter(c => c.unlocked && c.status === "connected").length;
 
       for (const req of upgradeRequests) {
         allUpgradeRequests.push({
@@ -223,16 +161,14 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      const activeOperatorsCount = Math.max(
-        tenantMemberships.length,
-        teamOperators.filter(op => op.status !== "revoked").length || 1
-      );
+      const activeOperatorsCount = tenantMemberships.length;
 
       clients.push({
         id: t.id,
         name: t.name,
         status: t.status,
         isNovaesOwn,
+        isMasterOwnTenant:isNovaesOwn,
         email,
         userId: primaryMemb?.user_id ?? null,
         created_at: t.created_at,
@@ -349,7 +285,7 @@ export async function POST(request: NextRequest) {
     });
 
     // 4. Save initial Plan settings strictly derived from the Official Plan Catalog
-    let planMeta: Record<string, any>;
+    let planMeta: StoredTenantConfig;
     let effectiveLimit: number;
     let finalPlanName: string;
 
@@ -509,16 +445,17 @@ export async function PATCH(request: NextRequest) {
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     const action = typeof body.action === "string" ? body.action : "";
 
-    if (!tenantId) return privateJson({ error: "missing_tenant_id" }, 400);
+    if (!TENANT_UUID.test(tenantId)) return privateJson({ error: "invalid_tenant_id" }, 400);
 
     // Helper to load current business_description JSON
-    const loadSettingsObj = async (): Promise<Record<string, any>> => {
+    const loadSettingsObj = async (): Promise<StoredTenantConfig> => {
       const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       });
+      if (!rGet.ok) throw new Error("tenant_settings_lookup_failed");
       const current = (await rGet.json()) as Array<{ business_description: string }>;
-      let dataObj: Record<string, any> = { plan: {} };
+      let dataObj: StoredTenantConfig = { plan: {} };
       try {
         if (current[0]?.business_description?.startsWith("{")) {
           dataObj = JSON.parse(current[0].business_description);
@@ -527,16 +464,16 @@ export async function PATCH(request: NextRequest) {
       return dataObj;
     };
 
-    const saveSettingsObj = async (dataObj: Record<string, any>, extraFields: Record<string, any> = {}) => {
-      await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-        method: "PATCH",
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          business_description: JSON.stringify(dataObj),
-          updated_at: new Date().toISOString(),
-          ...extraFields
-        })
-      });
+    const saveSettingsObj = async (dataObj: StoredTenantConfig, extraFields: Record<string, unknown> = {}, fields: string[] = ["plan"]) => {
+      if (fields.includes("plan")) await replaceTenantPlan(tenantId, dataObj.plan!, url, serviceKey);
+      const patch = Object.fromEntries(fields.filter(k => k !== "plan").map(k => [k, dataObj[k]]));
+      if (Object.keys(patch).length) await patchCrmConfig(tenantId, patch);
+      if (Object.keys(extraFields).length) {
+        const r = await fetch(url + "/rest/v1/crm_tenant_settings?tenant_id=eq." + tenantId, {
+          method: "PATCH", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" }, body: JSON.stringify(extraFields)
+        });
+        if (!r.ok) throw new Error("tenant_flags_write_failed");
+      }
       await invalidateEffectivePlanCache(tenantId);
     };
 
@@ -561,7 +498,7 @@ export async function PATCH(request: NextRequest) {
         dataObj.plan.internalSuspensionNote = internalNote;
       }
 
-      await saveSettingsObj(dataObj, { ai_sending_enabled: !suspend });
+      await saveSettingsObj(dataObj, { ai_sending_enabled: !suspend }, ["suspension"]);
 
       const newStatus = suspend ? "suspended" : "active";
       await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
@@ -593,13 +530,13 @@ export async function PATCH(request: NextRequest) {
     if (action === "set_payment_status") {
       const newPaymentStatus = body.paymentStatus === "paid" ? "paid" : "pending";
       const dataObj = await loadSettingsObj();
-      const planObj = (dataObj.plan as Record<string, any>) ?? {};
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
       const dueDate = typeof planObj.dueDate === "string" && planObj.dueDate
         ? planObj.dueDate
         : new Date().toISOString().slice(0, 10);
       const billingCycleKey = `${tenantId}:${dueDate}:${planObj.planId || "plan"}`;
 
-      const paymentHistory: Array<Record<string, any>> = Array.isArray(dataObj.paymentHistory)
+      const paymentHistory: Array<Record<string, unknown>> = Array.isArray(dataObj.paymentHistory)
         ? dataObj.paymentHistory
         : [];
 
@@ -640,7 +577,7 @@ export async function PATCH(request: NextRequest) {
       dataObj.plan = planObj;
       dataObj.paymentHistory = paymentHistory.slice(0, 50);
 
-      await saveSettingsObj(dataObj, { ai_sending_enabled: newPaymentStatus === "paid" });
+      await saveSettingsObj(dataObj, { ai_sending_enabled: newPaymentStatus === "paid" }, ["plan", "paymentHistory"]);
 
       if (newPaymentStatus === "paid") {
         await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
@@ -691,7 +628,7 @@ export async function PATCH(request: NextRequest) {
     // 4. Action: Update Plan details (synchronizing contractedPlan + WhatsApp slot limits on upgrade/downgrade)
     if (action === "update_plan") {
       const dataObj = await loadSettingsObj();
-      const planObj = (dataObj.plan as Record<string, any>) ?? {};
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
       const masterPlans = await getMasterPlans();
 
       const requestedId = typeof body.planId === "string" ? body.planId : "";
@@ -730,7 +667,8 @@ export async function PATCH(request: NextRequest) {
       dataObj.plan = planObj;
 
       await saveSettingsObj(dataObj);
-      await syncTenantUsageLimits(tenantId, matchedPlan.quotaLimit, url, serviceKey);
+      await syncTenantUsageLimits(tenantId, Number(dataObj.plan?.customQuotaOverride ?? matchedPlan.quotaLimit), url, serviceKey);
+      await enforceTenantOperatorLimit(tenantId, matchedPlan.maxOperators, url, serviceKey);
 
       // Enforce WhatsApp slot limits (suspending excess channels on downgrade or restoring on upgrade)
       const channelSync = await syncWhatsappChannelsForPlanLimit(
@@ -769,80 +707,29 @@ export async function PATCH(request: NextRequest) {
     // 5. Action: Approve or Reject Upgrade Request from Client
     if (action === "resolve_upgrade_request") {
       const requestId = typeof body.requestId === "string" ? body.requestId : "";
-      const decision = body.decision === "approved" ? "approved" : "rejected";
-      const targetPlanId = typeof body.targetPlanId === "string" ? body.targetPlanId : "crm-business";
-      const adminNote = typeof body.adminNote === "string" ? body.adminNote.trim() : "";
-
+      if (!requestId || !["approved", "rejected"].includes(body.decision)) return privateJson({error:"invalid_upgrade_decision"},400);
+      const decision = body.decision as "approved" | "rejected";
       const dataObj = await loadSettingsObj();
-      const requests: Array<Record<string, any>> = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
-      const reqIndex = requests.findIndex(r => r.id === requestId || r.status === "pending");
-
-      if (reqIndex >= 0) {
-        requests[reqIndex].status = decision;
-        requests[reqIndex].resolvedAt = new Date().toISOString();
-        requests[reqIndex].resolvedBy = auth.actor || "master_admin";
-        requests[reqIndex].adminNote = adminNote;
-      }
-      dataObj.upgradeRequests = requests;
-
-      let channelSync = { pausedInstances: [] as string[], restoredInstances: [] as string[] };
-      const masterPlans = await getMasterPlans();
-      const matchedPlan = masterPlans.find(p => p.id === targetPlanId) || masterPlans[1] || DEFAULT_PLANS[1];
-
-      if (decision === "approved") {
-        const planObj = (dataObj.plan as Record<string, any>) ?? {};
-        planObj.planId = matchedPlan.id;
-        planObj.name = matchedPlan.name;
-        planObj.price = matchedPlan.price;
-        planObj.quotaLimit = matchedPlan.quotaLimit;
-        planObj.maxOperators = matchedPlan.maxOperators;
-        planObj.maxWhatsappConnections = matchedPlan.maxWhatsappConnections;
-        planObj.isTrial = false;
-        planObj.status = "paid";
-        planObj.contractedPlan = {
-          quotaLimit: matchedPlan.quotaLimit,
-          features: matchedPlan.features,
-          price: matchedPlan.price,
-          maxOperators: matchedPlan.maxOperators,
-          maxWhatsappConnections: matchedPlan.maxWhatsappConnections,
-          version: matchedPlan.version,
-          contractedAt: new Date().toISOString()
-        };
-        delete planObj.pendingPlanUpdate;
-        dataObj.plan = planObj;
-
-        await saveSettingsObj(dataObj, { ai_sending_enabled: true });
-        await syncTenantUsageLimits(tenantId, matchedPlan.quotaLimit, url, serviceKey);
-        channelSync = await syncWhatsappChannelsForPlanLimit(tenantId, matchedPlan.maxWhatsappConnections, url, serviceKey);
-
-        await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
-          method: "PATCH",
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "active" })
-        });
-      } else {
-        await saveSettingsObj(dataObj);
-      }
-
-      await recordPlanAudit({
-        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        actor: auth.actor || "master_admin",
-        planId: matchedPlan.id,
-        planName: matchedPlan.name,
-        action: decision === "approved" ? "upgrade_approved" : "upgrade_rejected",
-        vigencia: "immediate",
-        affectedTenantsCount: 1,
-        affectedTenants: [tenantId],
-        timestamp: new Date().toISOString()
+      const requests = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
+      const target = requests.find((r: Record<string,unknown>) => r.id === requestId);
+      if (!target || target.status !== "pending") return privateJson({error:"upgrade_request_not_pending"},409);
+      const catalog = await getMasterPlans();
+      const plan = catalog.find(p => p.id === target.targetPlanId && p.status === "active");
+      if (!plan) return privateJson({error:"upgrade_plan_unavailable"},409);
+      const planObj: StoredTenantPlan = { ...(dataObj.plan || {}), planId:plan.id,name:plan.name,price:plan.price,
+        quotaLimit:plan.quotaLimit,maxOperators:plan.maxOperators,maxWhatsappConnections:plan.maxWhatsappConnections,
+        isTrial:false,status:"paid",contractedPlan:{quotaLimit:plan.quotaLimit,features:plan.features,price:plan.price,
+        maxOperators:plan.maxOperators,maxWhatsappConnections:plan.maxWhatsappConnections,version:plan.version,contractedAt:new Date().toISOString()} };
+      delete planObj.pendingPlanUpdate;
+      const resolved = await fetch(url + "/rest/v1/rpc/crm_resolve_upgrade", {
+        method:"POST",headers:{apikey:serviceKey,Authorization:"Bearer "+serviceKey,"Content-Type":"application/json"},
+        body:JSON.stringify({p_tenant:tenantId,p_request:requestId,p_decision:decision,p_plan:planObj,p_actor:auth.actor,p_admin_note:typeof body.adminNote==="string"?body.adminNote:""})
       });
-
-      return privateJson({
-        updated: true,
-        decision,
-        plan: dataObj.plan,
-        upgradeRequests: dataObj.upgradeRequests,
-        channelSync
-      });
+      if(!resolved.ok)return privateJson({error:"upgrade_resolution_failed"},resolved.status===409?409:503);
+      const saved = await resolved.json();
+      if(decision === "approved")await syncTenantUsageLimits(tenantId,Number(planObj.customQuotaOverride ?? plan.quotaLimit),url,serviceKey);
+      await invalidateEffectivePlanCache(tenantId);
+      return privateJson({updated:true,decision,plan:saved.plan,upgradeRequests:saved.upgradeRequests});
     }
 
     // 6. Action: Convert Trial to Paid Commercial Plan

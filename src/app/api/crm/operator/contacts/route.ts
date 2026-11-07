@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { requireTenantFeature } from "@/lib/crm/plans";
+import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -16,18 +18,13 @@ export async function POST(request:NextRequest) {
   const name=typeof input.name==="string"?input.name.trim().slice(0,160):null;
   if (!UUID.test(tenant) || phone.length<10 || phone.length>15) return privateJson({error:"invalid_input"},400);
   try {
-    const operator=await verifyOperator();
-    if (!operator) return privateJson({error:"unauthorized"},401);
-    const {url,key}=supabaseSettings();
+    const access=await authorizeCrmTenant(request,tenant,["owner","admin","agent"]);
+    if (!access) return privateJson({error:"forbidden"},403);
+    const featureGuard = await requireTenantFeature(tenant, "human_handoff");
+    if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
+    const {url}=supabaseSettings();
     const serviceKey=process.env.CRM_SUPABASE_SERVICE_ROLE_KEY??"";
     if (serviceKey.length<30) return privateJson({error:"crm_not_ready"},503);
-    const checkRes=await fetch(url+"/rest/v1/crm_tenant_memberships?select=role&tenant_id=eq."+tenant+"&user_id=eq."+operator.id+"&limit=1",{
-      headers:{apikey:key,Authorization:"Bearer "+operator.token},cache:"no-store"
-    });
-    if (!checkRes.ok) return privateJson({error:"permission_check_failed"},503);
-    const membership=await checkRes.json() as {role?:string}[];
-    if (!membership.length || !["owner","admin","agent"].includes(membership[0]?.role??""))
-      return privateJson({error:"forbidden"},403);
     const rpc=await fetch(url+"/rest/v1/rpc/crm_create_contact",{
       method:"POST",headers:{apikey:serviceKey,Authorization:"Bearer "+serviceKey,"Content-Type":"application/json"},
       body:JSON.stringify({p_tenant:tenant,p_phone:phone,p_name:name}),cache:"no-store"

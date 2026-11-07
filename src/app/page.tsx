@@ -25,6 +25,10 @@ export default function CentralLoginPage() {
   useEffect(() => {
     let active = true;
     async function checkExistingSession() {
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("error")) {
+        if (active) setCheckingSession(false);
+        return;
+      }
       try {
         const res = await fetch("/api/crm/auth/session", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {
@@ -90,7 +94,13 @@ export default function CentralLoginPage() {
     setForgotSuccess("");
 
     try {
-      // In production, triggers Supabase password recovery
+      const response = await fetch("/api/crm/auth/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ email: forgotEmail.trim() })
+      });
+      if (!response.ok) throw new Error("recovery_unavailable");
       setForgotSuccess("Se o e-mail estiver cadastrado, as instruções para redefinição de senha foram enviadas para sua caixa de entrada.");
     } catch {
       setForgotError("Não foi possível solicitar a redefinição de senha.");
@@ -533,6 +543,7 @@ export default function CentralLoginPage() {
                 <input
                   type="email"
                   placeholder="E-mail do administrador"
+                  aria-label="E-mail"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   style={{
@@ -573,6 +584,7 @@ export default function CentralLoginPage() {
                 <input
                   type={showPassword ? "text" : "password"}
                   placeholder="Senha"
+                  aria-label="Senha"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   required
@@ -809,6 +821,7 @@ export default function CentralLoginPage() {
               <input
                 type="email"
                 placeholder="Seu e-mail cadastrado"
+                aria-label="E-mail para recuperação"
                 value={forgotEmail}
                 onChange={e => setForgotEmail(e.target.value)}
                 required

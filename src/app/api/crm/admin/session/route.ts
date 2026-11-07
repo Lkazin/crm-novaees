@@ -52,15 +52,8 @@ export async function POST(request: NextRequest) {
     const masterPassword = process.env.CRM_MASTER_PASSWORD?.trim() || "";
     const adminToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "";
 
-    // Robust timing-safe evaluation supporting configured env vars and master emergency keys
-    const isMasterPasswordMatch = Boolean(
-      (masterPassword && timingSafeMatch(candidate, masterPassword)) ||
-      (masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword.slice(0, -1))) ||
-      (!masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword + ".")) ||
-      timingSafeMatch(candidate, "Noah2027.") ||
-      timingSafeMatch(candidate, "Noah2027") ||
-      timingSafeMatch(candidate, "NovaesWeb@2026Admin")
-    );
+    // Only the configured secret authenticates a Master session.
+    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(candidate, masterPassword));
 
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(candidate, adminToken));
 
@@ -98,6 +91,14 @@ export async function POST(request: NextRequest) {
       sameSite: "lax",
       path: "/",
       maxAge
+    });
+
+    response.cookies.set("nw_crm_session", "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isSecure,
+      path: "/",
+      maxAge: 0
     });
 
     return response;

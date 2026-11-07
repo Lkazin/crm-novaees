@@ -16,7 +16,8 @@ try {
 
 # 2. Testar Inferencia direta no OmniRoute via auto/best-chat
 Write-Host "`n[2/3] Testando Inferencia Direta no OmniRoute (auto/best-chat)..." -ForegroundColor Yellow
-$apiKey = "sk-9208b8c0f2bfd069-e12668-5717db14"
+$apiKey = $env:AI_API_KEY
+if ([string]::IsNullOrWhiteSpace($apiKey)) { throw "Configure AI_API_KEY no ambiente privado antes de executar este teste." }
 $bodyChat = @{
     model = "auto/best-chat"
     messages = @(
@@ -40,7 +41,8 @@ try {
 
 # 3. Testar via CRM AI App (Porta 3040)
 Write-Host "`n[3/3] Testando Chamada via CRM AI App (/api/ai/test)..." -ForegroundColor Yellow
-$crmToken = "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf"
+$crmToken = $env:CRM_LAB_ADMIN_TOKEN
+if ([string]::IsNullOrWhiteSpace($crmToken)) { throw "Configure CRM_LAB_ADMIN_TOKEN no ambiente privado antes de executar este teste." }
 $bodyCrm = @{
     question = "Quais sao os servicos de criacao de sites que a NovaesWeb oferece?"
 } | ConvertTo-Json

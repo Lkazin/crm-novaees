@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import Redis from "ioredis";
-import { privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { getCrmAccess, selectCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
+import { privateJson, supabaseRows } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
@@ -9,8 +10,6 @@ import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Membership = { tenant_id: string; role: string };
-type Tenant = { id: string; name: string; status: string };
 type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
 type Conversation = {
   id: string;
@@ -30,7 +29,6 @@ type Message = { id: string; conversation_id: string; direction: string; sender_
 type HandoffRow = { id: string; conversation_id: string; requested_by: string; status: string; reason: string | null; created_at: string };
 type ChannelRow = { id: string; instance_name: string | null; status: string };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PRIORITY_RANK: Record<"low" | "normal" | "high" | "urgent", number> = {
   urgent: 4,
@@ -62,40 +60,16 @@ async function serviceQuery<T>(url: string, serviceKey: string, pathAndQuery: st
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await verifyOperator();
-    if (!user) return privateJson({ error: "unauthorized" }, 401);
-
+    const access = await getCrmAccess(request);
+    if (!access) return privateJson({ error: "unauthorized" }, 401);
     const { url, serviceKey } = getServiceConfig();
-
-    const memberships = await serviceQuery<Membership[]>(
-      url,
-      serviceKey,
-      "crm_tenant_memberships?select=tenant_id,role&user_id=eq." + encodeURIComponent(user.id),
-      user.token
-    );
-    if (!memberships.length) {
-      return privateJson({ tenants: [], selectedTenant: null, contacts: [], conversations: [], messages: [], note: "no_membership" });
-    }
-
-    const allowed = memberships.map(m => m.tenant_id).filter(x => UUID.test(x));
-    const tenants = await serviceQuery<Tenant[]>(
-      url,
-      serviceKey,
-      "crm_tenants?select=id,name,status&id=in.(" + allowed.join(",") + ")&order=name.asc",
-      user.token
-    );
-
+    const tenants = access.tenants;
+    const user = { token: access.token };
     const requestedTenant = request.nextUrl.searchParams.get("tenant");
-    const selected = requestedTenant && UUID.test(requestedTenant)
-      ? requestedTenant
-      : tenants[0]?.id ?? null;
-
-    if (!selected) {
-      return privateJson({ tenants, selectedTenant: null, contacts: [], conversations: [], messages: [] });
-    }
-    if (!UUID.test(selected) || !allowed.includes(selected)) {
-      return privateJson({ error: "tenant_forbidden" }, 403);
-    }
+    const selectedTenant = selectCrmTenant(access, requestedTenant);
+    if (requestedTenant && !selectedTenant) return privateJson({ error: "tenant_forbidden" }, 403);
+    const selected = selectedTenant?.id ?? null;
+    if (!selected) return privateJson({ tenants, selectedTenant: null, contacts: [], conversations: [], messages: [] });
 
     // Check effective plan & auto-block for the selected tenant
     let isSuspended = false;
@@ -155,6 +129,8 @@ export async function GET(request: NextRequest) {
     let quotaUsed = effectivePlan.isTrial
       ? Number(tenantSettings.trialQuotaUsed || 0)
       : Number(quotaHistory[monthKey] || 0);
+
+    quotaUsed = Math.max(quotaUsed, effectivePlan.quotaUsed || 0);
 
     // Fetch escalation info, tags, priorities & quota usage from Redis
     const escalations: Record<string, { category: string; reason: string; text?: string; timestamp?: string; sentiment?: string }> = {};
@@ -248,16 +224,16 @@ export async function GET(request: NextRequest) {
         ...c,
         mode: derivedMode,
         status: derivedStatus,
-        priority,
-        priorityRank: PRIORITY_RANK[priority],
-        tag,
+        priority: crmFeatureAllowed(effectivePlan, "conversation_priority") ? priority : "normal",
+        priorityRank: crmFeatureAllowed(effectivePlan, "conversation_priority") ? PRIORITY_RANK[priority] : 2,
+        tag: crmFeatureAllowed(effectivePlan, "commercial_tags") ? tag : null,
         channelSlot,
-        satisfaction,
+        satisfaction: crmFeatureAllowed(effectivePlan, "satisfaction_survey") ? satisfaction : null,
       };
     });
 
     // Sort active conversations by priority first (if priority feature is active), then by last_message_at desc
-    const sortByPriority = effectivePlan.allowedFeatures.includes("conversation_priority");
+    const sortByPriority = crmFeatureAllowed(effectivePlan, "conversation_priority");
     const conversations = [...mappedConversations].sort((a, b) => {
       if (sortByPriority && a.status !== "closed" && b.status !== "closed") {
         const rankDiff = (b.priorityRank || 2) - (a.priorityRank || 2);
@@ -286,8 +262,8 @@ export async function GET(request: NextRequest) {
       conversations,
       messages,
       escalations,
-      tags,
-      contactTags
+      tags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? tags : [],
+      contactTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? contactTags : []
     });
   } catch {
     return privateJson({ error: "crm_data_unavailable" }, 503);

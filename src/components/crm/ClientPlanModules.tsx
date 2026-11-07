@@ -6,18 +6,11 @@ import {
 } from "lucide-react";
 
 export type WhatsappSlotItem = {
-  slot: number;
-  label: string;
-  instanceName: string;
-  unlockedByPlan: boolean;
-  lockedByPlan: boolean;
-  requiredPlanName: "CRM Start" | "CRM Business" | "CRM Premium";
-  status: "connected" | "connecting" | "disconnected" | "paused_by_plan" | "locked";
-  connected: boolean;
-  phoneNumber: string | null;
-  profileName: string | null;
-  channelId: string | null;
-  pausedByDowngrade: boolean;
+  slot: number; label: string; instanceName: string;
+  unlocked: boolean; minPlanId: string; minPlanName: string;
+  status: "connected" | "connecting" | "disconnected" | "paused" | "locked";
+  phoneNumber?: string | null; profileName?: string | null;
+  channelId: string | null; pausedByDowngrade: boolean; lockedReason?: string;
 };
 
 export type QuickReplyItem = {
@@ -48,65 +41,36 @@ export type SatisfactionSurveyItem = {
 };
 
 export type FeatureStateItem = {
-  featureId: string;
-  label: string;
-  description: string;
-  minPlan: "start" | "business" | "premium";
-  minPlanLabel: "CRM Start" | "CRM Business" | "CRM Premium";
+  id: string; name: string; description: string; category?: string;
+  minPlanId: string; minPlanName: string;
   state: "allowed" | "locked_by_plan" | "maintenance" | "suspended";
   reason?: string;
 };
 
+// Matches the published operator/features response. No invented UI-only envelope.
 export type ReportsPayload = {
-  tier: string;
-  basicIndicators: {
-    totalContacts: number;
-    totalConversations: number;
-    openConversations: number;
-    closedConversations: number;
-    aiConversations: number;
-    humanConversations: number;
-    totalMessages: number;
-    inboundMessages: number;
-    outboundMessages: number;
-    aiRepliesCount: number;
-    humanRepliesCount: number;
-    quotaUsed: number;
-    quotaLimit: number;
-  };
-  commercialIndicators: {
-    locked: boolean;
-    requiredPlan: string;
-    data: {
-      totalTaggedContacts: number;
-      tagBreakdown: Array<{ id: string; name: string; color: string; count: number }>;
-      priorityBreakdown: { urgent: number; high: number; normal: number; low: number };
-      handoffsTotal: number;
-      handoffsPending: number;
-      conversionRateEstimate: number;
-    } | null;
-  };
-  advancedReports: {
-    locked: boolean;
-    requiredPlan: string;
-    data: {
-      satisfactionAnalytics: {
-        totalResponses: number;
-        averageRating: number;
-        csatPercent: number;
-        distribution: Array<{ rating: number; count: number }>;
-        recentSurveys: SatisfactionSurveyItem[];
-      };
-      operatorIndicators: Array<{
-        operatorId: string;
-        name: string;
-        role: string;
-        assignedConversations: number;
-        resolvedConversations: number;
-      }>;
-    } | null;
-  };
+  basicIndicators: {quotaUsed:number;quotaLimit:number;quotaPercent:number;totalConversations:number;activeConversations:number;aiConversations:number;humanConversations:number;totalContacts:number} | null;
+  commercialIndicators: {tagBreakdown:Record<string,number>;priorityBreakdown:Record<string,number>;handoffCount:number;handoffRate:number;totalSurveys:number;avgSatisfaction:number} | null;
+  premiumAnalytics: {starDistribution:Record<string,number>;csatPercent:number;aiAvgRating:number|null;humanAvgRating:number|null;detractors:SatisfactionSurveyItem[];operatorMetrics:Array<{operatorId:string;name:string;role:string;conversationsHandled:number;surveysCount:number;avgRating:number|null}>;channelsSummary:Array<{id:string;instanceName:string;status:string;conversationsCount:number}>} | null;
 };
+
+export function featureAvailable(states: Record<string, FeatureStateItem>, id: string, suspended = false): boolean {
+  return !suspended && states[id]?.state === "allowed";
+}
+
+export function commercialPlanId(value: string): string {
+  const aliases: Record<string,string> = {"CRM Start":"crm-start","CRM Business":"crm-business","CRM Premium":"crm-premium"};
+  return aliases[value] || value;
+}
+
+export function FeatureUnavailable({feature, onUpgrade}: {feature?:FeatureStateItem;onUpgrade?:(plan:string,reason:string)=>void}) {
+  const locked = feature?.state === "locked_by_plan";
+  return <div role="status" className="op-card" style={{padding:"16px",border:"1px dashed #615477"}}>
+    <strong>{feature?.state === "maintenance" ? "Recurso em manutenção" : feature?.state === "suspended" ? "Recurso suspenso" : locked ? "Recurso bloqueado pelo plano" : "Permissão indisponível"}</strong>
+    <p>{feature?.reason || "Não foi possível confirmar a permissão para este recurso."}</p>
+    {locked && onUpgrade && <button type="button" className="op-primary" onClick={()=>onUpgrade(feature.minPlanId,feature.name)}>Solicitar {feature.minPlanName}</button>}
+  </div>;
+}
 
 // ============================================================================
 // 1. BARRA DE 5 ESPAÇOS DE WHATSAPP (ETAPA 5)
@@ -117,14 +81,16 @@ export function WhatsappFiveSlotsGrid({
   maxConnections,
   onSelectSlot,
   onRequestUpgrade,
+  blockedState,
 }: {
+  blockedState?: FeatureStateItem;
   slots: WhatsappSlotItem[];
   selectedSlot: number;
   maxConnections: number;
   onSelectSlot: (slot: WhatsappSlotItem) => void;
   onRequestUpgrade: (targetPlan: string, reason: string) => void;
 }) {
-  const connectedCount = slots.filter(s => s.connected).length;
+  const connectedCount = slots.filter(s => s.status === "connected" && s.unlocked).length;
 
   return (
     <div className="op-card" style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -152,27 +118,28 @@ export function WhatsappFiveSlotsGrid({
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "12px" }}>
         {slots.map(s => {
           const isSelected = selectedSlot === s.slot;
-          const isLocked = s.lockedByPlan;
+          const isLocked = !s.unlocked || s.slot > maxConnections || (blockedState && blockedState.state !== "allowed");
+          const planLocked = isLocked && (!blockedState || blockedState.state === "allowed" || blockedState.state === "locked_by_plan") && (s.slot > maxConnections || s.pausedByDowngrade || s.status === "locked");
           const isPausedDowngrade = s.pausedByDowngrade;
 
           const statusColor = isLocked
             ? "#6b7280"
             : isPausedDowngrade
             ? "#f59e0b"
-            : s.connected
+            : (s.status === "connected")
             ? "#00db8c"
             : s.status === "connecting"
             ? "#a855f7"
             : "#9ca3af";
 
           const statusText = isLocked
-            ? `🔒 Bloqueado (${s.requiredPlanName})`
+            ? `🔒 Bloqueado (${s.minPlanName})`
             : isPausedDowngrade
             ? "⏸️ Pausado por downgrade"
-            : s.connected
+            : (s.status === "connected")
             ? "● Conectado"
             : s.status === "connecting"
             ? "◐ Aguardando QR Code"
@@ -181,13 +148,10 @@ export function WhatsappFiveSlotsGrid({
           return (
             <div
               key={s.slot}
-              onClick={() => {
-                if (isLocked) {
-                  onRequestUpgrade(s.requiredPlanName, `Liberar o ${s.label} de WhatsApp (${s.requiredPlanName})`);
-                  return;
-                }
-                onSelectSlot(s);
-              }}
+              data-testid={`whatsapp-slot-${s.slot}`}
+              data-locked={Boolean(isLocked)}
+              role="group"
+              aria-label={`${s.label}: ${isLocked ? "bloqueado" : "liberado"}`}
               style={{
                 padding: "14px",
                 borderRadius: "14px",
@@ -200,7 +164,7 @@ export function WhatsappFiveSlotsGrid({
                   ? "2px solid #ec4899"
                   : isLocked
                   ? "1px dashed rgba(107, 114, 128, 0.45)"
-                  : s.connected
+                  : (s.status === "connected")
                   ? "1px solid rgba(0, 219, 140, 0.45)"
                   : "1px solid rgba(255, 255, 255, 0.08)",
                 cursor: "pointer",
@@ -226,7 +190,7 @@ export function WhatsappFiveSlotsGrid({
                   </span>
                   {isLocked ? (
                     <LockKeyhole size={15} color="#f59e0b" />
-                  ) : s.connected ? (
+                  ) : (s.status === "connected") ? (
                     <CheckCircle2 size={16} color="#00db8c" />
                   ) : (
                     <Smartphone size={15} color="#aba8bf" />
@@ -252,12 +216,13 @@ export function WhatsappFiveSlotsGrid({
                   </small>
                 )}
 
-                {isLocked && (
+                <button type="button" className="op-refresh" disabled={Boolean(isLocked)} aria-label={`Selecionar ${s.label}`} onClick={()=>onSelectSlot(s)}>{isLocked ? "Conexão bloqueada" : "Gerenciar espaço"}</button>
+                {planLocked && (
                   <button
                     type="button"
                     onClick={e => {
                       e.stopPropagation();
-                      onRequestUpgrade(s.requiredPlanName, `Desbloquear ${s.label} (${s.requiredPlanName})`);
+                      onRequestUpgrade(s.minPlanId, `Desbloquear ${s.label} (${s.minPlanName})`);
                     }}
                     style={{
                       marginTop: "2px",
@@ -271,7 +236,7 @@ export function WhatsappFiveSlotsGrid({
                       cursor: "pointer"
                     }}
                   >
-                    🔓 Solicitar {s.requiredPlanName}
+                    🔓 Solicitar {s.minPlanName}
                   </button>
                 )}
               </div>
@@ -670,225 +635,31 @@ export function TeamOperatorsSection({
 // ============================================================================
 // 4. ABA DE INDICADORES E RELATÓRIOS EM 3 NÍVEIS (ETAPA 7)
 // ============================================================================
-export function ReportsAndIndicatorsSection({
-  reports,
-  loadingReports,
-  onRefresh,
-  onRequestUpgrade,
-}: {
-  reports: ReportsPayload | null;
-  loadingReports: boolean;
-  onRefresh: () => void;
-  onRequestUpgrade: (targetPlan: string, reason: string) => void;
+export function ReportsAndIndicatorsSection({reports,loadingReports,onRefresh,onRequestUpgrade,featureStates}: {
+  reports:ReportsPayload|null;loadingReports:boolean;onRefresh:()=>void;onRequestUpgrade:(plan:string,reason:string)=>void;featureStates:Record<string,FeatureStateItem>;
 }) {
-  const basic = reports?.basicIndicators;
-  const comm = reports?.commercialIndicators;
-  const adv = reports?.advancedReports;
-
-  return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
-      <div className="op-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "46px", height: "46px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)" }}>
-            <BarChart3 size={24} color="#fff" />
-          </div>
-          <div>
-            <h2 style={{ margin: 0, fontSize: "20px", color: "#fff" }}>Indicadores & Relatórios Comerciais</h2>
-            <small style={{ color: "#aba8bf" }}>
-              Métricas em tempo real de atendimentos da IA, funil comercial, satisfação (CSAT) e produtividade da equipe.
-            </small>
-          </div>
-        </div>
-        <button type="button" onClick={onRefresh} className="op-refresh" disabled={loadingReports}>
-          {loadingReports ? "Atualizando..." : "Atualizar Indicadores"}
-        </button>
-      </div>
-
-      {/* NÍVEL 1: INDICADORES BÁSICOS (CRM START+) */}
-      <div className="op-card" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ margin: 0, fontSize: "16px", color: "#fff" }}>1. Indicadores Básicos de Operação (Incluído desde o CRM Start)</h3>
-          <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "999px", background: "rgba(0,219,140,0.16)", color: "#00db8c", fontWeight: 800 }}>
-            ✓ Liberado no seu plano
-          </span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-          {[
-            { label: "Total de Conversas", val: basic?.totalConversations ?? 0, color: "#fff" },
-            { label: "Atendidas pela IA", val: basic?.aiConversations ?? 0, color: "#00db8c" },
-            { label: "Em Atendimento Humano", val: basic?.humanConversations ?? 0, color: "#f59e0b" },
-            { label: "Finalizadas", val: basic?.closedConversations ?? 0, color: "#93c5fd" },
-            { label: "Respostas Enviadas pela IA", val: basic?.aiRepliesCount ?? 0, color: "#ec4899" },
-            { label: "Contatos Cadastrados", val: basic?.totalContacts ?? 0, color: "#c084fc" },
-          ].map((item, idx) => (
-            <div key={idx} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "14px" }}>
-              <span style={{ fontSize: "12px", color: "#9ca3af", display: "block" }}>{item.label}</span>
-              <strong style={{ fontSize: "24px", color: item.color, fontWeight: 900 }}>{item.val}</strong>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* NÍVEL 2: INDICADORES COMERCIAIS (CRM BUSINESS+) */}
-      <div className="op-card" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-          <h3 style={{ margin: 0, fontSize: "16px", color: "#fff" }}>2. Indicadores Comerciais, Funil & Prioridades (CRM Business / Premium)</h3>
-          {comm?.locked ? (
-            <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "999px", background: "rgba(245,158,11,0.18)", color: "#fcd34d", fontWeight: 800 }}>
-              🔒 Disponível no CRM Business
-            </span>
-          ) : (
-            <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "999px", background: "rgba(0,219,140,0.16)", color: "#00db8c", fontWeight: 800 }}>
-              ✓ Liberado no seu plano
-            </span>
-          )}
-        </div>
-
-        {comm?.locked || !comm?.data ? (
-          <div style={{ padding: "22px", borderRadius: "14px", background: "rgba(15,12,26,0.7)", border: "1px dashed #ec4899", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <LockKeyhole size={24} color="#ec4899" />
-              <div>
-                <strong style={{ color: "#fff", fontSize: "15px", display: "block" }}>Desbloqueie Indicadores Comerciais por Etiqueta e Prioridade</strong>
-                <span style={{ color: "#aba8bf", fontSize: "13px" }}>
-                  Acompanhe conversão de orçamentos, leads qualificados, fila de urgência e taxa de resolução humana no CRM Business.
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onRequestUpgrade("CRM Business", "Desbloquear Indicadores Comerciais e Etiquetas")}
-              className="op-primary"
-              style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
-            >
-              🔓 Solicitar CRM Business
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px" }}>
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "14px" }}>
-              <strong style={{ fontSize: "13px", color: "#f472b6", display: "block", marginBottom: "8px" }}>Distribuição por Prioridade</strong>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#e2e8f0" }}>
-                <div>🚨 Urgente: <strong>{comm.data.priorityBreakdown.urgent}</strong></div>
-                <div>🔥 Alta: <strong>{comm.data.priorityBreakdown.high}</strong></div>
-                <div>⚡ Normal: <strong>{comm.data.priorityBreakdown.normal}</strong></div>
-                <div>🟢 Baixa: <strong>{comm.data.priorityBreakdown.low}</strong></div>
-              </div>
-            </div>
-
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "14px" }}>
-              <strong style={{ fontSize: "13px", color: "#c084fc", display: "block", marginBottom: "8px" }}>Contatos por Etiqueta Comercial</strong>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#e2e8f0" }}>
-                {comm.data.tagBreakdown.length === 0 ? (
-                  <span style={{ color: "#8e87a2" }}>Nenhuma etiqueta atribuída ainda.</span>
-                ) : (
-                  comm.data.tagBreakdown.map(t => (
-                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span>🏷️ {t.name}</span>
-                      <strong>{t.count}</strong>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "14px" }}>
-              <strong style={{ fontSize: "13px", color: "#00db8c", display: "block", marginBottom: "8px" }}>Transbordo & Conversão</strong>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#e2e8f0" }}>
-                <div>Transferências IA → Humano: <strong>{comm.data.handoffsTotal}</strong></div>
-                <div>Aguardando Atendente: <strong>{comm.data.handoffsPending}</strong></div>
-                <div>Taxa de Resolução: <strong>{comm.data.conversionRateEstimate}%</strong></div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* NÍVEL 3: RELATÓRIOS AVANÇADOS, ANÁLISE DE SATISFAÇÃO E POR ATENDENTE (CRM PREMIUM) */}
-      <div className="op-card" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-          <h3 style={{ margin: 0, fontSize: "16px", color: "#fff" }}>3. Relatórios Avançados, CSAT de Satisfação & Desempenho por Atendente (CRM Premium)</h3>
-          {adv?.locked ? (
-            <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "999px", background: "rgba(236,72,153,0.18)", color: "#f472b6", fontWeight: 800 }}>
-              🔒 Exclusivo CRM Premium
-            </span>
-          ) : (
-            <span style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "999px", background: "rgba(0,219,140,0.16)", color: "#00db8c", fontWeight: 800 }}>
-              ✓ Liberado no seu plano
-            </span>
-          )}
-        </div>
-
-        {adv?.locked || !adv?.data ? (
-          <div style={{ padding: "22px", borderRadius: "14px", background: "rgba(15,12,26,0.7)", border: "1px dashed #8b5cf6", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <LockKeyhole size={24} color="#a855f7" />
-              <div>
-                <strong style={{ color: "#fff", fontSize: "15px", display: "block" }}>Relatórios Executivos, Análise de Satisfação (CSAT) e Ranking de Atendentes</strong>
-                <span style={{ color: "#aba8bf", fontSize: "13px" }}>
-                  Disponível no plano CRM Premium (até 5 WhatsApps, 5 operadores e 1.500 atendimentos IA/mês).
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onRequestUpgrade("CRM Premium", "Desbloquear Relatórios Avançados, Análise de Satisfação e Indicadores por Atendente")}
-              className="op-primary"
-              style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
-            >
-              🔓 Solicitar CRM Premium
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "16px" }}>
-              <strong style={{ fontSize: "14px", color: "#fbbf24", display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
-                <Star size={16} color="#fbbf24" /> Análise de Satisfação (CSAT)
-              </strong>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "8px" }}>
-                <span style={{ fontSize: "28px", fontWeight: 900, color: "#fff" }}>{adv.data.satisfactionAnalytics.averageRating} ★</span>
-                <span style={{ fontSize: "13px", color: "#00db8c", fontWeight: 700 }}>
-                  {adv.data.satisfactionAnalytics.csatPercent}% de aprovação ({adv.data.satisfactionAnalytics.totalResponses} avaliações)
-                </span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#cbd5e1" }}>
-                {adv.data.satisfactionAnalytics.distribution.map(d => (
-                  <div key={d.rating} style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>{"⭐".repeat(d.rating)} ({d.rating})</span>
-                    <strong>{d.count}</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d", borderRadius: "12px", padding: "16px" }}>
-              <strong style={{ fontSize: "14px", color: "#c084fc", display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
-                <Users size={16} color="#c084fc" /> Indicadores por Atendente
-              </strong>
-              {adv.data.operatorIndicators.length === 0 ? (
-                <span style={{ fontSize: "12px", color: "#8e87a2" }}>Adicione operadores na aba Equipe para acompanhar métricas individuais.</span>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "12px" }}>
-                  {adv.data.operatorIndicators.map(op => (
-                    <div key={op.operatorId} style={{ display: "flex", justifyContent: "space-between", background: "rgba(0,0,0,0.2)", padding: "8px 10px", borderRadius: "8px" }}>
-                      <div>
-                        <strong style={{ color: "#fff" }}>{op.name}</strong>
-                        <small style={{ display: "block", color: "#9ca3af" }}>{op.role}</small>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <span style={{ color: "#00db8c", fontWeight: 700 }}>{op.resolvedConversations} resolvidos</span>
-                        <small style={{ display: "block", color: "#aba8bf" }}>{op.assignedConversations} atribuídos</small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+  const basic=reports?.basicIndicators, comm=reports?.commercialIndicators, adv=reports?.premiumAnalytics;
+  return <section style={{display:"grid",gap:"20px"}}>
+    <header className="op-card"><h2>Indicadores & Relatórios Comerciais</h2><button type="button" className="op-refresh" disabled={loadingReports} onClick={onRefresh}>{loadingReports?"Atualizando...":"Atualizar Indicadores"}</button></header>
+    <section className="op-card"><h3>Indicadores Básicos de Operação</h3>
+      {!featureAvailable(featureStates,"basic_indicators") || !basic ? <FeatureUnavailable feature={featureStates.basic_indicators} onUpgrade={onRequestUpgrade}/> : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,180px),1fr))",gap:"12px"}}>
+        {[["Total de Conversas",basic.totalConversations],["Em andamento",basic.activeConversations],["Atendidas pela IA",basic.aiConversations],["Atendimento humano",basic.humanConversations],["Contatos cadastrados",basic.totalContacts],["Franquia consumida",basic.quotaUsed+" / "+basic.quotaLimit]].map(([label,value])=><div key={label} style={{padding:"12px",background:"rgba(255,255,255,.03)",borderRadius:"12px"}}><span>{label}</span><strong style={{display:"block",fontSize:"23px"}}>{value}</strong></div>)}
+      </div>}
     </section>
-  );
+    <section className="op-card"><h3>Indicadores Comerciais</h3>
+      {!featureAvailable(featureStates,"commercial_indicators") || !comm ? <FeatureUnavailable feature={featureStates.commercial_indicators} onUpgrade={onRequestUpgrade}/> : <>
+        <h4>Distribuição por prioridade</h4>{Object.entries(comm.priorityBreakdown).map(([label,count])=><p key={label}>{label}: <strong>{count}</strong></p>)}
+        <h4>Distribuição por etiqueta</h4>{Object.entries(comm.tagBreakdown).map(([label,count])=><p key={label}>{label}: <strong>{count}</strong></p>)}
+        <p>Transferências IA → humano: <strong>{comm.handoffCount}</strong></p><p>Taxa de transferência: <strong>{comm.handoffRate}%</strong></p><p>Pesquisas respondidas: <strong>{comm.totalSurveys}</strong> · Nota média: <strong>{comm.avgSatisfaction}</strong></p>
+      </>}
+    </section>
+    <section className="op-card"><h3>Relatórios Avançados — CRM Premium</h3>
+      {!featureAvailable(featureStates,"advanced_reports") || !adv ? <FeatureUnavailable feature={featureStates.advanced_reports} onUpgrade={onRequestUpgrade}/> : <>
+        {featureAvailable(featureStates,"satisfaction_analytics") ? <><h4>Análise de satisfação</h4><p>CSAT: <strong>{adv.csatPercent}%</strong></p>{Object.entries(adv.starDistribution).map(([rating,count])=><p key={rating}>{rating} estrelas: <strong>{count}</strong></p>)}</> : <FeatureUnavailable feature={featureStates.satisfaction_analytics} onUpgrade={onRequestUpgrade}/>}
+        {featureAvailable(featureStates,"operator_indicators") ? <><h4>Indicadores por atendente</h4>{adv.operatorMetrics.length ? adv.operatorMetrics.map(op=><div key={op.operatorId}><strong>{op.name}</strong><p>{op.conversationsHandled} conversas · {op.surveysCount} avaliações · Nota: {op.avgRating ?? "—"}</p></div>) : <p>Nenhum atendente cadastrado.</p>}</> : <FeatureUnavailable feature={featureStates.operator_indicators} onUpgrade={onRequestUpgrade}/>}
+      </>}
+    </section>
+  </section>;
 }
 
 // ============================================================================
@@ -909,7 +680,7 @@ export function FeatureGovernanceMatrix({
       return { bg: "rgba(0, 219, 140, 0.15)", border: "#00db8c", color: "#00db8c", label: "✓ Liberado pelo plano", icon: <Check size={13} /> };
     }
     if (item.state === "locked_by_plan") {
-      return { bg: "rgba(245, 158, 11, 0.16)", border: "#f59e0b", color: "#fcd34d", label: `🔒 Bloqueado (${item.minPlanLabel})`, icon: <LockKeyhole size={13} /> };
+      return { bg: "rgba(245, 158, 11, 0.16)", border: "#f59e0b", color: "#fcd34d", label: `🔒 Bloqueado (${item.minPlanName})`, icon: <LockKeyhole size={13} /> };
     }
     if (item.state === "maintenance") {
       return { bg: "rgba(59, 130, 246, 0.16)", border: "#3b82f6", color: "#93c5fd", label: "🛠️ Indisponível (Manutenção)", icon: <Wrench size={13} /> };
@@ -933,7 +704,7 @@ export function FeatureGovernanceMatrix({
           const b = badgeForState(item);
           return (
             <div
-              key={item.featureId}
+              key={item.id}
               style={{
                 padding: "14px",
                 borderRadius: "12px",
@@ -947,7 +718,7 @@ export function FeatureGovernanceMatrix({
             >
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
-                  <strong style={{ color: "#fff", fontSize: "14px" }}>{item.label}</strong>
+                  <strong style={{ color: "#fff", fontSize: "14px" }}>{item.name}</strong>
                 </div>
                 <p style={{ margin: 0, fontSize: "12px", color: "#9ca3af", lineHeight: 1.4 }}>{item.description}</p>
               </div>
@@ -971,7 +742,7 @@ export function FeatureGovernanceMatrix({
                 {item.state === "locked_by_plan" && (
                   <button
                     type="button"
-                    onClick={() => onRequestUpgrade(item.minPlanLabel, `Liberar recurso: ${item.label}`)}
+                    onClick={() => onRequestUpgrade(item.minPlanId, `Liberar recurso: ${item.name}`)}
                     style={{
                       padding: "4px 10px",
                       borderRadius: "8px",
@@ -1013,14 +784,15 @@ export function UpgradeRequestModal({
   onClose: () => void;
   onSubmitUpgrade: (requestedPlan: string, notes: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
-  const [selectedPlan, setSelectedPlan] = useState(initialPlan || "CRM Business");
+  const [selectedPlan, setSelectedPlan] = useState(commercialPlanId(initialPlan || "CRM Business"));
   const [notes, setNotes] = useState(initialNotes || "");
   const [sending, setSending] = useState(false);
   const [doneMsg, setDoneMsg] = useState("");
+  const [submitError, setSubmitError] = useState("");
 
   React.useEffect(() => {
     if (open) {
-      setSelectedPlan(initialPlan || "CRM Business");
+      setSelectedPlan(commercialPlanId(initialPlan || "CRM Business"));
       setNotes(initialNotes || "");
       setDoneMsg("");
     }
@@ -1031,11 +803,12 @@ export function UpgradeRequestModal({
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
+    setSubmitError("");
     try {
       const res = await onSubmitUpgrade(selectedPlan, notes);
       if (res.ok) {
         setDoneMsg(res.message || "Solicitação de upgrade registrada com sucesso no Painel Master da NovaesWeb!");
-      }
+      } else setSubmitError(res.message || "Não foi possível enviar a solicitação.");
     } finally {
       setSending(false);
     }
@@ -1051,7 +824,7 @@ export function UpgradeRequestModal({
       placeItems: "center",
       padding: "16px"
     }}>
-      <div className="op-card" style={{ maxWidth: "480px", width: "100%", border: "2px solid #ec4899", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "480px", width: "100%", border: "2px solid #ec4899", display: "flex", flexDirection: "column", gap: "16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0, fontSize: "18px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
             <Sparkles size={20} color="#ec4899" /> Solicitar Upgrade de Plano
@@ -1059,6 +832,7 @@ export function UpgradeRequestModal({
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "18px", cursor: "pointer" }}>✕</button>
         </div>
 
+        {submitError && <p role="alert">{submitError}</p>}
         {doneMsg ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <div style={{ padding: "14px", borderRadius: "12px", background: "rgba(0,219,140,0.15)", border: "1px solid #00db8c", color: "#d1fae5", fontSize: "14px" }}>
@@ -1081,9 +855,9 @@ export function UpgradeRequestModal({
                 onChange={e => setSelectedPlan(e.target.value)}
                 style={{ width: "100%", marginTop: "6px", padding: "11px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "14px" }}
               >
-                <option value="CRM Start">CRM Start — R$ 59,90/mês (200 atendimentos · 1 WhatsApp · 1 operador)</option>
-                <option value="CRM Business">CRM Business — R$ 99,90/mês (600 atendimentos · 3 WhatsApps · 3 operadores)</option>
-                <option value="CRM Premium">CRM Premium — R$ 159,90/mês (1.500 atendimentos · 5 WhatsApps · 5 operadores)</option>
+                <option value="crm-start">CRM Start — R$ 59,90/mês (200 atendimentos · 1 WhatsApp · 1 operador)</option>
+                <option value="crm-business">CRM Business — R$ 99,90/mês (600 atendimentos · 3 WhatsApps · 3 operadores)</option>
+                <option value="crm-premium">CRM Premium — R$ 159,90/mês (1.500 atendimentos · 5 WhatsApps · 5 operadores)</option>
               </select>
             </label>
 

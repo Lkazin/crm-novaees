@@ -1,11 +1,17 @@
+import { memoryAttendanceQuota } from "./attendance-quota.fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isWithinOperatingHours, processWebhook } from "../agent/processor";
+import { isWithinOperatingHours, processWebhook as processWebhookActual } from "../agent/processor";
 import { detectCustomerEscalation } from "../agent/escalation";
 import { parseIncoming } from "../agent/parse";
 import { tenantInstanceSlug } from "./supabase-ingest";
 import { buildSystemPrompt, formatOperatingHoursForPrompt, type StoreAiContext } from "../agent/ai";
 import type { AgentConfig } from "../agent/config";
+
+const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
+ getStoreContext: async()=>({tenantId:"11111111-1111-4111-8111-111111111111",quotaLimit:200,context:{}}),
+ ...deps, quota:deps.quota || (deps.redis ? memoryAttendanceQuota(deps.redis as never) : undefined)
+});
 
 const baseCfg: AgentConfig = {
   evolutionUrl: "http://localhost:8080",

@@ -20,16 +20,30 @@ Este documento mapeia **exatamente onde está cada arquivo, regra de negócio, t
 
 ---
 
+## Master unificado (atualização de 07/11/2026)
+
+O Master usa uma única estrutura e menu em `/admin`: Clientes, Planos, Faturamento, Provedores de IA e CRM NovaesWeb. A seção selecionada fica em `?section=clients|plans|kpis|providers|crm`, com suporte a recarregar e voltar no navegador.
+
+- `src/components/crm/ProvidersWorkspace.tsx`: conteúdo de provedores, incorporado ao Master.
+- `src/components/crm/ClientWorkspace.tsx`: CRM reutilizado no painel cliente e no Master. No modo `embedded`, usa navegação operacional local e não cria outra sidebar, marca, seletor de empresa ou saída.
+- `src/components/crm/KnowledgeWorkspace.tsx`: editor de artigos reutilizado na aba Base de conhecimento do CRM integrado, com empresa fixa e sem sair do Master. A entrada independente dos clientes permanece em `src/app/cliente/knowledge/page.tsx`.
+- `src/app/cliente/page.tsx`: entrada do cliente; o link antigo `?tenant=novaesweb` redireciona para `/admin?section=crm`.
+- `src/app/admin/ai-providers/page.tsx`: redireciona o link antigo para `/admin?section=providers`.
+- `src/lib/crm/tenant-access.ts`: autorização das operações CRM. O Master resolve somente sua própria empresa no servidor; nenhuma chave privilegiada é enviada ao navegador. A identificação usa `CRM_MASTER_OWN_TENANT_ID` quando configurado ou o nome exato NovaesWeb (sem distinção de maiúsculas), recusando ausência ou ambiguidade. Operadores continuam limitados aos seus vínculos.
+- O CRM usa o UUID `selectedTenant` retornado pela API; um tenant solicitado inválido não seleciona outra empresa por padrão.
+- `tests/unified-master.spec.ts`: navegação e links antigos com APIs simuladas; não envia WhatsApp nem altera dados reais.
+- `src/lib/crm/tenant-access.test.ts`: verificações de autorização com respostas simuladas. Estes testes não comprovam RLS entre usuários reais.
+
 ## 2. Mapa Rápido: "Onde Mexer Quando Eu Quiser Alterar..."
 
 | O que você quer alterar / arrumar | Arquivo(s) exato(s) onde mexer |
 | :--- | :--- |
 | **Preços, franquias, limites de WhatsApp (1, 3, 5), limites de operadores (1, 3, 5) ou recursos de cada plano** | `src/lib/crm/plans.ts` (`DEFAULT_PLANS`, `TRIAL_PLAN`, `TECHNICAL_FEATURES`) |
 | **Regras de bloqueio de funcionalidade por plano (4 estados: liberado, bloqueado, manutenção, suspenso)** | `src/lib/crm/plans.ts` (`buildFeatureGovernanceMap`, `requireTenantFeature`) |
-| **Visual do Painel do Cliente (`/cliente` — abas, chat ao vivo, IA, horários, simulador, meu plano)** | `src/app/cliente/page.tsx` e `src/components/crm/ClientPlanModules.tsx` |
+| **Visual do Painel do Cliente (`/cliente` — abas, chat ao vivo, IA, horários, simulador, meu plano)** | `src/components/crm/ClientWorkspace.tsx`, `src/app/cliente/page.tsx` e `src/components/crm/ClientPlanModules.tsx` |
 | **Módulos novos do Painel do Cliente (5 espaços de WhatsApp, Respostas Rápidas, Equipe/Operadores, Relatórios, Matriz de Recursos e Modal de Upgrade)** | `src/components/crm/ClientPlanModules.tsx` |
 | **Visual do Painel Master (`/admin` — cadastro de clientes, edição de planos, faturamento, bloqueio administrativo, aprovação de upgrades, botão Meu CRM NovaesWeb)** | `src/app/admin/page.tsx` |
-| **Central de Provedores de IA do Master (`/admin/ai-providers`)** | `src/app/admin/ai-providers/page.tsx` e `src/app/api/crm/admin/ai-lab/route.ts` |
+| **Central de Provedores de IA do Master (`/admin?section=providers`)** | `src/components/crm/ProvidersWorkspace.tsx` e `src/app/api/crm/admin/ai-lab/` |
 | **Lógica dos 5 espaços de WhatsApp (`loja_slug`, `loja_slug_2`..`_5`) e pausa de canais no downgrade** | `src/lib/crm/whatsapp-slots.ts` |
 | **Conexão do WhatsApp, geração de QR Code e status da Evolution API** | `src/app/api/crm/whatsapp/connect/route.ts` e `src/app/api/crm/whatsapp/status/route.ts` |
 | **Recebimento de mensagens do WhatsApp (Webhook da Evolution API)** | `src/app/api/evolution/webhook/route.ts` e `src/lib/agent/processor.ts` |

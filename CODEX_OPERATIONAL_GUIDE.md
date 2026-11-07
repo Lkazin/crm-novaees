@@ -92,7 +92,7 @@ Para rodar o projeto na sua máquina e testar o funcionamento:
    ```
 2. **Acessar o Painel Master:**
    - URL: `http://localhost:3000/admin`
-   - Senha padrão Master: configurada no arquivo `.env` (ex.: `Noah2027.`)
+   - Senha Master: somente o valor privado configurado em `CRM_MASTER_PASSWORD`; não há senha pública de emergência.
 3. **Acessar o CRM Próprio da NovaesWeb:**
    - Clique no botão **"Meu CRM (NovaesWeb)"** no menu lateral ou acesse `http://localhost:3000/cliente?tenant=novaesweb`.
 4. **Acessar o Painel de uma Loja Cliente:**

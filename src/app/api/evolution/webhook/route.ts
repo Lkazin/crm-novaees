@@ -6,6 +6,8 @@ import { processWebhook } from "@/lib/agent/processor";
 import { parseIncoming } from "@/lib/agent/parse";
 import { captureIncoming } from "@/lib/crm/inbox";
 import { persistIncomingInSupabase, resolveChannelForInstance } from "@/lib/crm/supabase-ingest";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 import { outboundAllowed } from "@/lib/crm/outbound-guard";
 
 export const runtime = "nodejs";
@@ -18,7 +20,22 @@ function matchesSecret(supplied: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-async function handleConnectionOrQrEvent(payload: Record<string, any>) {
+type ConnectionEvent = {
+  apikey?: unknown;
+  event?: unknown;
+  instance?: unknown;
+  instanceName?: unknown;
+  data?: {
+    instance?: unknown;
+    state?: unknown;
+    status?: unknown;
+    statusReason?: unknown;
+    qrcode?: { base64?: unknown };
+    base64?: unknown;
+  };
+};
+
+async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
   const event = String(payload.event ?? "").toUpperCase().replace(/\./g, "_");
   const rawInstance = payload.instance ?? payload.instanceName ?? payload?.data?.instance ?? "";
   const instanceName = String(rawInstance).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
@@ -81,11 +98,14 @@ async function handleConnectionOrQrEvent(payload: Record<string, any>) {
   // Sync connection state to Supabase crm_channels
   if (event === "CONNECTION_UPDATE" && (state === "open" || state === "close")) {
     try {
-      await resolveChannelForInstance(instanceName);
+      const channel = await resolveChannelForInstance(instanceName);
+      if (!channel || channel.status === "paused") return;
+      const plan = await getEffectiveTenantPlan(channel.tenant_id);
+      if (plan.isSuspended || extractSlotFromInstanceName(instanceName) > plan.maxWhatsappConnections) return;
       const supaUrl = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
       const supaKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
       if (supaUrl && supaKey) {
-        await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
+        await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}&tenant_id=eq.${channel.tenant_id}&status=neq.paused`, {
           method: "PATCH",
           headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({ status: state === "open" ? "connected" : "disconnected" })
@@ -106,28 +126,22 @@ export async function POST(request: NextRequest) {
   const evoKey = process.env.EVOLUTION_API_KEY ?? "";
   const header = request.headers.get("x-crm-webhook-secret") ?? "";
   const querySecret = request.nextUrl.searchParams.get("secret") ?? "";
-  const bodyObj = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  const bodyObj = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as ConnectionEvent) : {};
   const payloadApiKey = typeof bodyObj.apikey === "string" ? bodyObj.apikey : "";
-  const hasValidEvolutionShape =
-    typeof bodyObj.event === "string" &&
-    (typeof bodyObj.instance === "string" || typeof bodyObj.instanceName === "string");
-
-  // If x-crm-webhook-secret header is explicitly sent, validate it strictly;
-  // When Evolution API v2.3.7 sends webhooks with empty headers ({}), validate via query ?secret=, payload.apikey, or Evolution event shape.
-  const isAuthorized =
-    (secret.length >= 32 && header.length > 0 && matchesSecret(header, secret)) ||
-    (secret.length >= 32 && querySecret.length > 0 && matchesSecret(querySecret, secret)) ||
-    (evoKey.length >= 6 && payloadApiKey.length > 0 && matchesSecret(payloadApiKey, evoKey)) ||
-    (header.length === 0 && hasValidEvolutionShape);
+  // A recognizable payload is never proof of origin.
+  const isAuthorized = header.length > 0
+    ? secret.length >= 32 && matchesSecret(header, secret)
+    : (secret.length >= 32 && querySecret.length > 0 && matchesSecret(querySecret, secret)) ||
+      (evoKey.length >= 6 && payloadApiKey.length > 0 && matchesSecret(payloadApiKey, evoKey));
 
   if (!isAuthorized) return json({ error: "unauthorized" }, 401);
 
   try {
     // 1. Handle connection & QR code update events first
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-      const ev = String((payload as Record<string, unknown>).event ?? "").toUpperCase().replace(/\./g, "_");
+      const ev = String((payload as ConnectionEvent).event ?? "").toUpperCase().replace(/\./g, "_");
       if (ev === "CONNECTION_UPDATE" || ev === "QRCODE_UPDATED") {
-        await handleConnectionOrQrEvent(payload as Record<string, any>);
+        await handleConnectionOrQrEvent(payload as ConnectionEvent);
         return json({ status: "ignored", reason: "connection_event_handled" });
       }
     }

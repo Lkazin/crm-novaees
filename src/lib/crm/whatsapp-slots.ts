@@ -1,5 +1,5 @@
 import "server-only";
-import { getEffectiveTenantPlan, EffectiveTenantPlan } from "@/lib/crm/plans";
+import type { EffectiveTenantPlan } from "@/lib/crm/plans";
 import { tenantInstanceSlug } from "@/lib/crm/supabase-ingest";
 
 export type WhatsappSlotInfo = {
@@ -121,51 +121,27 @@ export async function syncWhatsappChannelsForPlanLimit(
   const pausedInstances: string[] = [];
   const restoredInstances: string[] = [];
 
-  if (!supaUrl || !serviceKey || !tenantId) {
-    return { pausedInstances, restoredInstances };
+  if (!supaUrl || !serviceKey || !/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error("channel_sync_not_configured");
+  if (!Number.isInteger(newMaxConnections) || newMaxConnections < 1 || newMaxConnections > 5) throw new Error("invalid_channel_limit");
+  const rChannels = await fetch(
+    `${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=id,instance_name,status`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, cache: "no-store", signal: AbortSignal.timeout(7000) }
+  );
+  if (!rChannels.ok) throw new Error(`channel_sync_lookup_failed:${rChannels.status}`);
+  const channels = await rChannels.json() as Array<{ id: string; instance_name: string; status: string }>;
+  for (const ch of channels) {
+    const slot = extractSlotFromInstanceName(ch.instance_name);
+    const nextStatus = slot > newMaxConnections ? "paused" : ch.status === "paused" ? "disconnected" : null;
+    if (!nextStatus || nextStatus === ch.status) continue;
+    const response = await fetch(`${supaUrl}/rest/v1/crm_channels?id=eq.${ch.id}&tenant_id=eq.${tenantId}`, {
+      method: "PATCH", cache: "no-store", signal: AbortSignal.timeout(7000),
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ status: nextStatus })
+    });
+    if (!response.ok) throw new Error(`channel_sync_update_failed:${response.status}`);
+    const updated = await response.json() as Array<{ id: string }>;
+    if (!Array.isArray(updated) || updated.length !== 1 || updated[0].id !== ch.id) throw new Error("channel_sync_update_unconfirmed");
+    (nextStatus === "paused" ? pausedInstances : restoredInstances).push(ch.instance_name);
   }
-
-  try {
-    const rChannels = await fetch(
-      `${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=id,instance_name,status`,
-      {
-        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
-        cache: "no-store"
-      }
-    );
-    if (!rChannels.ok) return { pausedInstances, restoredInstances };
-
-    const channels = (await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>;
-    for (const ch of channels) {
-      const slot = extractSlotFromInstanceName(ch.instance_name);
-      if (slot > newMaxConnections && ch.status !== "paused") {
-        await fetch(`${supaUrl}/rest/v1/crm_channels?id=eq.${ch.id}`, {
-          method: "PATCH",
-          headers: {
-            apikey: serviceKey,
-            Authorization: `Bearer ${serviceKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ status: "paused" })
-        });
-        pausedInstances.push(ch.instance_name);
-      } else if (slot <= newMaxConnections && ch.status === "paused") {
-        await fetch(`${supaUrl}/rest/v1/crm_channels?id=eq.${ch.id}`, {
-          method: "PATCH",
-          headers: {
-            apikey: serviceKey,
-            Authorization: `Bearer ${serviceKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ status: "disconnected" })
-        });
-        restoredInstances.push(ch.instance_name);
-      }
-    }
-  } catch (err) {
-    console.warn("[whatsapp-slots] Error syncing channel limits on plan change:", err);
-  }
-
   return { pausedInstances, restoredInstances };
 }
-

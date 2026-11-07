@@ -3,7 +3,6 @@ import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import {
   CrmPlan,
-  DEFAULT_PLANS,
   TECHNICAL_FEATURES,
   getMasterPlans,
   getMasterPlansWithDrafts,
@@ -11,7 +10,10 @@ import {
   saveMasterPlan,
   syncTenantUsageLimits,
   invalidateEffectivePlanCache,
-  recordPlanAudit
+  recordPlanAudit,
+  replaceTenantPlan,
+  enforceTenantOperatorLimit,
+  normalizePlanVigencia
 } from "@/lib/crm/plans";
 import { syncWhatsappChannelsForPlanLimit } from "@/lib/crm/whatsapp-slots";
 
@@ -157,7 +159,8 @@ export async function POST(request: NextRequest) {
       const customQuota = typeof body.customQuota === "number" ? body.customQuota : undefined;
       const exceptionReason = typeof body.reason === "string" ? body.reason.trim() : "Exceção contratual aprovada pelo Master";
 
-      if (!tenantId) return privateJson({ error: "missing_tenant" }, 400);
+      if (!/^[0-9a-f-]{36}$/i.test(tenantId)) return privateJson({ error: "missing_tenant" }, 400);
+      if (customQuota !== undefined && (!Number.isInteger(customQuota) || customQuota < 0)) return privateJson({ error: "invalid_quota" }, 400);
 
       const { url, serviceKey } = getAdminConfig();
       const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
@@ -182,12 +185,7 @@ export async function POST(request: NextRequest) {
       }
       dataObj.plan = planObj;
 
-      const rPatch = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-        method: "PATCH",
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ business_description: JSON.stringify(dataObj) })
-      });
-      if (!rPatch.ok) throw new Error(`Supabase PATCH tenant exception failed: HTTP ${rPatch.status}`);
+      await replaceTenantPlan(tenantId, planObj, url, serviceKey);
 
       if (customQuota !== undefined) {
         await syncTenantUsageLimits(tenantId, customQuota, url, serviceKey);
@@ -203,7 +201,7 @@ export async function POST(request: NextRequest) {
     }
 
     const mode = action === "save_draft" ? "draft" : "apply";
-    const vigencia = body.vigencia || "immediate";
+    const vigencia = normalizePlanVigencia(body.vigencia ?? "immediate");
 
     const result = await saveMasterPlan(planInput, mode, vigencia, auth.actor);
 
@@ -216,7 +214,7 @@ export async function POST(request: NextRequest) {
       succeededTenants: result.succeededTenants,
       failedTenants: result.failedTenants,
       plan: result.plan
-    }, result.partiallyApplied ? 207 : 200);
+    }, result.partiallyApplied ? 207 : result.applied || result.isDraft ? 200 : 503);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "save_plans_failed" }, 503);
   }
@@ -240,18 +238,18 @@ export async function PATCH(request: NextRequest) {
     const customQuotaOverride = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
     const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
 
-    if (!tenantId || (!planId && !planName)) return privateJson({ error: "missing_required_fields" }, 400);
+    if (!/^[0-9a-f-]{36}$/i.test(tenantId) || (!planId && !planName)) return privateJson({ error: "missing_required_fields" }, 400);
+    if (customQuotaOverride !== null && (!Number.isInteger(customQuotaOverride) || customQuotaOverride < 0)) return privateJson({ error: "invalid_quota" }, 400);
 
     const masterPlans = await getMasterPlans();
     const matchedPlan = masterPlans.find(
       p => (planId && p.id === planId) || (planName && p.name.toLowerCase() === planName.toLowerCase())
-    ) || masterPlans[0] || DEFAULT_PLANS[0];
+    );
+    if (!matchedPlan || matchedPlan.status !== "active") return privateJson({ error: "plan_not_found" }, 400);
 
     const suppliedPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "";
     const resolvedPrice = (suppliedPrice && suppliedPrice !== "149,00") ? suppliedPrice : matchedPlan.price;
-    const quotaLimit = typeof body.quotaLimit === "number" && body.quotaLimit !== 500
-      ? body.quotaLimit
-      : matchedPlan.quotaLimit;
+    const quotaLimit = matchedPlan.quotaLimit;
 
     const { url, serviceKey } = getAdminConfig();
     const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
@@ -296,27 +294,12 @@ export async function PATCH(request: NextRequest) {
 
     dataObj.plan = planObj;
 
-    const rPatch = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-      method: "PATCH",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        business_description: JSON.stringify(dataObj),
-        ai_sending_enabled: true
-      })
-    });
-    if (!rPatch.ok) throw new Error(`Supabase PATCH tenant assignment failed: HTTP ${rPatch.status}`);
-
-    try {
-      await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
-        method: "PATCH",
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "active" })
-      });
-    } catch {}
+    await replaceTenantPlan(tenantId, planObj, url, serviceKey);
 
     const effectiveLimit = customQuotaOverride !== null ? customQuotaOverride : quotaLimit;
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
     const channelSync = await syncWhatsappChannelsForPlanLimit(tenantId, matchedPlan.maxWhatsappConnections, url, serviceKey);
+    await enforceTenantOperatorLimit(tenantId, matchedPlan.maxOperators, url, serviceKey);
     await invalidateEffectivePlanCache(tenantId);
 
     await recordPlanAudit({

@@ -1,13 +1,30 @@
 "use client";
 import { useEffect, useState, useCallback, useMemo } from "react";
-import Link from "next/link";
+import dynamic from "next/dynamic";
+
+const ProvidersWorkspace = dynamic(() => import("@/components/crm/ProvidersWorkspace"), {
+  loading: () => <p role="status">Carregando provedores de IA...</p>,
+});
+const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
+  loading: () => <p role="status">Carregando CRM NovaesWeb...</p>,
+});
+
+type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm";
+const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
+  clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
+  plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de atendimento." },
+  kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
+  providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
+  crm: { title: "CRM NovaesWeb", description: "Atendimento, WhatsApp e inteligência artificial da própria NovaesWeb." },
+};
 import {
   Building2, RefreshCw, ShieldCheck,
   BrainCircuit, AlertCircle, PlusCircle, CheckCircle2, Ban, RotateCcw,
   Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
   Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
-  CheckSquare, Square, Crown, Bot, BarChart3, Mail, Lock, EyeOff, LogIn, X
+  CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X
 } from "lucide-react";
 
 type Client = {
@@ -63,15 +80,15 @@ type Client = {
 type UpgradeRequestItem = {
   id: string;
   tenantId: string;
-  tenantName: string;
+  storeName: string;
   tenantSlug?: string;
   currentPlanId: string;
   currentPlanName: string;
-  requestedPlanId: string;
-  requestedPlanName: string;
+  targetPlanId: string;
+  targetPlanName: string;
   reason?: string;
   status: "pending" | "approved" | "rejected";
-  requestedAt: string;
+  createdAt: string;
   resolvedAt?: string | null;
 };
 
@@ -112,7 +129,7 @@ type PlanItem = {
   isActive?: boolean;
   isDraft?: boolean;
   hasDraft?: boolean;
-  draftPlan?: any;
+  draftPlan?: Partial<Omit<PlanItem, "draftPlan">>;
   enrolledStores?: Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>;
 };
 
@@ -290,7 +307,35 @@ export default function AdminCRM() {
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "overdue" | "suspended">("all");
-  const [currentNav, setCurrentNav] = useState<"clients" | "kpis" | "plans">("clients");
+  const [currentNav, setCurrentNav] = useState<MasterSection>("clients");
+  const [crmActiveTab, setCrmActiveTab] = useState<CrmTab>("atendimentos");
+
+  const navigateCrm = useCallback((tab: CrmTab) => {
+    setCurrentNav("crm");
+    setCrmActiveTab(tab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("section", "crm");
+      window.history.pushState(null, "", url.toString());
+    }
+  }, []);
+
+  useEffect(() => {
+    const syncSection = () => {
+      const section = new URLSearchParams(window.location.search).get("section");
+      setCurrentNav(section && Object.hasOwn(MASTER_SECTIONS, section) ? section as MasterSection : "clients");
+    };
+    syncSection();
+    window.addEventListener("popstate", syncSection);
+    return () => window.removeEventListener("popstate", syncSection);
+  }, []);
+
+  function navigateSection(section: MasterSection) {
+    setCurrentNav(section);
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", section);
+    window.history.pushState(null, "", url);
+  }
 
   // Master Authentication (secure session cookie)
   const [authenticated, setAuthenticated] = useState<boolean>(false);
@@ -357,7 +402,7 @@ export default function AdminCRM() {
   const [impactModalOpen, setImpactModalOpen] = useState(false);
   const [planToApply, setPlanToApply] = useState<PlanItem | null>(null);
   const [originalPlan, setOriginalPlan] = useState<PlanItem | null>(null);
-  const [vigencia, setVigencia] = useState<"immediate" | "new_clients" | "next_renewal">("immediate");
+  const [vigencia, setVigencia] = useState<"immediate" | "new_clients" | "next_cycle">("immediate");
   const [applyingPlan, setApplyingPlan] = useState(false);
 
   // Duplicate Plan Modal
@@ -452,7 +497,8 @@ export default function AdminCRM() {
       setAuthenticated(false);
       setLoading(false);
       if (typeof window !== "undefined") {
-        window.location.href = "/";
+        try { await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" }); } catch {}
+        window.location.href = "/?error=unauthorized_admin";
       }
     }
     void checkMasterSession();
@@ -630,7 +676,8 @@ export default function AdminCRM() {
     const target = (plan.hasDraft && plan.draftPlan) ? { ...plan, ...plan.draftPlan } : plan;
     setEditingPlan({
       ...target,
-      allowedFeatures: target.allowedFeatures || target.features || ["ai_chat", "human_handoff"]
+      allowedFeatures: target.allowedFeatures || target.features.filter((id): id is FeatureId =>
+        TECHNICAL_FEATURES_LIST.some(feature => feature.id === id))
     });
     setEditingFeaturesText((target.features || []).join("\n"));
     setEditPlanModalOpen(true);
@@ -712,7 +759,7 @@ export default function AdminCRM() {
 
       if (data.failedTenants && data.failedTenants.length > 0) {
         setError(
-          `Sincronização com falhas parciais: ${data.succeededTenants?.length || 0} loja(s) sincronizada(s), mas ${data.failedTenants.length} falharam: ${data.failedTenants.map((f: any) => `${f.tenantId}: ${f.error}`).join("; ")}`
+          `Sincronização com falhas parciais: ${data.succeededTenants?.length || 0} loja(s) sincronizada(s), mas ${data.failedTenants.length} falharam: ${data.failedTenants.map((f: { tenantId: string; error: string }) => `${f.tenantId}: ${f.error}`).join("; ")}`
         );
       } else {
         const affectedCount = data.affectedTenants?.length || data.impactedCount || 0;
@@ -919,8 +966,8 @@ export default function AdminCRM() {
       if (!res.ok) throw new Error();
       setNotice(
         decision === "approved"
-          ? `Upgrade aprovado! Loja "${reqItem.tenantName}" migrada para ${reqItem.requestedPlanName}.`
-          : `Solicitação de upgrade de "${reqItem.tenantName}" rejeitada.`
+          ? `Upgrade aprovado! Loja "${reqItem.storeName}" migrada para ${reqItem.targetPlanName}.`
+          : `Solicitação de upgrade de "${reqItem.storeName}" rejeitada.`
       );
       await fetchClients();
       await fetchPlans();
@@ -1681,25 +1728,9 @@ export default function AdminCRM() {
                 <p style={{ margin: 0 }}>
                   O acesso Master é restrito e autenticado pelo segredo criptográfico configurado nas variáveis de ambiente do servidor.
                 </p>
-                <div
-                  style={{
-                    background: "rgba(10, 4, 16, 0.8)",
-                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                    borderRadius: "10px",
-                    padding: "12px 14px",
-                    fontSize: "12.5px"
-                  }}
-                >
-                  <strong style={{ color: "#f472b6", display: "block", marginBottom: "4px" }}>
-                    Chave padrão de administrador:
-                  </strong>
-                  <code style={{ color: "#ffffff", background: "#2a123a", padding: "2px 6px", borderRadius: "4px" }}>
-                    Noah2027.
-                  </code>{" "}
-                  <span style={{ color: "#94a3b8" }}>(também aceita sem o ponto: <code>Noah2027</code>)</span>
-                </div>
+
                 <p style={{ margin: 0, color: "#94a3b8", fontSize: "12px" }}>
-                  Se você alterou a senha no arquivo de ambiente, utilize o valor configurado em <code>CRM_MASTER_PASSWORD</code> ou acesse via conta de operador homologada em <code>platform_staff</code>.
+                  Solicite a recuperação ao responsável pela administração da NovaesWeb. As credenciais de acesso não são exibidas no painel.
                 </p>
               </div>
 
@@ -1755,14 +1786,21 @@ export default function AdminCRM() {
           </div>
         </div>
 
-        {/* Navegação Master */}
-        <nav className="nw-sidebar-nav">
+        {/* Navegação Master Unificada e Agrupada */}
+        <nav className="nw-sidebar-nav" aria-label="Menu do Master">
+          {/* GRUPO 1: ADMINISTRAÇÃO MASTER */}
+          <div className="nw-sidebar-group-header">
+            <ShieldCheck size={13} style={{ color: "#ec4899" }}/>
+            <span>Administração Master</span>
+          </div>
+
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "clients" ? "active" : ""}`}
-            onClick={() => setCurrentNav("clients")}
+            aria-current={currentNav === "clients" ? "page" : undefined}
+            onClick={() => navigateSection("clients")}
           >
-            <Building2 size={19}/>
+            <Building2 size={18}/>
             <span>Lojas &amp; Clientes</span>
             <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
               {clients.length}
@@ -1772,9 +1810,10 @@ export default function AdminCRM() {
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "plans" ? "active" : ""}`}
-            onClick={() => setCurrentNav("plans")}
+            aria-current={currentNav === "plans" ? "page" : undefined}
+            onClick={() => navigateSection("plans")}
           >
-            <CreditCard size={19}/>
+            <CreditCard size={18}/>
             <span>Planos &amp; Franquias</span>
             <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
               {plans.length}
@@ -1784,37 +1823,137 @@ export default function AdminCRM() {
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "kpis" ? "active" : ""}`}
-            onClick={() => setCurrentNav("kpis")}
+            aria-current={currentNav === "kpis" ? "page" : undefined}
+            onClick={() => navigateSection("kpis")}
           >
-            <DollarSign size={19}/>
+            <DollarSign size={18}/>
             <span>Faturamento &amp; Métricas</span>
           </button>
 
-          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
-
-          <Link
-            href="/cliente?tenant=novaesweb"
-            className="nw-nav-button"
-            style={{
-              textDecoration: "none",
-              background: "linear-gradient(90deg, rgba(236, 72, 153, 0.16), rgba(139, 92, 246, 0.16))",
-              border: "1px solid rgba(236, 72, 153, 0.35)"
-            }}
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "providers" ? "active" : ""}`}
+            aria-current={currentNav === "providers" ? "page" : undefined}
+            onClick={() => navigateSection("providers")}
           >
-            <Crown size={19} color="#fbbf24"/>
-            <span style={{color: "#fff", fontWeight: 700}}>Meu CRM (NovaesWeb)</span>
-            <ChevronRight size={14} style={{marginLeft: "auto", opacity: 0.8}}/>
-          </Link>
+            <BrainCircuit size={18}/>
+            <span>Provedores de IA</span>
+          </button>
 
-          <Link
-            href="/admin/ai-providers"
-            className="nw-nav-button"
-            style={{textDecoration: "none"}}
+          {/* DIVISOR DE GRUPO */}
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "14px 4px 10px"}}/>
+
+          {/* GRUPO 2: CRM PRÓPRIO — OPERAÇÃO NOVAESWEB */}
+          <div className="nw-sidebar-group-header" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Crown size={13} style={{ color: "#ec4899" }}/>
+              <span style={{ color: "#ec4899" }}>CRM Próprio NovaesWeb</span>
+            </div>
+            <span style={{ fontSize: "9px", color: "#34d399", background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.3)", padding: "1px 6px", borderRadius: "6px", fontWeight: 700 }}>
+              Ativo
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "active" : ""}`}
+            aria-current={currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "page" : undefined}
+            onClick={() => navigateCrm("atendimentos")}
           >
-            <BrainCircuit size={19}/>
-            <span>Central de IAs (Provedores)</span>
-            <ChevronRight size={14} style={{marginLeft: "auto", opacity: 0.6}}/>
-          </Link>
+            <Crown size={18}/>
+            <span>CRM NovaesWeb</span>
+          </button>
+
+          {/* Funções do CRM Próprio no menu lateral */}
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "atendimentos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "atendimentos" ? "page" : undefined}
+            onClick={() => navigateCrm("atendimentos")}
+          >
+            <MessageCircle size={15}/>
+            <span>Atendimentos &amp; Chat</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "whatsapp" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "whatsapp" ? "page" : undefined}
+            onClick={() => navigateCrm("whatsapp")}
+          >
+            <Smartphone size={15}/>
+            <span>WhatsApp (5 Conexões)</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "conhecimento" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "conhecimento" ? "page" : undefined}
+            onClick={() => navigateCrm("conhecimento")}
+          >
+            <Bot size={15}/>
+            <span>IA &amp; Instruções</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "artigos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "artigos" ? "page" : undefined}
+            onClick={() => navigateCrm("artigos")}
+          >
+            <BookOpen size={15}/>
+            <span>Base de Conhecimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "contatos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "contatos" ? "page" : undefined}
+            onClick={() => navigateCrm("contatos")}
+          >
+            <Users size={15}/>
+            <span>Contatos &amp; Clientes</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "horarios" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "horarios" ? "page" : undefined}
+            onClick={() => navigateCrm("horarios")}
+          >
+            <Calendar size={15}/>
+            <span>Horários de Atendimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "equipe" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "equipe" ? "page" : undefined}
+            onClick={() => navigateCrm("equipe")}
+          >
+            <UserCheck size={15}/>
+            <span>Equipe &amp; Operadores</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "relatorios" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "relatorios" ? "page" : undefined}
+            onClick={() => navigateCrm("relatorios")}
+          >
+            <BarChart3 size={15}/>
+            <span>Relatórios de Atendimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "simulador" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "simulador" ? "page" : undefined}
+            onClick={() => navigateCrm("simulador")}
+          >
+            <Sparkles size={15}/>
+            <span>Simulador de IA</span>
+          </button>
         </nav>
 
         {/* Rodapé da Sidebar Master */}
@@ -1864,12 +2003,10 @@ export default function AdminCRM() {
         <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px"}}>
           <div>
             <h1 style={{fontSize: "28px", fontWeight: 800, margin: "0 0 6px", letterSpacing: "-0.5px"}}>
-              {currentNav === "plans" ? "Planos Comerciais & Franquias de IA" : "Gestão de Clientes e Mensalidades"}
+              {MASTER_SECTIONS[currentNav].title}
             </h1>
             <p style={{color: "#c2bed4", margin: 0, fontSize: "14px"}}>
-              {currentNav === "plans"
-                ? "Gestão dinâmica de planos, limites técnicos, sincronização em lote e franquias de atendimento."
-                : "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos."}
+              {MASTER_SECTIONS[currentNav].description}
             </p>
           </div>
           <div style={{display: "flex", gap: "10px"}}>
@@ -1900,9 +2037,11 @@ export default function AdminCRM() {
                 <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Novo Cliente"}
               </button>
             )}
-            <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); }} disabled={loading}>
-              <RefreshCw size={16}/> Atualizar
-            </button>
+            {["clients", "plans", "kpis"].includes(currentNav) && (
+              <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); }} disabled={loading}>
+                <RefreshCw size={16}/> Atualizar
+              </button>
+            )}
           </div>
         </div>
 
@@ -1921,60 +2060,18 @@ export default function AdminCRM() {
           </div>
         )}
 
-        {/* BANNER: OPERAÇÃO PRÓPRIA NOVAESWEB (CRM PRÓPRIO NO MASTER) */}
-        <div
-          className="op-card"
-          style={{
-            marginBottom: "20px",
-            padding: "16px 22px",
-            background: "linear-gradient(135deg, rgba(60, 20, 80, 0.55), rgba(15, 10, 30, 0.85))",
-            border: "1px solid rgba(236, 72, 153, 0.4)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: "14px"
-          }}
-        >
-          <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
-            <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "linear-gradient(135deg, #ec4899, #8b5cf6)", display: "grid", placeItems: "center", boxShadow: "0 0 18px rgba(236, 72, 153, 0.4)"}}>
-              <Crown size={22} color="#fef08a"/>
-            </div>
-            <div>
-              <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                <strong style={{fontSize: "16px", color: "#fff"}}>CRM Próprio — Operação NovaesWeb</strong>
-                <span style={{padding: "2px 8px", borderRadius: "999px", fontSize: "10px", fontWeight: 800, background: "rgba(0, 219, 140, 0.18)", color: "#00db8c", border: "1px solid rgba(0, 219, 140, 0.35)"}}>
-                  ISOLADO DOS CLIENTES
-                </span>
-              </div>
-              <p style={{margin: "2px 0 0", fontSize: "12.5px", color: "#cbd5e1"}}>
-                Acesse o atendimento comercial próprio da NovaesWeb (WhatsApp, IA, contatos, etiquetas e relatórios da agência) sem misturar com as lojas clientes.
-              </p>
-            </div>
-          </div>
-
-          <Link
-            href="/cliente?tenant=novaesweb"
-            style={{
-              padding: "10px 18px",
-              borderRadius: "10px",
-              background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-              color: "#fff",
-              textDecoration: "none",
-              fontWeight: 800,
-              fontSize: "13px",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              boxShadow: "0 4px 14px rgba(236, 72, 153, 0.35)"
-            }}
-          >
-            <Smartphone size={16}/> Abrir Meu CRM (NovaesWeb)
-          </Link>
-        </div>
+        {currentNav === "providers" && <ProvidersWorkspace />}
+        {currentNav === "crm" && (
+          <ClientWorkspace
+            embedded
+            initialTenant="novaesweb"
+            activeTabOverride={crmActiveTab}
+            onTabChange={setCrmActiveTab}
+          />
+        )}
 
         {/* FILA DE SOLICITAÇÕES DE UPGRADE DOS CLIENTES */}
-        {upgradeRequests.filter(r => r.status === "pending").length > 0 && (
+        {currentNav === "clients" && upgradeRequests.filter(r => r.status === "pending").length > 0 && (
           <div
             className="op-card"
             style={{
@@ -2010,11 +2107,11 @@ export default function AdminCRM() {
                   >
                     <div>
                       <strong style={{color: "#fff", fontSize: "14px"}}>
-                        {reqItem.tenantName}
+                        {reqItem.storeName}
                       </strong>{" "}
                       <span style={{fontSize: "12px", color: "#cbd5e1"}}>
                         solicitou upgrade de <strong>{reqItem.currentPlanName}</strong> para{" "}
-                        <strong style={{color: "#ec4899"}}>{reqItem.requestedPlanName}</strong>
+                        <strong style={{color: "#ec4899"}}>{reqItem.targetPlanName}</strong>
                       </span>
                       {reqItem.reason && (
                         <small style={{display: "block", color: "#9ca3af", marginTop: "3px"}}>
@@ -2030,7 +2127,7 @@ export default function AdminCRM() {
                         onClick={() => handleResolveUpgradeRequest(reqItem, "approved")}
                         style={{padding: "7px 14px", fontSize: "12px", background: "#00db8c", color: "#052e16", fontWeight: 800, borderRadius: "8px"}}
                       >
-                        ✅ Aprovar &amp; Ativar {reqItem.requestedPlanName}
+                        ✅ Aprovar &amp; Ativar {reqItem.targetPlanName}
                       </button>
                       <button
                         type="button"
@@ -3237,9 +3334,9 @@ export default function AdminCRM() {
                     <input
                       type="radio"
                       name="vigencia"
-                      value="next_renewal"
-                      checked={vigencia === "next_renewal"}
-                      onChange={() => setVigencia("next_renewal")}
+                      value="next_cycle"
+                      checked={vigencia === "next_cycle"}
+                      onChange={() => setVigencia("next_cycle")}
                       style={{accentColor: "#ec4899"}}
                     />
                     <span><strong>Na Próxima Renovação:</strong> Atualizar no próximo vencimento/ciclo.</span>

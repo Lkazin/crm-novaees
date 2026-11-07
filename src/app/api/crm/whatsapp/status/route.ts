@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
@@ -50,36 +51,33 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    let whatsappSlots = undefined;
-    let isChannelPausedByDowngrade = false;
+    const channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
+    if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
+    tenantId = channelAccess.tenant.id;
 
-    if (tenantId && supaUrl && supaKey) {
-      try {
-        const [effectivePlan, rTenant, rCh] = await Promise.all([
-          getEffectiveTenantPlan(tenantId),
-          fetch(`${supaUrl}/rest/v1/crm_tenants?id=eq.${encodeURIComponent(tenantId)}&select=name&limit=1`, {
-            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
-            cache: "no-store"
-          }),
-          fetch(`${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${encodeURIComponent(tenantId)}&select=id,instance_name,status&order=created_at.asc`, {
-            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
-            cache: "no-store"
-          })
-        ]);
-        const tData = rTenant.ok ? await rTenant.json() : [];
-        const tenantName = tData?.[0]?.name || "Empresa";
-        const channels = rCh.ok ? await rCh.json() : [];
-        const slots = buildTenantWhatsappSlots(tenantName, channels, effectivePlan);
-        if (includeAllSlots) {
-          whatsappSlots = slots;
-        }
-        const currentSlotNum = extractSlotFromInstanceName(instanceName);
-        const currentSlotObj = slots.find(s => s.slot === currentSlotNum);
-        if (currentSlotObj?.pausedByDowngrade) {
-          isChannelPausedByDowngrade = true;
-        }
-      } catch {}
-    }
+    if (!supaUrl || !supaKey) return NextResponse.json({ error: "plan_verification_unavailable" }, { status: 503 });
+    let effectivePlan;
+    try { effectivePlan = await getEffectiveTenantPlan(tenantId); }
+    catch { return NextResponse.json({ error: "plan_verification_unavailable" }, { status: 503 }); }
+    const currentSlotNum = extractSlotFromInstanceName(instanceName);
+    const requestedSlot = req.nextUrl.searchParams.get("slot");
+    if (requestedSlot && (!/^[1-5]$/.test(requestedSlot) || Number(requestedSlot) !== currentSlotNum)) return NextResponse.json({ error: "slot_instance_mismatch" }, { status: 403 });
+    if (effectivePlan.isSuspended) return NextResponse.json({ error: "ACCOUNT_SUSPENDED", state: "suspended" }, { status: 403 });
+    if (effectivePlan.featureStates?.ai_chat?.state === "maintenance") return NextResponse.json({ error: "FEATURE_MAINTENANCE", state: "maintenance" }, { status: 503 });
+    if (currentSlotNum > effectivePlan.maxWhatsappConnections) return NextResponse.json({ error: "whatsapp_slot_locked", slot: currentSlotNum, maxAllowed: effectivePlan.maxWhatsappConnections }, { status: 403 });
+    let whatsappSlots = undefined;
+    const [rTenant, rCh] = await Promise.all([
+      fetch(supaUrl + "/rest/v1/crm_tenants?id=eq." + tenantId + "&select=name&limit=1", { headers: { apikey: supaKey, Authorization: "Bearer " + supaKey }, cache: "no-store" }),
+      fetch(supaUrl + "/rest/v1/crm_channels?tenant_id=eq." + tenantId + "&select=id,instance_name,status&order=created_at.asc", { headers: { apikey: supaKey, Authorization: "Bearer " + supaKey }, cache: "no-store" }),
+    ]);
+    if (!rTenant.ok || !rCh.ok) return NextResponse.json({ error: "channel_verification_unavailable" }, { status: 503 });
+    const tenants = await rTenant.json();
+    const channels = await rCh.json();
+    if (!Array.isArray(tenants) || tenants.length !== 1 || !Array.isArray(channels)) return NextResponse.json({ error: "channel_verification_unavailable" }, { status: 503 });
+    const slots = buildTenantWhatsappSlots(tenants[0].name, channels, effectivePlan);
+    if (includeAllSlots) whatsappSlots = slots;
+    const isChannelPausedByDowngrade = channels.some((c: { instance_name: string; status: string }) => c.instance_name === instanceName && c.status === "paused");
+    if (isChannelPausedByDowngrade) return NextResponse.json({ error: "channel_paused", state: "paused", connected: false, slot: currentSlotNum, whatsappSlots }, { status: 403 });
 
     if (!key) {
       return NextResponse.json({
@@ -151,7 +149,7 @@ export async function GET(req: NextRequest) {
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const instObj = Array.isArray(infoData)
-              ? infoData.find((i: any) => (i?.name || i?.instance?.instanceName || i?.instanceName) === instanceName) || infoData[0]
+              ? infoData.find((i: { name?: string; instanceName?: string; instance?: { instanceName?: string } }) => (i?.name || i?.instance?.instanceName || i?.instanceName) === instanceName) || infoData[0]
               : infoData?.instance || infoData;
             if (instObj) {
               phoneNumber = phoneNumber || extractPhoneFromJid(instObj.ownerJid || instObj.owner || instObj.number || instObj?.instance?.owner);
@@ -168,7 +166,7 @@ export async function GET(req: NextRequest) {
       if (supaUrl && supaKey && !isChannelPausedByDowngrade && (isConnected || state === "close")) {
         const dbStatus = isConnected ? "connected" : "disconnected";
         try {
-          const patchRes = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
+          const patchRes = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}&tenant_id=eq.${tenantId}`, {
             method: "PATCH",
             headers: {
               apikey: supaKey,
@@ -178,7 +176,8 @@ export async function GET(req: NextRequest) {
             },
             body: JSON.stringify({ status: dbStatus })
           });
-          const updated = patchRes.ok ? await patchRes.json() : [];
+          if (!patchRes.ok) throw new Error("channel_status_write_failed");
+          const updated = await patchRes.json();
           if (Array.isArray(updated) && updated.length === 0 && tenantId) {
             await fetch(`${supaUrl}/rest/v1/crm_channels`, {
               method: "POST",
@@ -258,6 +257,6 @@ export async function GET(req: NextRequest) {
       }, { status: 200 });
     }
   } catch {
-    return NextResponse.json({ error: "Falha ao verificar status" }, { status: 500 });
+    return NextResponse.json({ error: "status_verification_unavailable" }, { status: 503 });
   }
 }

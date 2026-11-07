@@ -132,17 +132,8 @@ export async function POST(request: NextRequest) {
     }
 
     const masterPassword = process.env.CRM_MASTER_PASSWORD?.trim() || "";
-    const adminToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "";
 
-    const isMasterPasswordMatch = Boolean(
-      (masterPassword && timingSafeMatch(password, masterPassword)) ||
-      (masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword.slice(0, -1))) ||
-      (!masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword + ".")) ||
-      timingSafeMatch(password, "Noah2027.") ||
-      timingSafeMatch(password, "Noah2027") ||
-      timingSafeMatch(password, "NovaesWeb@2026Admin") ||
-      (adminToken && timingSafeMatch(password, adminToken))
-    );
+    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(password, masterPassword));
 
     // 1. Attempt Supabase Auth if email is provided
     let supaAccessToken: string | null = null;
@@ -205,7 +196,7 @@ export async function POST(request: NextRequest) {
         maxAge
       });
 
-      // If user also authenticated with Supabase, set operator cookie too
+      // If user also authenticated with Supabase, set operator cookie too; otherwise clear it
       if (supaAccessToken) {
         response.cookies.set(sessionCookieName(), supaAccessToken, {
           httpOnly: true,
@@ -213,6 +204,14 @@ export async function POST(request: NextRequest) {
           secure: isHttps,
           path: "/",
           maxAge: rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge
+        });
+      } else {
+        response.cookies.set(sessionCookieName(), "", {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: isHttps,
+          path: "/",
+          maxAge: 0
         });
       }
 

@@ -11,7 +11,7 @@ function sanitizeQr(val: unknown): string | null {
   return null;
 }
 
-function resolveInstanceName(body: Record<string, any>, queryInstance?: string | null): string {
+function resolveInstanceName(body: Record<string, unknown>, queryInstance?: string | null): string {
   const raw = (
     body.instance ||
     body.instanceName ||

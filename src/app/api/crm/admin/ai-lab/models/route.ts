@@ -62,7 +62,6 @@ export async function GET(request: NextRequest) {
       if (res.ok) {
         const data = await res.json();
         const liveList = (data?.data || []) as Array<{ id: string }>;
-        const liveIds = new Set(liveList.map(m => m.id));
 
         // Add any additional auto models from the gateway
         const autoFromGateway = liveList

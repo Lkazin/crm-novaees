@@ -1,7 +1,13 @@
+import { memoryAttendanceQuota } from "../crm/attendance-quota.fixture";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentConfig } from "./config";
-import { processWebhook, getBrazilMonthKey } from "./processor";
+import { processWebhook as processWebhookActual, getBrazilMonthKey } from "./processor";
+
+const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
+ getStoreContext: async()=>({tenantId:"11111111-1111-4111-8111-111111111111",quotaLimit:200,context:{}}),
+ ...deps, quota:deps.quota || (deps.redis ? memoryAttendanceQuota(deps.redis as never) : undefined)
+});
 
 const cfg: AgentConfig = {
   evolutionUrl: "http://localhost:8080", evolutionKey: "dummy", instance: "crmtest",
@@ -224,4 +230,10 @@ test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imed
   assert.equal(aiResDec.status, "sent");
   assert.equal(await db.get(decKey), "1");
   assert.equal(await db.get(novKey), "2");
+});
+
+test("missing company context blocks generation, sending and quota access",async()=>{
+ let generated=0,sent=0;
+ const result=await processWebhookActual(payload,cfg,{getStoreContext:async()=>({}),generate:async()=>{generated++;return "No";},send:async()=>{sent++;}});
+ assert.equal(result.reason,"store_context_unavailable");assert.equal(generated,0);assert.equal(sent,0);
 });

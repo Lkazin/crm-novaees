@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
+import { requireTenantFeature } from "@/lib/crm/plans";
+import { authorizeCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
-import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
@@ -24,17 +26,27 @@ export async function POST(request: NextRequest) {
   if (!UUID.test(tenant) || !UUID.test(conversation)) return privateJson({ error: "invalid_request" }, 400);
 
   try {
-    const operator = await verifyOperator();
-    if (!operator) return privateJson({ error: "unauthorized" }, 401);
 
-    const member = await supabaseRows<{ role: string }[]>(
-      "crm_tenant_memberships?select=role&tenant_id=eq." + tenant + "&user_id=eq." + operator.id + "&limit=1", operator.token);
-    if (member.length !== 1 || !["owner", "admin", "agent"].includes(member[0].role))
-      return privateJson({ error: "not_authorized" }, 403);
+    const access = await authorizeCrmTenant(request, tenant, ["owner", "admin", "agent"]);
+    if (!access) return privateJson({ error: "not_authorized" }, 403);
+    const featureGuard = await requireTenantFeature(tenant, "human_handoff");
+    if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
+    if (targetMode === "ai") {
+      const aiGuard = await requireTenantFeature(tenant, "ai_chat");
+      if (!aiGuard.allowed) return privateJson({ error: aiGuard.errorCode, state: aiGuard.state }, aiGuard.statusHttp);
+    }
+    const operator = { id: access.operatorId };
 
     const { url } = supabaseSettings();
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
     if (secret.length < 30) return privateJson({ error: "service_not_configured" }, 503);
+
+    const conversationCheck = await fetch(url + `/rest/v1/crm_conversations?select=id&id=eq.${conversation}&tenant_id=eq.${tenant}&limit=1`, {
+      headers: { apikey: secret, Authorization: `Bearer ${secret}` }, cache: "no-store", signal: AbortSignal.timeout(7000)
+    });
+    if (!conversationCheck.ok) return privateJson({ error: "conversation_lookup_failed" }, 503);
+    const ownedConversations = await conversationCheck.json() as Array<{ id: string }>;
+    if (ownedConversations.length !== 1) return privateJson({ error: "conversation_not_found" }, 404);
 
     const redisUrl = process.env.CRM_REDIS_URL;
 
@@ -197,7 +209,11 @@ export async function POST(request: NextRequest) {
 
       return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "ai" });
     } else {
-      const r = await fetch(url + "/rest/v1/rpc/crm_operator_claim_conversation", {
+      const r = access.isMaster ? await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversation}&tenant_id=eq.${tenant}`, {
+        method: "PATCH", cache: "no-store", signal: AbortSignal.timeout(9000),
+        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "human", status: "open", assigned_to: null })
+      }) : await fetch(url + "/rest/v1/rpc/crm_operator_claim_conversation", {
         method: "POST", cache: "no-store", signal: AbortSignal.timeout(9000),
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
         body: JSON.stringify({ p_tenant: tenant, p_conversation: conversation, p_actor: operator.id })
@@ -243,9 +259,9 @@ export async function POST(request: NextRequest) {
       let summary = "";
       try {
         const effectivePlan = await getEffectiveTenantPlan(tenant);
-        if (effectivePlan.allowedFeatures.includes("handoff_summary")) {
+        if (crmFeatureAllowed(effectivePlan, "handoff_summary")) {
           const rMsgs = await fetch(
-            url + `/rest/v1/crm_messages?conversation_id=eq.${conversation}&select=direction,body,sender_type&order=created_at.desc&limit=8`,
+            url + `/rest/v1/crm_messages?conversation_id=eq.${conversation}&tenant_id=eq.${tenant}&select=direction,body,sender_type&order=created_at.desc&limit=8`,
             { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
           );
           if (rMsgs.ok) {
