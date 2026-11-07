@@ -4,7 +4,7 @@ import { isWithinOperatingHours, processWebhook } from "../agent/processor";
 import { detectCustomerEscalation } from "../agent/escalation";
 import { parseIncoming } from "../agent/parse";
 import { tenantInstanceSlug } from "./supabase-ingest";
-import type { StoreAiContext } from "../agent/ai";
+import { buildSystemPrompt, formatOperatingHoursForPrompt, type StoreAiContext } from "../agent/ai";
 import type { AgentConfig } from "../agent/config";
 
 const baseCfg: AgentConfig = {
@@ -420,4 +420,54 @@ test("6.3.c Recebimento de mensagem real: suporta JID padrão e @lid com remoteJ
   assert.equal(tenantInstanceSlug("Pizzaria do Zé"), "loja_pizzaria_do_z_");
   assert.equal(tenantInstanceSlug("Clínica Saúde"), "loja_cl_nica_sa_de");
   assert.notEqual(tenantInstanceSlug("Pizzaria do Zé"), tenantInstanceSlug("Clínica Saúde"));
+});
+
+// ============================================================================
+// 6.4 TESTES DE BASE DE CONHECIMENTO, HORÁRIO NO PROMPT, PALAVRAS ERRADAS E CLIENTE NERVOSO
+// ============================================================================
+
+test("6.4.a buildSystemPrompt injeta Nome da Assistente, Horários do Estabelecimento, Instruções e Base de Conhecimento", () => {
+  const saturdayMorningBrt = new Date("2026-11-07T10:30:00.000Z"); // 07:30 BRT
+  const hours: NonNullable<StoreAiContext["operatingHours"]> = {
+    enabled: false,
+    timezone: "America/Sao_Paulo",
+    openTime: "06:00",
+    closeTime: "18:00",
+    days: ["seg", "ter", "qua", "qui", "sex", "sab"],
+    schedule: {
+      seg: { enabled: true, openTime: "06:00", closeTime: "18:00" },
+      ter: { enabled: true, openTime: "06:00", closeTime: "18:00", hasBreak: true, breakStart: "12:00", breakEnd: "13:00" },
+      sab: { enabled: true, openTime: "06:00", closeTime: "18:00" },
+      dom: { enabled: false, openTime: "06:00", closeTime: "18:00" }
+    }
+  };
+
+  const formattedSchedule = formatOperatingHoursForPrompt(hours, saturdayMorningBrt);
+  assert.ok(formattedSchedule.includes("Sábado: das 06:00 às 18:00"), "Deve listar horário de sábado");
+  assert.ok(formattedSchedule.includes("Domingo: Fechado"), "Deve listar domingo como fechado");
+  assert.ok(formattedSchedule.includes("Intervalo/pausa das 12:00 às 13:00"), "Deve listar intervalo configurado");
+  assert.ok(formattedSchedule.includes("ABERTO AGORA"), "Deve identificar que está aberto às 07:30 BRT de sábado");
+
+  const prompt = buildSystemPrompt({
+    storeName: "Bella Pizza",
+    agentLabel: "Bia - Atendente Virtual",
+    instructions: "Atenda com simpatia e informe sempre os sabores.",
+    storeInfo: "Pizza Calabresa R$ 49,90 | Criamos sites personalizados na NovaesWeb.",
+    operatingHours: hours
+  });
+
+  assert.ok(prompt.includes("Bia - Atendente Virtual"), "Prompt deve incluir o nome da assistente virtual");
+  assert.ok(prompt.includes("Atenda com simpatia e informe sempre os sabores."), "Prompt deve incluir O que minha IA fala");
+  assert.ok(prompt.includes("Pizza Calabresa R$ 49,90"), "Prompt deve incluir a Base de Conhecimento");
+  assert.ok(prompt.includes("das 06:00 às 18:00"), "Prompt deve incluir os horários de funcionamento do painel");
+});
+
+test("6.4.b Detector de cliente nervoso e palavras escritas erradas (typos fonéticos)", () => {
+  // Cliente nervoso digitando com erros ortográficos
+  assert.equal(detectCustomerEscalation("meu pedido ta muito atrazadoooo cade??").category, "delay");
+  assert.equal(detectCustomerEscalation("atendimento horivel e pecimo").category, "complaint");
+  assert.equal(detectCustomerEscalation("estou muito nervoso com essa demora absurda").isEscalation, true);
+  assert.equal(detectCustomerEscalation("quero meu reembolço agora ou vou no procom").isEscalation, true);
+  assert.equal(detectCustomerEscalation("quero falar com um atedente umano").category, "human_request");
+  assert.equal(detectCustomerEscalation("me passa pra uma pesoa").category, "human_request");
 });

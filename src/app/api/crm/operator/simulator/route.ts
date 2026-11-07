@@ -65,18 +65,19 @@ export async function POST(request: NextRequest) {
     const tenants = (await rTenant.json()) as Array<{ name: string }>;
     const storeName = tenants[0]?.name || "Nossa Loja";
 
-    // 2. Fetch agent instructions
+    // 2. Fetch agent instructions & label
     const rAgent = await fetch(url + `/rest/v1/crm_agents?tenant_id=eq.${tenantId}&limit=1`, {
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
       cache: "no-store"
     });
     const agents = (await rAgent.json()) as Array<{ label: string; instructions: string; provider_route: string }>;
+    const agentLabel = agents[0]?.label || "Assistente Virtual";
     const instructions = agents[0]?.instructions || "Atenda os clientes com simpatia, agilidade e clareza.";
     const preferredModel = agents[0]?.provider_route || "auto/best-chat";
 
-    // 3. Fetch published knowledge articles
+    // 3. Fetch published knowledge articles (up to 20)
     const rArticles = await fetch(
-      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=5`,
+      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
       {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
@@ -87,18 +88,43 @@ export async function POST(request: NextRequest) {
       ? articles.map(a => `### ${a.title}\n${a.body}`).join("\n\n")
       : "";
 
-    // 4. Build context
+    // 4. Fetch operating hours from crm_tenant_settings
+    let operatingHours: StoreAiContext["operatingHours"] = undefined;
+    try {
+      const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+        cache: "no-store"
+      });
+      if (rSettings.ok) {
+        const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
+        const dbTimezone = settings[0]?.timezone || "America/Sao_Paulo";
+        const rawDesc = settings[0]?.business_description ?? "";
+        if (rawDesc.startsWith("{")) {
+          const parsed = JSON.parse(rawDesc);
+          if (parsed.ai_settings?.operatingHours) {
+            operatingHours = {
+              timezone: dbTimezone,
+              ...parsed.ai_settings.operatingHours
+            };
+          }
+        }
+      }
+    } catch {}
+
+    // 5. Build context
     const context: StoreAiContext = {
       storeName,
+      agentLabel,
       instructions,
       storeInfo,
-      history
+      history,
+      operatingHours
     };
 
     const cfg: AiConfig = {
       aiUrl: omniUrl,
       aiKey: omniKey,
-      aiModel: preferredModel.startsWith("auto/") ? preferredModel : "auto/best-chat",
+      aiModel: preferredModel.startsWith("auto") ? preferredModel : "auto/best-chat",
       systemPrompt: "Informações gerais da loja."
     };
 

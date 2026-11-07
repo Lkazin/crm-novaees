@@ -155,9 +155,9 @@ async function getStoreAiContext(instanceName: string): Promise<{
       return { isBlocked: true, channelFound: true, tenantId };
     }
 
-    // 4. Fetch store knowledge articles
+    // 4. Fetch store knowledge articles (up to 20 published articles)
     const rArticles = await fetch(
-      `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=5`,
+      `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
       {
         headers: { apikey: key, Authorization: `Bearer ${key}` },
         cache: "no-store"
@@ -217,6 +217,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       isTrial: effectivePlan.isTrial,
       context: {
         storeName: tenants?.[0]?.name,
+        agentLabel: agents?.[0]?.label || "Assistente Virtual",
         instructions: agents?.[0]?.instructions,
         storeInfo,
         primaryModel,

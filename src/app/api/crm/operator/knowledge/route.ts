@@ -44,6 +44,9 @@ export async function POST(request:NextRequest) {
   const payload=data&&typeof data==="object"?data as Record<string,unknown>:{};
   if(!UUID.test(String(payload.tenantId??""))||!valid(payload.title,3,200)||!valid(payload.body,1,20000))
     return privateJson({error:"invalid_article"},400);
+  const articleStatus=["draft","published","archived"].includes(String(payload.status??""))
+    ? String(payload.status)
+    : "published";
   try {
     const operator=await verifyOperator();
     if(!operator)return privateJson({error:"unauthorized"},401);
@@ -53,12 +56,12 @@ export async function POST(request:NextRequest) {
     if(!members.length)return privateJson({error:"tenant_forbidden"},403);
     const response=await write("crm_knowledge_articles","POST",operator,{
       tenant_id:payload.tenantId,title:(payload.title as string).trim(),
-      body:(payload.body as string).trim(),status:"draft",created_by:operator.id
+      body:(payload.body as string).trim(),status:articleStatus,created_by:operator.id
     });
     if(!response.ok)return privateJson({error:"knowledge_denied"},403);
     const added=await response.json() as {id:string}[];
     if(added.length!==1)return privateJson({error:"knowledge_unconfirmed"},503);
-    return privateJson({created:true,id:added[0].id,status:"draft"},201);
+    return privateJson({created:true,id:added[0].id,status:articleStatus},201);
   }catch{return privateJson({error:"knowledge_service_unavailable"},503);}
 }
 export async function PATCH(request:NextRequest) {

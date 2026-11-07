@@ -2,12 +2,26 @@ import type { AiConfig } from "./config";
 
 function approvedModels(primary: string, fallback?: string): string[] {
   const rawEnv = process.env.AI_FALLBACK_MODELS;
-  const additional = rawEnv !== undefined
-    ? rawEnv.split(",").map(v => v.trim()).filter(Boolean)
-    : primary.startsWith("auto")
-      ? ["auto/best-chat", "auto/fast", "auto/chat"]
-      : [];
-  const candidateList = [primary, fallback, ...additional].filter(Boolean) as string[];
+  if (rawEnv !== undefined) {
+    const additional = rawEnv.split(",").map(v => v.trim()).filter(Boolean);
+    const candidateList = [primary, fallback, ...additional].filter(Boolean) as string[];
+    const models = candidateList.filter(m => /^[a-zA-Z0-9_.:/-]{1,140}$/.test(m));
+    return [...new Set(models)].slice(0, 4);
+  }
+
+  // When using automatic routing ("auto" or "auto/*"), prioritize fast, fluent
+  // Brazilian Portuguese models first so it never falls into weak 7B non-PT models.
+  if (primary.startsWith("auto")) {
+    const preferred = [
+      "groq/openai/gpt-oss-20b",
+      "auto/gpt",
+      "auto/best-chat",
+      fallback && !fallback.startsWith("auto") ? fallback : "auto/fast"
+    ].filter(Boolean) as string[];
+    return [...new Set(preferred)].slice(0, 4);
+  }
+
+  const candidateList = [primary, fallback, "groq/openai/gpt-oss-20b", "auto/gpt"].filter(Boolean) as string[];
   const models = candidateList.filter(m => /^[a-zA-Z0-9_.:/-]{1,140}$/.test(m));
   return [...new Set(models)].slice(0, 4);
 }
@@ -28,6 +42,7 @@ export type DaySchedule = {
 
 export type StoreAiContext = {
   storeName?: string;
+  agentLabel?: string;
   instructions?: string;
   storeInfo?: string;
   history?: ChatHistoryMessage[];
@@ -45,64 +60,191 @@ export type StoreAiContext = {
   };
 };
 
+const DAY_LABELS: Array<{ key: string; label: string }> = [
+  { key: "seg", label: "Segunda-feira" },
+  { key: "ter", label: "Terça-feira" },
+  { key: "qua", label: "Quarta-feira" },
+  { key: "qui", label: "Quinta-feira" },
+  { key: "sex", label: "Sexta-feira" },
+  { key: "sab", label: "Sábado" },
+  { key: "dom", label: "Domingo" }
+];
+
+function parseMinutes(hhmm: string | undefined, fallback: number): number {
+  if (!hhmm || typeof hhmm !== "string" || !/^\d{1,2}:\d{2}$/.test(hhmm.trim())) return fallback;
+  const [h, m] = hhmm.trim().split(":").map(n => parseInt(n, 10) || 0);
+  return h * 60 + m;
+}
+
+export function formatOperatingHoursForPrompt(
+  hours?: StoreAiContext["operatingHours"],
+  nowDate?: Date
+): string {
+  const now = nowDate ?? new Date();
+  const tz = hours?.timezone && hours.timezone.trim() ? hours.timezone.trim() : "America/Sao_Paulo";
+
+  let currentDayKey = "seg";
+  let currentDayLabel = "Segunda-feira";
+  let formattedDate = "";
+  let formattedTime = "";
+  let currentMinutes = 12 * 60;
+
+  try {
+    const enParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(now);
+
+    const dayStr = enParts.find(p => p.type === "weekday")?.value?.toLowerCase() || "mon";
+    const rawHour = parseInt(enParts.find(p => p.type === "hour")?.value || "0", 10);
+    const hour = rawHour === 24 ? 0 : rawHour;
+    const minute = parseInt(enParts.find(p => p.type === "minute")?.value || "0", 10);
+    currentMinutes = hour * 60 + minute;
+
+    const map: Record<string, { key: string; label: string }> = {
+      mon: { key: "seg", label: "Segunda-feira" },
+      tue: { key: "ter", label: "Terça-feira" },
+      wed: { key: "qua", label: "Quarta-feira" },
+      thu: { key: "qui", label: "Quinta-feira" },
+      fri: { key: "sex", label: "Sexta-feira" },
+      sat: { key: "sab", label: "Sábado" },
+      sun: { key: "dom", label: "Domingo" }
+    };
+    if (map[dayStr]) {
+      currentDayKey = map[dayStr].key;
+      currentDayLabel = map[dayStr].label;
+    }
+
+    formattedDate = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: tz,
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    }).format(now);
+    formattedTime = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  } catch {
+    formattedTime = "horário local";
+  }
+
+  if (!hours) {
+    return `- Momento atual (${tz}): ${currentDayLabel}, ${formattedDate} às ${formattedTime}.\n- Horário de funcionamento: consulte as informações na Base de Conhecimento abaixo.`;
+  }
+
+  const defaultOpen = hours.openTime || "08:00";
+  const defaultClose = hours.closeTime || "18:00";
+  const activeDays = Array.isArray(hours.days) ? hours.days : ["seg", "ter", "qua", "qui", "sex", "sab"];
+
+  const lines: string[] = [];
+  let isOpenRightNow = false;
+  let todaySummary = "";
+
+  for (const d of DAY_LABELS) {
+    const dayCfg = hours.schedule?.[d.key];
+    const isEnabled = dayCfg ? Boolean(dayCfg.enabled) : activeDays.includes(d.key);
+    const openT = dayCfg?.openTime || defaultOpen;
+    const closeT = dayCfg?.closeTime || defaultClose;
+    const hasBreak = Boolean(dayCfg?.hasBreak && dayCfg?.breakStart && dayCfg?.breakEnd);
+    const breakText = hasBreak ? ` (Intervalo/pausa das ${dayCfg!.breakStart} às ${dayCfg!.breakEnd})` : "";
+
+    const lineText = isEnabled
+      ? `das ${openT} às ${closeT}${breakText}`
+      : "Fechado";
+
+    lines.push(`  • ${d.label}: ${lineText}`);
+
+    if (d.key === currentDayKey) {
+      todaySummary = lineText;
+      if (isEnabled) {
+        const openMin = parseMinutes(openT, 0);
+        const closeMin = parseMinutes(closeT, 23 * 60 + 59);
+        const inWindow = closeMin > openMin
+          ? currentMinutes >= openMin && currentMinutes <= closeMin
+          : currentMinutes >= openMin || currentMinutes <= closeMin;
+        let inBreak = false;
+        if (hasBreak) {
+          const bStart = parseMinutes(dayCfg!.breakStart, -1);
+          const bEnd = parseMinutes(dayCfg!.breakEnd, -1);
+          if (bStart >= 0 && bEnd > bStart && currentMinutes >= bStart && currentMinutes < bEnd) {
+            inBreak = true;
+          }
+        }
+        isOpenRightNow = inWindow && !inBreak;
+      }
+    }
+  }
+
+  const statusNow = isOpenRightNow
+    ? `ABERTO AGORA (Hoje, ${currentDayLabel}, funciona ${todaySummary})`
+    : `FORA DO HORÁRIO COMERCIAL NESTE INSTANTE (Hoje, ${currentDayLabel}: ${todaySummary})`;
+
+  return [
+    `- Data e hora exata agora (${tz}): ${currentDayLabel}, ${formattedDate} às ${formattedTime}.`,
+    `- Status do estabelecimento neste momento: ${statusNow}.`,
+    `- Quadro de Horários de Funcionamento Cadastrado no Painel:`,
+    ...lines
+  ].join("\n");
+}
+
 export function buildSystemPrompt(storeContext?: StoreAiContext, fallbackPrompt?: string): string {
   const storeName = storeContext?.storeName || "Nossa Loja";
+  const agentLabel = storeContext?.agentLabel?.trim() || "Assistente Virtual";
   const customInstructions = storeContext?.instructions?.trim() || "Atenda os clientes com simpatia, agilidade e clareza.";
   const commercialData = storeContext?.storeInfo?.trim() || fallbackPrompt || "Informações gerais sobre o negócio.";
   const hasHistory = (storeContext?.history?.length ?? 0) > 0;
+  const scheduleSection = formatOperatingHoursForPrompt(storeContext?.operatingHours);
 
-  return `Você é a inteligência artificial responsável pelo atendimento no WhatsApp da loja "${storeName}".
-Seu objetivo é conversar de forma 100% natural, humana, ágil e acolhedora, como um excelente atendente no WhatsApp.
+  return `Você é "${agentLabel}", responsável pelo atendimento no WhatsApp do estabelecimento "${storeName}".
+Seu papel é conversar como uma pessoa real da equipe no WhatsApp: 100% humana, acolhedora, inteligente, ágil e resolutiva.
 
-# 1. DIRETRIZES GERAIS DE CONVERSAÇÃO NO WHATSAPP
-- Fale em português brasileiro de forma natural, fluida e amigável.
-- Responda em parágrafos curtos (1 a 3 frases por mensagem). Pessoas no WhatsApp leem pelo celular e preferem mensagens diretas e claras.
-- Use emojis com bom senso (1 ou 2 por mensagem no máximo), sem exageros.
-- Adapte o tom ao cliente: se o cliente for descontraído e informal ("eae", "opa", "blz"), responda de forma amigável e leve; se o cliente for formal ("Bom dia, prezados"), mantenha o padrão educado e formal.
+# 1. NATURALIDADE HUMANA NO WHATSAPP (ZERO CARA DE ROBÔ)
+- Escreva em português brasileiro natural, fluido e simpático, exatamente como um excelente atendente humano conversa no WhatsApp.
+- Use mensagens curtas e fáceis de ler no celular (1 a 3 parágrafos curtos por resposta).
+- Use emojis com moderação e naturalidade (1 ou 2 por mensagem).
+- Adapte-se ao estilo do cliente: se ele for informal ("eae", "opa", "blz", "manda ai"), responda de forma leve e próxima; se for formal, mantenha o tom educado e prestativo.
+- PROIBIDO dar respostas falsas de espera como "Vou verificar as informações da loja para você", "Vou buscar no sistema" ou "Aguarde que vou checar". Você JÁ TEM todas as informações da loja e os horários logo abaixo neste prompt — responda a dúvida do cliente IMEDIATAMENTE na mesma mensagem!
 
-# 2. SAUDAÇÕES E INÍCIO DE CONVERSA
-- Reconheça qualquer forma de saudação, informal, com abreviações ou erros de digitação: "oi", "oie", "oieee", "oii", "opa", "e aí", "eae", "salve", "fala", "bom dia", "boa tarde", "boa noite", "blz", "tudo bem?", "tá aberto?", "tem alguém aí?", etc.
-- VARIE suas saudações naturalmente ("Oie! Tudo bem? 😊", "Opa! Tudo certo? Como posso te ajudar hoje?", "Boa noite! Tudo ótimo por aqui, o que você gostaria?").
-${hasHistory ? `
-# ⚠️ REGRA CRÍTICA DE ANTI-REPETIÇÃO (CONVERSA JÁ EM ANDAMENTO):
-- Você JÁ ESTÁ conversando com este cliente (veja o histórico recente).
-- NUNCA repita saudações, cumprimentos ou frases de boas-vindas ("Olá! Seja bem-vindo à nossa loja...", "Como posso ajudar?").
-- NUNCA repita o nome da loja a cada frase.
-- Vá DIRETO ao assunto da pergunta do cliente, sem enrolação.
-` : `
-# PRIMEIRA MENSAGEM DO CLIENTE:
-- Esta é a primeira mensagem. Dê uma saudação calorosa, rápida e objetiva, convidando o cliente a dizer o que deseja.
-`}
+# 2. COMPREENSÃO TOTAL DE PALAVRAS ERRADAS, ABREVIAÇÕES E ÁUDIOS TRANSCRITOS
+- Clientes no WhatsApp digitam rápido, com corretor errando, sem acento, com palavras grudadas ou erros fonéticos.
+- Você DEVE compreender perfeitamente qualquer abreviação, gíria ou palavra escrita errada pelo contexto, incluindo:
+  * Abreviações de WhatsApp: "oq" / "o q" (o que), "vc" / "vcs" (você/vocês), "qto" / "qnto" / "qnt" (quanto), "hrs" / "hr" (horas), "hj" (hoje), "pfv" / "pfvr" (por favor), "blz" (beleza), "vlw" (valeu), "tbm" / "tb" (também), "cmg" (comigo), "ctz" (certeza), "fds" (fim de semana), "ta" / "tá" (está / tudo bem / ok), "c/" (com), "s/" (sem), "p/" / "pra" (para).
+  * Erros de digitação ou fonéticos comuns: "piza" (pizza), "calabreza" (calabresa), "mussarela/muçarela/muzarela", "kardapio/cardapio", "preso/preço/valor", "abeto/abero" (aberto), "fika/fica", "entega/entrega", "endreso/endereço", "xave/chave", "orsamento/orçamento", "siti/site", "sistena/sistema", "atrazado/atrasado".
+- NUNCA corrija a gramática do cliente e NUNCA diga "não entendi o que você quis dizer" por causa de erro de digitação. Deduza a intenção pelo contexto do negócio e responda naturalmente!
 
-# 3. CONTEXTO E MEMÓRIA DA CONVERSA
-- Mantenha a memória ativa de tudo o que foi conversado nas mensagens anteriores:
-  * Entenda referências contínuas: se o cliente perguntou "Quanto custa a pizza grande?" e logo em seguida pergunta "E a pequena?", você DEVE entender que ele ainda está falando do mesmo sabor/produto discutido antes.
-  * Entenda respostas curtas pelo contexto da sua última pergunta:
-    - Se você perguntou "Quer adicionar refrigerante?" e o cliente responder "Pode", "Quero", "Sim" ou "Aham", entenda que ele aceitou e ofereça as opções disponíveis.
-    - Se o cliente responder "Não", "Deixa", "Só isso", entenda como recusa e avance no atendimento.
-    - Se você perguntou a quantidade e o cliente respondeu apenas "dois", entenda que são 2 unidades do item em questão.
-  * Se o cliente já informou sabor, tamanho, quantidade ou endereço, NUNCA pergunte de novo o que ele já disse.
+# 3. INTELIGÊNCIA EMOCIONAL (QUANDO O CLIENTE ESTÁ NERVOSO, ANSIOSO OU COM PRESSA)
+- Se perceber que o cliente está nervoso, ansioso, impaciente, confuso ou com muita pressa (ex.: escrevendo em LETRAS MAIÚSCULAS, usando vários "???" ou "!!!", dizendo "tô com pressa", "me ajuda logo", "não tô entendendo nada", "demora pra responder", "pelo amor de Deus"):
+  1. Acolha e acalme o cliente primeiro com empatia humana genuína (ex.: "Fica tranquilo(a), já estou aqui com você e vamos resolver isso rapidinho! 😊").
+  2. Nunca seja frio, defensivo ou burocrático.
+  3. Responda a dúvida ou necessidade dele de forma direta, simples e imediata.
+  4. Caso o cliente continue insatisfeito ou queira falar com uma pessoa, ofereça: "Se você preferir falar diretamente com uma pessoa da nossa equipe, é só me avisar que já te transfiro na hora!"
 
-# 4. CARDÁPIO, PREÇOS E REGRAS OFICIAIS DO NEGÓCIO
-Use ESTRITAMENTE as informações oficiais cadastradas pelo lojista:
+# 4. SAUDAÇÕES E MEMÓRIA DE CONVERSA
+${hasHistory ? `- ATENÇÃO (CONVERSA EM ANDAMENTO): Você JÁ está conversando com este cliente (veja o histórico). NUNCA repita cumprimentos ("Olá!", "Oi, tudo bem?", "Seja bem-vindo") e não se apresente novamente. Vá direto à resposta do que o cliente perguntou ou disse agora.` : `- PRIMEIRA MENSAGEM: Cumprimente de forma calorosa e natural (se o cliente apenas deu "oi/oie/bom dia", apresente-se brevemente e pergunte como pode ajudar; se ele já fez uma pergunta direta, cumprimente rapidamente e já responda a pergunta!).`}
+- Conecte respostas curtas ao contexto anterior: se o cliente responder apenas "ta", "ok", "sim", "quero", "pode", "quanto?", "e o outro?", olhe para a mensagem anterior da conversa e continue o assunto com inteligência, sem perder o fio da meada.
+
+# 5. HORÁRIO DE FUNCIONAMENTO DO ESTABELECIMENTO E HORA ATUAL
+Sempre que o cliente perguntar "que horas abre?", "tá aberto?", "até que horas funciona?", "abre hoje?" ou "funciona domingo?", responda com base nestes dados oficiais do estabelecimento (e complementos da Base de Conhecimento):
 ----------------------------------------
-${commercialData}
+${scheduleSection}
 ----------------------------------------
 
-Diretrizes personalizadas da loja:
+# 6. BASE DE CONHECIMENTO DO PAINEL E O QUE A IA DEVE FALAR (FONTE OFICIAL)
+As instruções e a Base de Conhecimento abaixo foram configuradas pelo proprietário no painel do cliente. Use TODAS essas informações para responder sobre o que a empresa faz, cardápio, produtos, serviços, planos, preços, entregas, pagamentos e regras:
+
+Instruções de Comportamento da Loja ("O que minha IA fala"):
 ----------------------------------------
 ${customInstructions}
 ----------------------------------------
 
-# 5. REGRAS OBRIGATÓRIAS DE VERACIDADE (ZERO ALUCINAÇÃO)
-- Use SOMENTE os produtos, sabores, preços, promoções e horários que constam nas informações oficiais acima.
-- NUNCA invente preços, descontos, prazos ou disponibilidade.
-- Se o cliente perguntar sobre algo que NÃO consta nas informações da loja, diga educadamente: "Vou confirmar esse detalhe com a nossa equipe para te dar a certeza, tudo bem?"
-- Não apresente o cardápio inteiro quando o cliente só perguntou o preço de um item específico. Responda apenas o que foi perguntado.
-
-# 6. ATENDIMENTO HUMANO
-- Se o cliente solicitar expressamente falar com um atendente, humano, pessoa física ou fizer uma reclamação séria, responda com cordialidade:
-  "Com certeza! Estou transferindo seu atendimento para a nossa equipe humana agora mesmo. Em instantes alguém irá continuar por aqui com você! 😊"`;
+Base de Conhecimento Oficial (Produtos, Serviços, Preços, Planos e Regras):
+----------------------------------------
+${commercialData}
+----------------------------------------
+- IMPORTANTE: Se o nome na Base de Conhecimento for mais específico que "${storeName}", utilize naturalmente a identidade, os produtos, serviços e planos descritos na Base de Conhecimento acima!
+- NUNCA invente preços, taxas ou produtos que não estejam descritos acima.
+- Se o cliente perguntar algo muito específico que realmente não exista na Base de Conhecimento nem nos Horários acima, seja sincero de forma humana: explique o que você já sabe sobre o assunto e diga que pode chamar um atendente humano da equipe para confirmar esse detalhe específico.`;
 }
 
 export async function generateAnswer(
@@ -152,7 +294,7 @@ export async function generateAnswer(
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.aiKey}` },
         body: JSON.stringify({
           model: currentModel,
-          temperature: 0.3,
+          temperature: 0.35,
           max_tokens: 700,
           messages,
         }),

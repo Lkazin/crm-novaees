@@ -122,17 +122,21 @@ export async function GET(request: NextRequest) {
       enabled: true
     };
 
-    // 2. Fetch main knowledge article (Cardápio / Regras da loja)
+    // 2. Fetch knowledge articles (prefer main "Informações da Loja e Cardápio")
     const rArticle = await fetch(
-      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenant}&order=updated_at.desc&limit=1`,
+      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenant}&order=updated_at.desc&limit=20`,
       {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }
     );
     const articles = (await rArticle.json()) as Array<{ id: string; title: string; body: string; status: string }>;
-    const storeInfo = articles[0]?.body ?? "";
-    const storeInfoTitle = articles[0]?.title ?? "Informações da Loja e Cardápio";
+    const mainArticle =
+      (Array.isArray(articles) && articles.find(a => a.title === "Informações da Loja e Cardápio")) ||
+      (Array.isArray(articles) && articles.find(a => a.status === "published")) ||
+      articles?.[0];
+    const storeInfo = mainArticle?.body ?? "";
+    const storeInfoTitle = mainArticle?.title ?? "Informações da Loja e Cardápio";
 
     // 3. Fetch effective plan & operating hours
     const effectivePlan = await getEffectiveTenantPlan(tenant);
@@ -259,20 +263,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 2. Upsert or Update main knowledge article if storeInfo is provided
+    // 2. Upsert or Update main knowledge article ("Informações da Loja e Cardápio") if storeInfo is provided
     const storeInfo = typeof body.storeInfo === "string" ? body.storeInfo.trim() : "";
     if (storeInfo.length > 0) {
       const rCheckArt = await fetch(
-        url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&limit=1`,
+        url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&order=updated_at.desc&limit=20`,
         {
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
           cache: "no-store"
         }
       );
-      const existingArticles = (await rCheckArt.json()) as Array<{ id: string }>;
+      const existingArticles = (await rCheckArt.json()) as Array<{ id: string; title: string }>;
+      const targetArticle =
+        (Array.isArray(existingArticles) && existingArticles.find(a => a.title === "Informações da Loja e Cardápio")) ||
+        (Array.isArray(existingArticles) && existingArticles.length === 1 ? existingArticles[0] : undefined);
 
-      if (existingArticles.length > 0) {
-        await fetch(url + `/rest/v1/crm_knowledge_articles?id=eq.${existingArticles[0].id}`, {
+      if (targetArticle) {
+        await fetch(url + `/rest/v1/crm_knowledge_articles?id=eq.${targetArticle.id}`, {
           method: "PATCH",
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
           body: JSON.stringify({
