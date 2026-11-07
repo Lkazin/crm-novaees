@@ -9,6 +9,7 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
   loading: () => <p role="status">Carregando CRM NovaesWeb...</p>,
 });
 
+type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
 type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
@@ -23,7 +24,7 @@ import {
   Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
   Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
-  CheckSquare, Square, Crown, Bot, BarChart3, Mail, Lock, EyeOff, LogIn, X
+  CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X
 } from "lucide-react";
 
 type Client = {
@@ -307,6 +308,17 @@ export default function AdminCRM() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "overdue" | "suspended">("all");
   const [currentNav, setCurrentNav] = useState<MasterSection>("clients");
+  const [crmActiveTab, setCrmActiveTab] = useState<CrmTab>("atendimentos");
+
+  const navigateCrm = useCallback((tab: CrmTab) => {
+    setCurrentNav("crm");
+    setCrmActiveTab(tab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("section", "crm");
+      window.history.pushState(null, "", url.toString());
+    }
+  }, []);
 
   useEffect(() => {
     const syncSection = () => {
@@ -1774,15 +1786,21 @@ export default function AdminCRM() {
           </div>
         </div>
 
-        {/* Navegação Master */}
+        {/* Navegação Master Unificada e Agrupada */}
         <nav className="nw-sidebar-nav" aria-label="Menu do Master">
+          {/* GRUPO 1: ADMINISTRAÇÃO MASTER */}
+          <div className="nw-sidebar-group-header">
+            <ShieldCheck size={13} style={{ color: "#ec4899" }}/>
+            <span>Administração Master</span>
+          </div>
+
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "clients" ? "active" : ""}`}
             aria-current={currentNav === "clients" ? "page" : undefined}
             onClick={() => navigateSection("clients")}
           >
-            <Building2 size={19}/>
+            <Building2 size={18}/>
             <span>Lojas &amp; Clientes</span>
             <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
               {clients.length}
@@ -1795,7 +1813,7 @@ export default function AdminCRM() {
             aria-current={currentNav === "plans" ? "page" : undefined}
             onClick={() => navigateSection("plans")}
           >
-            <CreditCard size={19}/>
+            <CreditCard size={18}/>
             <span>Planos &amp; Franquias</span>
             <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
               {plans.length}
@@ -1808,27 +1826,133 @@ export default function AdminCRM() {
             aria-current={currentNav === "kpis" ? "page" : undefined}
             onClick={() => navigateSection("kpis")}
           >
-            <DollarSign size={19}/>
+            <DollarSign size={18}/>
             <span>Faturamento &amp; Métricas</span>
           </button>
 
-          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
-
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "crm" ? "active" : ""}`}
-            aria-current={currentNav === "crm" ? "page" : undefined}
-            onClick={() => navigateSection("crm")}
-          >
-            <Crown size={19}/><span>CRM NovaesWeb</span>
-          </button>
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "providers" ? "active" : ""}`}
             aria-current={currentNav === "providers" ? "page" : undefined}
             onClick={() => navigateSection("providers")}
           >
-            <BrainCircuit size={19}/><span>Provedores de IA</span>
+            <BrainCircuit size={18}/>
+            <span>Provedores de IA</span>
+          </button>
+
+          {/* DIVISOR DE GRUPO */}
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "14px 4px 10px"}}/>
+
+          {/* GRUPO 2: CRM PRÓPRIO — OPERAÇÃO NOVAESWEB */}
+          <div className="nw-sidebar-group-header" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Crown size={13} style={{ color: "#ec4899" }}/>
+              <span style={{ color: "#ec4899" }}>CRM Próprio NovaesWeb</span>
+            </div>
+            <span style={{ fontSize: "9px", color: "#34d399", background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.3)", padding: "1px 6px", borderRadius: "6px", fontWeight: 700 }}>
+              Ativo
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "active" : ""}`}
+            aria-current={currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "page" : undefined}
+            onClick={() => navigateCrm("atendimentos")}
+          >
+            <Crown size={18}/>
+            <span>CRM NovaesWeb</span>
+          </button>
+
+          {/* Funções do CRM Próprio no menu lateral */}
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "atendimentos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "atendimentos" ? "page" : undefined}
+            onClick={() => navigateCrm("atendimentos")}
+          >
+            <MessageCircle size={15}/>
+            <span>Atendimentos &amp; Chat</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "whatsapp" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "whatsapp" ? "page" : undefined}
+            onClick={() => navigateCrm("whatsapp")}
+          >
+            <Smartphone size={15}/>
+            <span>WhatsApp (5 Conexões)</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "conhecimento" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "conhecimento" ? "page" : undefined}
+            onClick={() => navigateCrm("conhecimento")}
+          >
+            <Bot size={15}/>
+            <span>IA &amp; Instruções</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "artigos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "artigos" ? "page" : undefined}
+            onClick={() => navigateCrm("artigos")}
+          >
+            <BookOpen size={15}/>
+            <span>Base de Conhecimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "contatos" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "contatos" ? "page" : undefined}
+            onClick={() => navigateCrm("contatos")}
+          >
+            <Users size={15}/>
+            <span>Contatos &amp; Clientes</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "horarios" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "horarios" ? "page" : undefined}
+            onClick={() => navigateCrm("horarios")}
+          >
+            <Calendar size={15}/>
+            <span>Horários de Atendimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "equipe" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "equipe" ? "page" : undefined}
+            onClick={() => navigateCrm("equipe")}
+          >
+            <UserCheck size={15}/>
+            <span>Equipe &amp; Operadores</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "relatorios" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "relatorios" ? "page" : undefined}
+            onClick={() => navigateCrm("relatorios")}
+          >
+            <BarChart3 size={15}/>
+            <span>Relatórios de Atendimento</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "simulador" ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && crmActiveTab === "simulador" ? "page" : undefined}
+            onClick={() => navigateCrm("simulador")}
+          >
+            <Sparkles size={15}/>
+            <span>Simulador de IA</span>
           </button>
         </nav>
 
@@ -1937,7 +2061,14 @@ export default function AdminCRM() {
         )}
 
         {currentNav === "providers" && <ProvidersWorkspace />}
-        {currentNav === "crm" && <ClientWorkspace embedded initialTenant="novaesweb" />}
+        {currentNav === "crm" && (
+          <ClientWorkspace
+            embedded
+            initialTenant="novaesweb"
+            activeTabOverride={crmActiveTab}
+            onTabChange={setCrmActiveTab}
+          />
+        )}
 
         {/* FILA DE SOLICITAÇÕES DE UPGRADE DOS CLIENTES */}
         {currentNav === "clients" && upgradeRequests.filter(r => r.status === "pending").length > 0 && (

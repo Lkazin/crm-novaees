@@ -187,9 +187,16 @@ const INDUSTRY_PRESETS = [
 type ClientWorkspaceProps = {
   embedded?: boolean;
   initialTenant?: string;
+  activeTabOverride?: Tab;
+  onTabChange?: (tab: Tab) => void;
 };
 
-export default function ClientWorkspace({ embedded = false, initialTenant = "" }: ClientWorkspaceProps) {
+export default function ClientWorkspace({
+  embedded = false,
+  initialTenant = "",
+  activeTabOverride,
+  onTabChange
+}: ClientWorkspaceProps) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -198,7 +205,12 @@ export default function ClientWorkspace({ embedded = false, initialTenant = "" }
   const [error, setError] = useState("");
   const [data, setData] = useState<Data | null>(null);
   const [tenant, setTenant] = useState("");
-  const [activeTab, setActiveTab] = useState<Tab>(embedded ? "atendimentos" : "whatsapp");
+  const [activeTab, setActiveTabState] = useState<Tab>(activeTabOverride || (embedded ? "atendimentos" : "whatsapp"));
+
+  const setActiveTab = useCallback((nextTab: Tab) => {
+    setActiveTabState(nextTab);
+    onTabChange?.(nextTab);
+  }, [onTabChange]);
   const [selected, setSelected] = useState("");
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -408,6 +420,15 @@ export default function ClientWorkspace({ embedded = false, initialTenant = "" }
       setLoadingReports(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (activeTabOverride && activeTabOverride !== activeTab) {
+      setActiveTabState(activeTabOverride);
+      if (activeTabOverride === "relatorios" && tenant) {
+        void fetchReports(tenant);
+      }
+    }
+  }, [activeTabOverride, activeTab, tenant, fetchReports]);
 
   const fetchAiSettings = useCallback(async (tenantId: string, force = false) => {
     if (!tenantId) return;
