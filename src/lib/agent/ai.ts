@@ -12,6 +12,15 @@ export type ChatHistoryMessage = {
   content: string;
 };
 
+export type DaySchedule = {
+  enabled: boolean;
+  openTime: string;
+  closeTime: string;
+  hasBreak?: boolean;
+  breakStart?: string;
+  breakEnd?: string;
+};
+
 export type StoreAiContext = {
   storeName?: string;
   instructions?: string;
@@ -21,10 +30,13 @@ export type StoreAiContext = {
   fallbackModel?: string;
   operatingHours?: {
     enabled: boolean;
+    timezone?: string;
     openTime: string;
     closeTime: string;
     days?: string[];
+    sendClosedMessage?: boolean;
     closedMessage?: string;
+    schedule?: Record<string, DaySchedule>;
   };
 };
 

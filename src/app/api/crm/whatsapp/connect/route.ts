@@ -30,6 +30,9 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
     const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
     if (!supaUrl || !supaKey) return;
 
+    // DB check constraint on crm_channels.status only allows: 'disconnected' | 'connected' | 'paused'
+    const dbStatus = status === "connected" ? "connected" : "disconnected";
+
     // First try updating existing record by instance_name
     const res = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
       method: "PATCH",
@@ -39,7 +42,7 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
         "Content-Type": "application/json",
         Prefer: "return=representation"
       },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status: dbStatus })
     });
 
     const updated = res.ok ? await res.json() : [];
@@ -56,12 +59,63 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
           tenant_id: tenantId,
           provider: "evolution",
           instance_name: instanceName,
-          status
+          status: dbStatus
         })
       });
     }
   } catch (err) {
     console.warn("[syncChannelStatus] Erro ao sincronizar status do canal:", err);
+  }
+}
+
+async function configureEvolutionWebhook(url: string, key: string, secret: string, instanceName: string, reqOrigin?: string, isVercel?: boolean) {
+  if (!secret) return;
+  try {
+    const isPublicOrigin = reqOrigin && /^https:\/\//.test(reqOrigin) && !reqOrigin.includes("localhost") && !reqOrigin.includes("127.0.0.1");
+    const webhookAppUrl = process.env.NEXT_PUBLIC_APP_URL || (isPublicOrigin ? reqOrigin : isVercel ? "https://crm-novaees.vercel.app" : "http://host.docker.internal:3040");
+    const targetWebhookUrl = `${webhookAppUrl.replace(/\/$/, "")}/api/evolution/webhook`;
+    const events = ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"];
+
+    const res = await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: key },
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: targetWebhookUrl,
+          byEvents: false,
+          base64: false,
+          events,
+          headers: {
+            "x-crm-webhook-secret": secret
+          }
+        }
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!res.ok) {
+      // Fallback for Evolution API v1 flat webhook schema
+      await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: key },
+        body: JSON.stringify({
+          enabled: true,
+          url: targetWebhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events,
+          headers: {
+            "x-crm-webhook-secret": secret
+          }
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000)
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.warn("[WhatsApp Connect] Falha não bloqueante ao configurar webhook:", err);
   }
 }
 
@@ -201,6 +255,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (state === "open") {
+      await configureEvolutionWebhook(url, key, secret, instanceName, req.nextUrl.origin, isVercel);
       await syncChannelStatus(instanceName, tenantId, "connected");
       return NextResponse.json({
         instanceName,
@@ -274,34 +329,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Configurar Webhook automaticamente para esta instância
-    if (secret) {
-      try {
-        const webhookAppUrl = process.env.NEXT_PUBLIC_APP_URL || (isVercel ? "https://crm-novaees.vercel.app" : "http://host.docker.internal:3040");
-        await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: key },
-          body: JSON.stringify({
-            webhook: {
-              enabled: true,
-              url: `${webhookAppUrl.replace(/\/$/, "")}/api/evolution/webhook`,
-              byEvents: false,
-              base64: false,
-              events: ["MESSAGES_UPSERT"],
-              headers: {
-                "x-crm-webhook-secret": secret
-              }
-            }
-          }),
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000)
-        });
-      } catch (err) {
-        console.warn("[WhatsApp Connect] Falha não bloqueante ao configurar webhook:", err);
-      }
-    }
+    await configureEvolutionWebhook(url, key, secret, instanceName, req.nextUrl.origin, isVercel);
 
-    // Sincronizar status inicial no Supabase
-    await syncChannelStatus(instanceName, tenantId, "connecting");
+    // 5. Sincronizar canal no Supabase vinculando à empresa (status 'disconnected' até confirmar leitura do QR)
+    await syncChannelStatus(instanceName, tenantId, "disconnected");
 
     return NextResponse.json({
       instanceName,

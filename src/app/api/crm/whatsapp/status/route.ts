@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import Redis from "ioredis";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function extractPhoneFromJid(jid: unknown): string | null {
+  if (typeof jid !== "string" || !jid) return null;
+  const clean = jid.split("@")[0].split(":")[0].replace(/\D/g, "");
+  return clean.length >= 10 ? clean : null;
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,14 +26,37 @@ export async function GET(req: NextRequest) {
     const key = process.env.EVOLUTION_API_KEY ?? "";
     const rawInstance = req.nextUrl.searchParams.get("instance") || req.nextUrl.searchParams.get("instanceName") || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
     const instanceName = rawInstance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
+    const tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
 
     if (!key) {
       return NextResponse.json({
         instanceName,
         state: "disconnected",
         connected: false,
+        qrScanned: false,
+        phoneNumber: null,
         message: "Evolution API Key não configurada"
       }, { status: 200 });
+    }
+
+    // Check Redis for real-time webhook events (CONNECTION_UPDATE / QRCODE_UPDATED)
+    let qrScannedFromWebhook = false;
+    let qrcodeFromWebhook: string | null = null;
+    const redisUrl = process.env.CRM_REDIS_URL;
+    if (redisUrl) {
+      try {
+        const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1200 });
+        await redis.connect();
+        const raw = await redis.get(`crm:wa:state:${instanceName}`);
+        redis.disconnect();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.qrScanned) qrScannedFromWebhook = true;
+          if (typeof parsed.qrcode === "string" && parsed.qrcode.startsWith("data:image/")) {
+            qrcodeFromWebhook = parsed.qrcode;
+          }
+        }
+      } catch {}
     }
 
     try {
@@ -40,7 +70,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({
           instanceName,
           state: "disconnected",
-          connected: false
+          connected: false,
+          qrScanned: false,
+          phoneNumber: null
         }, { status: 200 });
       }
 
@@ -48,29 +80,85 @@ export async function GET(req: NextRequest) {
       const state = data?.instance?.state ?? data?.state ?? "close";
       const isConnected = state === "open";
 
-      // If connected, sync to crm_channels in Supabase
-      if (isConnected) {
-        const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
-        const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
-        if (supaUrl && supaKey) {
-          fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
+      // Fetch instance details (connected phone number & profile name) if connected or connecting
+      let phoneNumber: string | null = extractPhoneFromJid(data?.instance?.owner ?? data?.instance?.wuid ?? data?.ownerJid);
+      let profileName: string | null = data?.instance?.profileName ?? null;
+
+      if (isConnected || state === "connecting") {
+        try {
+          const infoRes = await fetch(`${url}/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, {
+            headers: { apikey: key },
+            cache: "no-store",
+            signal: AbortSignal.timeout(3500)
+          });
+          if (infoRes.ok) {
+            const infoData = await infoRes.json();
+            const instObj = Array.isArray(infoData)
+              ? infoData.find((i: any) => (i?.name || i?.instance?.instanceName || i?.instanceName) === instanceName) || infoData[0]
+              : infoData?.instance || infoData;
+            if (instObj) {
+              phoneNumber = phoneNumber || extractPhoneFromJid(instObj.ownerJid || instObj.owner || instObj.number || instObj?.instance?.owner);
+              profileName = profileName || instObj.profileName || instObj?.instance?.profileName || null;
+              if (phoneNumber && state === "connecting") {
+                qrScannedFromWebhook = true;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // Sync channel status in Supabase
+      const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
+      const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
+      if (supaUrl && supaKey && (isConnected || state === "close")) {
+        const dbStatus = isConnected ? "connected" : "disconnected";
+        try {
+          const patchRes = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
             method: "PATCH",
-            headers: { apikey: supaKey, Authorization: "Bearer " + supaKey, "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "connected" })
-          }).catch(() => {});
-        }
+            headers: {
+              apikey: supaKey,
+              Authorization: "Bearer " + supaKey,
+              "Content-Type": "application/json",
+              Prefer: "return=representation"
+            },
+            body: JSON.stringify({ status: dbStatus })
+          });
+          const updated = patchRes.ok ? await patchRes.json() : [];
+          if (Array.isArray(updated) && updated.length === 0 && tenantId) {
+            await fetch(`${supaUrl}/rest/v1/crm_channels`, {
+              method: "POST",
+              headers: {
+                apikey: supaKey,
+                Authorization: "Bearer " + supaKey,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                tenant_id: tenantId,
+                provider: "evolution",
+                instance_name: instanceName,
+                status: dbStatus
+              })
+            });
+          }
+        } catch {}
       }
 
       return NextResponse.json({
         instanceName,
         state,
-        connected: isConnected
+        connected: isConnected,
+        qrScanned: isConnected || qrScannedFromWebhook,
+        phoneNumber,
+        profileName,
+        qrcode: isConnected ? null : qrcodeFromWebhook
       });
     } catch {
       return NextResponse.json({
         instanceName,
         state: "disconnected",
         connected: false,
+        qrScanned: false,
+        phoneNumber: null,
         message: "Evolution API inacessível no momento"
       }, { status: 200 });
     }

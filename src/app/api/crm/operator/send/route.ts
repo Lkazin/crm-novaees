@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
-import { sendText } from "@/lib/agent/evolution";
-import { getAgentConfig } from "@/lib/agent/config";
+import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
+import { tenantInstanceSlug } from "@/lib/crm/supabase-ingest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     if (!contacts.length || !contacts[0].phone) return privateJson({ error: "contact_phone_missing" }, 400);
     const contactPhone = contacts[0].phone;
 
-    // 4. Fetch channel instance if available
+    // 4. Fetch channel instance if available, with tenant fallback
     let targetInstance: string | undefined;
     if (conv.channel_id) {
       const rChannel = await fetch(
@@ -80,9 +80,40 @@ export async function POST(request: NextRequest) {
         if (channels[0]?.instance_name) targetInstance = channels[0].instance_name;
       }
     }
+    if (!targetInstance) {
+      const rTenantChannels = await fetch(
+        url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=instance_name,status&order=updated_at.desc&limit=5`,
+        { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
+      );
+      if (rTenantChannels.ok) {
+        const tChannels = (await rTenantChannels.json()) as Array<{ instance_name: string; status: string }>;
+        const connected = tChannels.find((c) => c.status === "connected");
+        targetInstance = connected?.instance_name || tChannels[0]?.instance_name;
+      }
+    }
+    if (!targetInstance) {
+      const rTenant = await fetch(
+        url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=name&limit=1`,
+        { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
+      );
+      if (rTenant.ok) {
+        const tenants = (await rTenant.json()) as Array<{ name: string }>;
+        if (tenants[0]?.name) targetInstance = tenantInstanceSlug(tenants[0].name);
+      }
+    }
 
     // 5. Send real WhatsApp message via Evolution API
-    const cfg = getAgentConfig();
+    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
+    const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
+    if (!evolutionUrl || !evolutionKey) {
+      return privateJson({ error: "evolution_not_configured" }, 503);
+    }
+    const cfg: EvolutionSendConfig = {
+      evolutionUrl,
+      evolutionKey,
+      instance: targetInstance || process.env.EVOLUTION_INSTANCE || "default",
+      sendFormat: process.env.EVOLUTION_SEND_FORMAT === "legacy" ? "legacy" : "v2",
+    };
     try {
       await sendText(contactPhone, messageText, cfg, targetInstance);
     } catch (sendErr) {
@@ -113,17 +144,31 @@ export async function POST(request: NextRequest) {
     });
     const savedMsg = rMsg.ok ? (await rMsg.json())?.[0] : null;
 
-    // 7. Update conversation: ensure mode is human, assigned to this operator, and status is waiting_client
+    // 7. Update conversation: ensure mode is human, assigned to this operator, and status is pending (maps to waiting_client)
     await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversationId}&tenant_id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
       body: JSON.stringify({
         mode: "human",
         assigned_to: operator.id,
-        status: "waiting_client",
+        status: "pending",
         last_message_at: new Date().toISOString()
       })
     });
+
+    // Mark any pending handoffs as accepted by this operator
+    await fetch(
+      `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenantId}&conversation_id=eq.${conversationId}&status=eq.pending`,
+      {
+        method: "PATCH",
+        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "accepted",
+          accepted_by: operator.id,
+          accepted_at: new Date().toISOString()
+        })
+      }
+    ).catch(() => {});
 
     return privateJson({
       success: true,

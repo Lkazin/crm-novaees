@@ -93,7 +93,7 @@ export function detectCustomerEscalation(text: string): EscalationResult {
   }
 
   // 5. Explicit Human Request
-  const humanRegex = /\b(atendente|humano|humana|pessoa real|falar com (alguem|pessoa|dono|gerente|suporte)|chama (um atendente|alguem|gerente)|quero falar com gente|atendimento humano)\b/;
+  const humanRegex = /\b(atendente|humano|humana|pessoa real|falar com ((um|uma|o|a|algum|alguma) )?(alguem|pessoa|atendente|humano|humana|dono|gerente|suporte|vendedor|vendedora|equipe|funcionario|gente)|chama(r)? ((um|uma|o|a) )?(atendente|alguem|pessoa|gerente|humano)|quero (atendimento humano|uma pessoa|um humano|um atendente)|passa(r)? para ((um|uma|o|a) )?(atendente|pessoa|humano)|transfer(ir|e) para ((um|uma|o|a) )?(atendente|pessoa|humano)|atendimento humano|nao quero (falar com )?(robo|ia|inteligencia artificial))\b/;
   if (humanRegex.test(norm)) {
     return {
       isEscalation: true,
@@ -101,7 +101,7 @@ export function detectCustomerEscalation(text: string): EscalationResult {
       sentiment: "neutral",
       reason: "Solicitação de Atendente Humano",
       customerReply:
-        "Com certeza! Estou transferindo seu atendimento para a nossa equipe humana agora mesmo. Em instantes alguém irá continuar por aqui com você! 😊"
+        "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa."
     };
   }
 

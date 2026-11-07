@@ -1,6 +1,8 @@
 import type { AgentConfig } from "./config";
 
-export async function sendText(number: string, text: string, cfg: AgentConfig, targetInstance?: string): Promise<void> {
+export type EvolutionSendConfig = Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance" | "sendFormat">;
+
+export async function sendText(number: string, text: string, cfg: EvolutionSendConfig, targetInstance?: string): Promise<void> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const endpoint = `${cfg.evolutionUrl}/message/sendText/${instance}`;
   // Evolution v2 commonly accepts flat `text`; legacy installations can use textMessage.

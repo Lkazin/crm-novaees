@@ -45,19 +45,86 @@ export async function POST(request: NextRequest) {
       if (!allowedStatuses.includes(newStatus)) {
         return privateJson({ error: "invalid_status" }, 400);
       }
-      const patchData: Record<string, unknown> = { status: newStatus };
-      if (newStatus === "ai") {
+
+      const patchData: Record<string, unknown> = {};
+      if (newStatus === "ai" || newStatus === "open" || newStatus === "novo") {
         patchData.mode = "ai";
+        patchData.status = "open";
         patchData.assigned_to = null;
-      } else if (newStatus === "human" || newStatus === "waiting_client") {
+      } else if (newStatus === "waiting_human" || newStatus === "urgent") {
         patchData.mode = "human";
+        patchData.status = "pending";
+        patchData.assigned_to = null;
+      } else if (newStatus === "human") {
+        patchData.mode = "human";
+        patchData.status = "open";
         patchData.assigned_to = operator.id;
+      } else if (newStatus === "waiting_client") {
+        patchData.mode = "human";
+        patchData.status = "pending";
+        patchData.assigned_to = operator.id;
+      } else if (newStatus === "closed") {
+        patchData.mode = "paused";
+        patchData.status = "resolved";
       }
-      await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
+
+      const rPatch = await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
         method: "PATCH",
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
         body: JSON.stringify(patchData)
       });
+      if (!rPatch.ok) {
+        return privateJson({ error: "failed_to_update_status" }, 500);
+      }
+
+      // Synchronize crm_handoffs table
+      try {
+        if (newStatus === "waiting_human" || newStatus === "urgent") {
+          const rCheckH = await fetch(
+            `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending&select=id&limit=1`,
+            { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
+          );
+          const existingH = rCheckH.ok ? ((await rCheckH.json()) as Array<{ id: string }>) : [];
+          if (existingH.length === 0) {
+            await fetch(`${url}/rest/v1/crm_handoffs`, {
+              method: "POST",
+              headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tenant_id: tenant,
+                conversation_id: conversation,
+                reason: "Transferido manualmente para fila de espera",
+                status: "pending"
+              })
+            });
+          }
+        } else if (newStatus === "human" || newStatus === "waiting_client") {
+          await fetch(
+            `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
+            {
+              method: "PATCH",
+              headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                status: "accepted",
+                accepted_by: operator.id,
+                accepted_at: new Date().toISOString()
+              })
+            }
+          );
+        } else if (newStatus === "ai" || newStatus === "closed" || newStatus === "open") {
+          await fetch(
+            `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=in.(pending,accepted)`,
+            {
+              method: "PATCH",
+              headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                status: "closed",
+                resolved_at: new Date().toISOString()
+              })
+            }
+          );
+        }
+      } catch {}
+
       if (newStatus !== "urgent" && redisUrl) {
         try {
           const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
@@ -69,13 +136,25 @@ export async function POST(request: NextRequest) {
       return privateJson({ success: true, conversationId: conversation, status: newStatus, mode: patchData.mode });
     }
 
-    // Action: Resolve Urgency
+    // Action: Resolve Urgency / Claim Urgent Conversation
     if (action === "resolve_urgency") {
       await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
         method: "PATCH",
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "human" })
+        body: JSON.stringify({ mode: "human", status: "open", assigned_to: operator.id })
       });
+      await fetch(
+        `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
+        {
+          method: "PATCH",
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "accepted",
+            accepted_by: operator.id,
+            accepted_at: new Date().toISOString()
+          })
+        }
+      ).catch(() => {});
       if (redisUrl) {
         try {
           const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
@@ -84,7 +163,7 @@ export async function POST(request: NextRequest) {
           redis.disconnect();
         } catch {}
       }
-      return privateJson({ resolved: true, conversationId: conversation, status: "human" });
+      return privateJson({ resolved: true, conversationId: conversation, status: "human", mode: "human" });
     }
 
     if (targetMode === "ai") {
@@ -95,6 +174,18 @@ export async function POST(request: NextRequest) {
       });
       if (!r.ok) return privateJson({ error: "failed_to_resume_ai" }, 500);
 
+      await fetch(
+        `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=in.(pending,accepted)`,
+        {
+          method: "PATCH",
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "closed",
+            resolved_at: new Date().toISOString()
+          })
+        }
+      ).catch(() => {});
+
       if (redisUrl) {
         try {
           const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
@@ -104,19 +195,32 @@ export async function POST(request: NextRequest) {
         } catch {}
       }
 
-      return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "open" });
+      return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "ai" });
     } else {
       const r = await fetch(url + "/rest/v1/rpc/crm_operator_claim_conversation", {
         method: "POST", cache: "no-store", signal: AbortSignal.timeout(9000),
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
         body: JSON.stringify({ p_tenant: tenant, p_conversation: conversation, p_actor: operator.id })
       });
+      // Always ensure conversation status is "open", mode is "human", and assigned_to is operator.id
+      await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
+        method: "PATCH",
+        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "human", status: "open", assigned_to: operator.id })
+      });
       if (!r.ok) {
-        await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
-          method: "PATCH",
-          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "human", assigned_to: operator.id })
-        });
+        await fetch(
+          `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
+          {
+            method: "PATCH",
+            headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: "accepted",
+              accepted_by: operator.id,
+              accepted_at: new Date().toISOString()
+            })
+          }
+        ).catch(() => {});
       }
 
       // Check if there was an active escalation detected
@@ -128,7 +232,8 @@ export async function POST(request: NextRequest) {
           const escRaw = await redis.get(`crm:escalation:${conversation}`);
           if (escRaw) {
             const parsed = JSON.parse(escRaw);
-            escalationHeader = `🚨 ALERTA DETECTADO: ${parsed.reason || "Reclamação ou Frustração do Cliente"}\n`;
+            escalationHeader = `🚨 ALERTA DETECTADO: ${parsed.reason || "Solicitação de Atendimento Humano"}\n`;
+            await redis.del(`crm:escalation:${conversation}`);
           }
           redis.disconnect();
         } catch {}

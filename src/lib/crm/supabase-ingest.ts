@@ -2,9 +2,22 @@ import "server-only";
 import type { Incoming } from "@/lib/agent/parse";
 
 type Channel = { id: string; tenant_id: string; status: string };
-type Tenant = { id: string; status: string };
+type TenantRow = { id: string; name: string; status: string };
 type RecordId = { id: string };
 type RequestMethod = "GET" | "POST" | "PATCH";
+
+export function tenantInstanceSlug(tenantName: string): string {
+  const slug = tenantName.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 24);
+  return slug.startsWith("novaesweb") ? "novaesweb-ia-teste" : `loja_${slug}`;
+}
+
+function isIngestEnabled(instance?: string): boolean {
+  if (instance === "crmtest") return false;
+  if (process.env.CRM_SUPABASE_INGEST_ENABLED === "false") return false;
+  const url = process.env.CRM_SUPABASE_URL?.trim() ?? "";
+  const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
+  return /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(url) && key.length >= 30;
+}
 
 function settings() {
   const url = process.env.CRM_SUPABASE_URL?.trim() ?? "";
@@ -36,55 +49,93 @@ async function db<T>(table: string, query: string, method: RequestMethod, payloa
   return await response.json() as T;
 }
 
+export async function resolveChannelForInstance(instanceName: string): Promise<Channel | null> {
+  const normalizedInstance = instanceName.trim().toLowerCase();
+  let channels = await db<Channel[]>(
+    "crm_channels",
+    "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
+    "GET"
+  );
+
+  if (channels.length > 0) {
+    return channels[0];
+  }
+
+  // Try matching tenant by expected instance slug
+  const allTenants = await db<TenantRow[]>(
+    "crm_tenants",
+    "?select=id,name,status&order=created_at.desc",
+    "GET"
+  );
+  if (!allTenants.length) return null;
+
+  let matchedTenant = allTenants.find(t => tenantInstanceSlug(t.name) === normalizedInstance);
+  if (!matchedTenant && normalizedInstance.startsWith("loja_")) {
+    const prefix = normalizedInstance.slice(0, 18);
+    matchedTenant = allTenants.find(t => tenantInstanceSlug(t.name).startsWith(prefix));
+  }
+  if (!matchedTenant && (normalizedInstance === "novaesweb-ia-teste" || allTenants.length === 1)) {
+    matchedTenant = allTenants.find(t => t.status === "active") || allTenants[0];
+  }
+
+  if (!matchedTenant) return null;
+
+  await db<Channel[]>("crm_channels", "", "POST", {
+    tenant_id: matchedTenant.id,
+    provider: "evolution",
+    instance_name: normalizedInstance,
+    status: "connected"
+  });
+
+  channels = await db<Channel[]>(
+    "crm_channels",
+    "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
+    "GET"
+  );
+  return channels[0] ?? null;
+}
+
 export async function persistIncomingInSupabase(incoming: Incoming): Promise<"off" | "created" | "duplicate"> {
-  if (process.env.CRM_SUPABASE_INGEST_ENABLED !== "true") return "off";
+  if (!isIngestEnabled(incoming.instance)) return "off";
 
   try {
-    // 1. Find or auto-link channel for this instance
-    let channels = await db<Channel[]>("crm_channels",
-      "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(incoming.instance) + "&limit=1", "GET");
-
-    if (!channels.length) {
-      // Find the first active tenant to bind this instance to
-      const allTenants = await db<Tenant[]>("crm_tenants", "?select=id,status&order=created_at.asc&limit=1", "GET");
-      if (!allTenants.length) return "off";
-      const tId = allTenants[0].id;
-      await db<Channel[]>("crm_channels", "", "POST", {
-        tenant_id: tId,
-        provider: "evolution",
-        instance_name: incoming.instance,
-        status: "connected"
-      });
-      channels = await db<Channel[]>("crm_channels",
-        "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(incoming.instance) + "&limit=1", "GET");
-    }
-
-    if (!channels.length) return "off";
-    const channel = channels[0];
+    // 1. Find or auto-link channel for this establishment's instance
+    const channel = await resolveChannelForInstance(incoming.instance);
+    if (!channel) return "off";
     const t = channel.tenant_id;
 
+    // Ensure channel is marked connected when receiving real messages
+    if (channel.status !== "connected") {
+      await db("crm_channels", "?id=eq." + channel.id, "PATCH", { status: "connected" }).catch(() => {});
+    }
+
     // 2. Find or create contact
-    const contactQuery = "?select=id&tenant_id=eq." + t + "&phone=eq." + incoming.number + "&limit=1";
-    let contacts = await db<RecordId[]>("crm_contacts", contactQuery, "GET");
+    const contactQuery = "?select=id,display_name&tenant_id=eq." + t + "&phone=eq." + incoming.number + "&limit=1";
+    let contacts = await db<Array<{ id: string; display_name: string | null }>>("crm_contacts", contactQuery, "GET");
     if (!contacts.length) {
       await db<RecordId[]>("crm_contacts", "?on_conflict=tenant_id,phone", "POST", {
         tenant_id: t, phone: incoming.number, display_name: incoming.pushName || incoming.number
       });
-      contacts = await db<RecordId[]>("crm_contacts", contactQuery, "GET");
+      contacts = await db<Array<{ id: string; display_name: string | null }>>("crm_contacts", contactQuery, "GET");
+    } else if (incoming.pushName && (!contacts[0].display_name || contacts[0].display_name === incoming.number)) {
+      await db("crm_contacts", "?id=eq." + contacts[0].id, "PATCH", {
+        display_name: incoming.pushName,
+        updated_at: new Date().toISOString()
+      }).catch(() => {});
     }
     if (!contacts.length) return "off";
     const contact = contacts[0];
 
-    // 3. Find or create conversation in AI mode
-    const conversationQuery = "?select=id&tenant_id=eq." + t +
+    // 3. Find or create conversation
+    const conversationQuery = "?select=id,mode,status,assigned_to&tenant_id=eq." + t +
       "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1";
-    let threads = await db<RecordId[]>("crm_conversations", conversationQuery, "GET");
+    let threads = await db<Array<{ id: string; mode: string; status: string; assigned_to: string | null }>>("crm_conversations", conversationQuery, "GET");
     if (!threads.length) {
       await db<RecordId[]>("crm_conversations", "?on_conflict=tenant_id,contact_id,channel_id", "POST", {
         tenant_id: t, contact_id: contact.id, channel_id: channel.id, mode: "ai", status: "open",
         last_message_at: new Date().toISOString()
       });
-      threads = await db<RecordId[]>("crm_conversations", conversationQuery, "GET");
+      threads = await db<Array<{ id: string; mode: string; status: string; assigned_to: string | null }>>("crm_conversations", conversationQuery, "GET");
     }
     if (!threads.length) return "off";
     const conversation = threads[0];
@@ -92,22 +143,30 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
     // 4. Save incoming message (idempotent by external_id)
     const existing = await db<RecordId[]>("crm_messages",
       "?select=id&conversation_id=eq." + conversation.id + "&external_id=eq." + encodeURIComponent(incoming.id) + "&limit=1", "GET");
-    if (!existing.length) {
-      await db<RecordId[]>("crm_messages", "", "POST", {
-        tenant_id: t,
-        conversation_id: conversation.id,
-        external_id: incoming.id,
-        direction: "inbound",
-        sender_type: "customer",
-        body: incoming.text,
-        delivery_status: "received"
-      });
+    if (existing.length > 0) {
+      return "duplicate";
     }
 
-    // Update conversation last_message_at
-    await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", {
-      last_message_at: new Date().toISOString()
+    await db<RecordId[]>("crm_messages", "", "POST", {
+      tenant_id: t,
+      conversation_id: conversation.id,
+      external_id: incoming.id,
+      direction: "inbound",
+      sender_type: "customer",
+      body: incoming.text,
+      delivery_status: "received"
     });
+
+    // Update conversation last_message_at (preserve human mode if in human/paused mode)
+    const patchPayload: Record<string, unknown> = {
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
+      // Customer replied while operator was waiting_client -> back to active human attendance ('open')
+      patchPayload.status = "open";
+    }
+    await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", patchPayload);
 
     return "created";
   } catch (e) {
@@ -117,12 +176,10 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
 }
 
 export async function persistOutboundInSupabase(instance: string, phone: string, text: string): Promise<void> {
-  if (process.env.CRM_SUPABASE_INGEST_ENABLED !== "true") return;
+  if (!isIngestEnabled(instance)) return;
   try {
-    const channels = await db<Channel[]>("crm_channels",
-      "?select=id,tenant_id&instance_name=eq." + encodeURIComponent(instance) + "&limit=1", "GET");
-    if (!channels.length) return;
-    const channel = channels[0];
+    const channel = await resolveChannelForInstance(instance);
+    if (!channel) return;
     const t = channel.tenant_id;
 
     const contacts = await db<RecordId[]>("crm_contacts",
@@ -145,7 +202,8 @@ export async function persistOutboundInSupabase(instance: string, phone: string,
     });
 
     await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", {
-      last_message_at: new Date().toISOString()
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     });
   } catch (e) {
     console.error("[supabase-ingest-outbound] Error:", e);
@@ -162,13 +220,11 @@ export type ConversationContext = {
 
 export async function fetchConversationContext(instance: string, phone: string, limit = 10): Promise<ConversationContext> {
   const fallback: ConversationContext = { mode: "ai", history: [], isFirstInteraction: true };
-  if (process.env.CRM_SUPABASE_INGEST_ENABLED !== "true") return fallback;
+  if (!isIngestEnabled(instance)) return fallback;
 
   try {
-    const channels = await db<Channel[]>("crm_channels",
-      "?select=id,tenant_id&instance_name=eq." + encodeURIComponent(instance) + "&limit=1", "GET");
-    if (!channels.length) return fallback;
-    const channel = channels[0];
+    const channel = await resolveChannelForInstance(instance);
+    if (!channel) return fallback;
     const t = channel.tenant_id;
 
     const contacts = await db<RecordId[]>("crm_contacts",
@@ -180,7 +236,9 @@ export async function fetchConversationContext(instance: string, phone: string, 
       "?select=id,mode,status&tenant_id=eq." + t + "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1", "GET");
     if (!threads.length) return fallback;
     const conversation = threads[0];
-    const mode = (conversation.mode === "human" ? "human" : "ai") as "ai" | "human";
+    // Pause AI if mode is 'human' or 'paused', or status is 'pending' (waiting_human) or 'resolved' (closed)
+    const isAiPaused = conversation.mode !== "ai" || conversation.status === "pending" || conversation.status === "resolved";
+    const mode: "ai" | "human" = isAiPaused ? "human" : "ai";
     const status = conversation.status || "open";
 
     type DbMsg = { direction: string; sender_type: string; body: string; created_at: string };
@@ -193,7 +251,7 @@ export async function fetchConversationContext(instance: string, phone: string, 
 
     // Sort chronologically (oldest to newest)
     const history = rawMsgs.reverse().map(m => ({
-      role: (m.direction === "outbound" || m.sender_type === "agent" ? "assistant" : "user") as "user" | "assistant",
+      role: (m.direction === "outbound" || m.sender_type === "agent" || m.sender_type === "human" ? "assistant" : "user") as "user" | "assistant",
       content: m.body || ""
     }));
 
@@ -210,13 +268,11 @@ export async function fetchConversationContext(instance: string, phone: string, 
   }
 }
 
-export async function handoffToHuman(instance: string, phone: string, isUrgent = false): Promise<string | null> {
-  if (process.env.CRM_SUPABASE_INGEST_ENABLED !== "true") return null;
+export async function handoffToHuman(instance: string, phone: string, _isUrgent = false, reason = "Solicitação de atendimento humano"): Promise<string | null> {
+  if (!isIngestEnabled(instance)) return null;
   try {
-    const channels = await db<Channel[]>("crm_channels",
-      "?select=id,tenant_id&instance_name=eq." + encodeURIComponent(instance) + "&limit=1", "GET");
-    if (!channels.length) return null;
-    const channel = channels[0];
+    const channel = await resolveChannelForInstance(instance);
+    if (!channel) return null;
     const t = channel.tenant_id;
 
     const contacts = await db<RecordId[]>("crm_contacts",
@@ -229,11 +285,25 @@ export async function handoffToHuman(instance: string, phone: string, isUrgent =
     if (!threads.length) return null;
     const conv = threads[0];
 
+    // Set mode = 'human' and status = 'pending' (valid in DB check constraint: 'open' | 'pending' | 'resolved')
+    // 'pending' with mode='human' and assigned_to=null means "Aguardando atendente" (waiting_human)
     await db("crm_conversations", "?id=eq." + conv.id, "PATCH", {
       mode: "human",
-      status: isUrgent ? "urgent" : "open",
-      last_message_at: new Date().toISOString()
+      status: "pending",
+      assigned_to: null,
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     });
+
+    // Record handoff in crm_handoffs table
+    await db("crm_handoffs", "", "POST", {
+      tenant_id: t,
+      conversation_id: conv.id,
+      requested_by: "customer",
+      status: "pending",
+      reason: reason.slice(0, 500)
+    }).catch(() => {});
+
     return conv.id;
   } catch (err) {
     console.error("[supabase-handoff] Error:", err);

@@ -2,12 +2,13 @@ import Redis from "ioredis";
 import type { AgentConfig } from "./config";
 import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
-import { generateAnswer, StoreAiContext } from "./ai";
+import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText } from "./evolution";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
-  handoffToHuman
+  handoffToHuman,
+  resolveChannelForInstance
 } from "@/lib/crm/supabase-ingest";
 import { detectCustomerEscalation } from "./escalation";
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
@@ -25,12 +26,39 @@ function matchesAllowedNumber(incoming: string, allowed: string): boolean {
   return normIncoming === normAllowed;
 }
 
-function isWithinOperatingHours(hours?: { enabled: boolean; openTime: string; closeTime: string; days?: string[] }): boolean {
+function parseMinutes(hhmm: string | undefined, fallback: number): number {
+  if (!hhmm || typeof hhmm !== "string" || !/^\d{1,2}:\d{2}$/.test(hhmm.trim())) return fallback;
+  const [h, m] = hhmm.trim().split(":").map(n => parseInt(n, 10) || 0);
+  return h * 60 + m;
+}
+
+function isMinuteInWindow(currentMinutes: number, startMinutes: number, endMinutes: number): boolean {
+  if (endMinutes > startMinutes) {
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  } else if (endMinutes < startMinutes) {
+    // Overnight schedule (e.g. 18:00 to 02:00)
+    return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+  }
+  return true;
+}
+
+export function isWithinOperatingHours(
+  hours?: {
+    enabled: boolean;
+    timezone?: string;
+    openTime?: string;
+    closeTime?: string;
+    days?: string[];
+    schedule?: Record<string, DaySchedule>;
+  },
+  nowDate?: Date
+): boolean {
   if (!hours || !hours.enabled) return true;
   try {
-    const now = new Date();
+    const now = nowDate ?? new Date();
+    const tz = hours.timezone && hours.timezone.trim() ? hours.timezone.trim() : "America/Sao_Paulo";
     const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Sao_Paulo",
+      timeZone: tz,
       weekday: "short",
       hour: "2-digit",
       minute: "2-digit",
@@ -38,29 +66,51 @@ function isWithinOperatingHours(hours?: { enabled: boolean; openTime: string; cl
     });
     const parts = formatter.formatToParts(now);
     const dayStr = parts.find(p => p.type === "weekday")?.value?.toLowerCase() || "";
-    const hourStr = parts.find(p => p.type === "hour")?.value || "00";
-    const minuteStr = parts.find(p => p.type === "minute")?.value || "00";
+    const rawHour = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+    const hour = rawHour === 24 ? 0 : rawHour;
+    const minute = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
 
     const dayMap: Record<string, string> = {
       sun: "dom", mon: "seg", tue: "ter", wed: "qua", thu: "qui", fri: "sex", sat: "sab"
     };
     const currentDay = dayMap[dayStr] || "seg";
+    const currentMinutes = hour * 60 + minute;
 
-    if (Array.isArray(hours.days) && hours.days.length > 0 && !hours.days.includes(currentDay)) {
-      return false;
+    // 1. Check per-day schedule if configured
+    if (hours.schedule && typeof hours.schedule === "object" && hours.schedule[currentDay]) {
+      const dayConfig = hours.schedule[currentDay];
+      if (!dayConfig.enabled) return false;
+
+      const openMin = parseMinutes(dayConfig.openTime || hours.openTime, 0);
+      const closeMin = parseMinutes(dayConfig.closeTime || hours.closeTime, 23 * 60 + 59);
+      if (!isMinuteInWindow(currentMinutes, openMin, closeMin)) {
+        return false;
+      }
+
+      // Check interval/break if configured
+      if (dayConfig.hasBreak && dayConfig.breakStart && dayConfig.breakEnd) {
+        const breakStartMin = parseMinutes(dayConfig.breakStart, -1);
+        const breakEndMin = parseMinutes(dayConfig.breakEnd, -1);
+        if (breakStartMin >= 0 && breakEndMin >= 0 && breakEndMin > breakStartMin) {
+          if (currentMinutes >= breakStartMin && currentMinutes < breakEndMin) {
+            return false;
+          }
+        }
+      }
+
+      return true;
     }
 
-    const currentMinutes = parseInt(hourStr, 10) * 60 + parseInt(minuteStr, 10);
-    const [openH, openM] = (hours.openTime || "00:00").split(":").map(n => parseInt(n, 10) || 0);
-    const [closeH, closeM] = (hours.closeTime || "23:59").split(":").map(n => parseInt(n, 10) || 0);
-    const openMinutes = openH * 60 + openM;
-    const closeMinutes = closeH * 60 + closeM;
-
-    if (closeMinutes > openMinutes) {
-      return currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
-    } else {
-      return currentMinutes >= openMinutes || currentMinutes <= closeMinutes;
+    // 2. Fallback to legacy global days + openTime/closeTime
+    if (Array.isArray(hours.days)) {
+      if (hours.days.length === 0 || !hours.days.includes(currentDay)) {
+        return false;
+      }
     }
+
+    const openMinutes = parseMinutes(hours.openTime, 0);
+    const closeMinutes = parseMinutes(hours.closeTime, 23 * 60 + 59);
+    return isMinuteInWindow(currentMinutes, openMinutes, closeMinutes);
   } catch {
     return true;
   }
@@ -75,26 +125,14 @@ async function getStoreAiContext(instanceName: string): Promise<{
   isTrial?: boolean;
 }> {
   try {
+    if (instanceName === "crmtest") return {};
     const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
     const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
     if (!url || !key) return {};
 
-    // 1. Find channel by instance_name
-    let tenantId: string | undefined;
-    const rCh = await fetch(`${url}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}&select=tenant_id`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store"
-    });
-    const channels = (await rCh.json()) as Array<{ tenant_id: string }>;
-    tenantId = channels?.[0]?.tenant_id;
-    if (!tenantId) {
-      const rTenants = await fetch(`${url}/rest/v1/crm_tenants?select=id,name,status&status=eq.active&order=created_at.desc&limit=1`, {
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-        cache: "no-store"
-      });
-      const activeTenants = (await rTenants.json()) as Array<{ id: string; name: string; status: string }>;
-      if (activeTenants?.[0]) tenantId = activeTenants[0].id;
-    }
+    // 1. Resolve channel & tenant by instance_name
+    const channel = await resolveChannelForInstance(instanceName).catch(() => null);
+    const tenantId = channel?.tenant_id;
     if (!tenantId) return {};
 
     // 2. Check tenant status (active vs suspended)
@@ -131,7 +169,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       : "";
 
     // 5. Fetch effective plan & operating hours
-    let operatingHours = undefined;
+    let operatingHours: StoreAiContext["operatingHours"] = undefined;
     let quotaLimit = 500;
     let primaryModel = agents?.[0]?.provider_route || undefined;
     let fallbackModel = undefined;
@@ -147,18 +185,22 @@ async function getStoreAiContext(instanceName: string): Promise<{
       return { isBlocked: true, channelFound: true, tenantId };
     }
 
-    const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
+    const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
       cache: "no-store"
     });
     if (rSettings.ok) {
-      const settings = (await rSettings.json()) as Array<{ business_description: string }>;
+      const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
+      const dbTimezone = settings[0]?.timezone || "America/Sao_Paulo";
       const rawDesc = settings[0]?.business_description ?? "";
       if (rawDesc.startsWith("{")) {
         try {
           const parsed = JSON.parse(rawDesc);
-          if (parsed.ai_settings?.operatingHours && effectivePlan.allowedFeatures.includes("business_hours")) {
-            operatingHours = parsed.ai_settings.operatingHours;
+          if (parsed.ai_settings?.operatingHours) {
+            operatingHours = {
+              timezone: dbTimezone,
+              ...parsed.ai_settings.operatingHours
+            };
           }
           if (parsed.ai_settings?.primaryModel) primaryModel = parsed.ai_settings.primaryModel;
           if (parsed.ai_settings?.fallbackModel && effectivePlan.allowedFeatures.includes("model_fallback")) {
@@ -190,13 +232,21 @@ async function getStoreAiContext(instanceName: string): Promise<{
 export async function processWebhook(
   payload: unknown,
   cfg: AgentConfig,
-  deps: { redis?: Redis; generate?: typeof generateAnswer; send?: typeof sendText; maySend?: (incoming: Incoming) => Promise<boolean> } = {},
+  deps: {
+    redis?: Redis;
+    generate?: typeof generateAnswer;
+    send?: typeof sendText;
+    maySend?: (incoming: Incoming) => Promise<boolean>;
+    getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
+    fetchConvContext?: typeof fetchConversationContext;
+    handoff?: typeof handoffToHuman;
+  } = {},
 ): Promise<ProcessResult> {
   const incoming = parseIncoming(payload);
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
 
   // Check store context & permission
-  const { context = {}, isBlocked, tenantId, quotaLimit, isTrial } = await getStoreAiContext(incoming.instance);
+  const { context = {}, isBlocked, tenantId, quotaLimit, isTrial } = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
   if (isBlocked) return { status: "disabled", reason: "store_suspended_or_overdue" };
 
   const isAuthorizedInstance = Boolean(incoming.instance);
@@ -258,13 +308,12 @@ export async function processWebhook(
       const escalation = detectCustomerEscalation(combinedText);
       const isUrgent = escalation.isEscalation && (escalation.sentiment === "urgent" || escalation.sentiment === "frustrated");
 
-      // 7. Check if conversation is already in human mode
-      const convContext = await fetchConversationContext(incoming.instance, incoming.number, 10);
+      // 7. Check if conversation is already in human mode or paused
+      const convContext = await (deps.fetchConvContext ?? fetchConversationContext)(incoming.instance, incoming.number, 10);
       if (convContext.mode === "human") {
-        // If customer is complaining while in human mode, ensure conversation is flagged urgent in Supabase & Redis
+        // If customer is complaining while in human mode, ensure escalation metadata is updated
         if (isUrgent && convContext.conversationId) {
           try {
-            await handoffToHuman(incoming.instance, incoming.number, true);
             await redis.set(
               `crm:escalation:${convContext.conversationId}`,
               JSON.stringify({
@@ -282,9 +331,14 @@ export async function processWebhook(
         return { status: "disabled", reason: "conversation_in_human_mode" };
       }
 
-      // 8. If in AI mode and escalation was detected -> hand off to human immediately
+      // 8. If in AI mode and escalation/human request was detected -> hand off to human immediately
       if (escalation.isEscalation) {
-        const convId = await handoffToHuman(incoming.instance, incoming.number, isUrgent);
+        const convId = await (deps.handoff ?? handoffToHuman)(
+          incoming.instance,
+          incoming.number,
+          isUrgent,
+          escalation.reason || "Solicitação de atendimento humano"
+        );
 
         if (convId) {
           try {
@@ -292,8 +346,8 @@ export async function processWebhook(
               `crm:escalation:${convId}`,
               JSON.stringify({
                 category: escalation.category,
-                reason: escalation.reason,
-                sentiment: escalation.sentiment,
+                reason: escalation.reason || "Solicitação de Atendente Humano",
+                sentiment: escalation.sentiment || "neutral",
                 text: combinedText.slice(0, 300),
                 timestamp: new Date().toISOString()
               }),
@@ -303,7 +357,7 @@ export async function processWebhook(
           } catch {}
         }
 
-        const escalationReply = escalation.customerReply || "Com certeza! Estou transferindo seu atendimento para a nossa equipe humana agora mesmo. Em instantes alguém irá continuar por aqui com você! 😊";
+        const escalationReply = escalation.customerReply || "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa.";
         await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
         await markItemsDone();
         try {
@@ -313,21 +367,24 @@ export async function processWebhook(
         return { status: "sent", reason: `escalated_${escalation.category || "human"}` };
       }
 
-      // 8. Operating hours check
+      // 9. Operating hours check
       if (context.operatingHours && !isWithinOperatingHours(context.operatingHours)) {
-        const closedNoticeKey = `crm:closed_notice:${incoming.instance}:${incoming.number}`;
-        const shouldSendNotice = await redis.set(closedNoticeKey, "1", "EX", 21600, "NX"); // 6h cooldown
-        if (shouldSendNotice === "OK") {
-          const closedMsg = context.operatingHours.closedMessage || "Olá! No momento estamos fora do nosso horário de atendimento. Deixe sua mensagem e responderemos assim que retornarmos! 😊";
-          await (deps.send ?? sendText)(incoming.number, closedMsg, cfg, incoming.instance);
-          try {
-            await persistOutboundInSupabase(incoming.instance, incoming.number, closedMsg);
-          } catch {}
+        const sendAbsence = context.operatingHours.sendClosedMessage !== false;
+        const closedMsg = (context.operatingHours.closedMessage ?? "").trim();
+        if (sendAbsence && closedMsg) {
+          const closedNoticeKey = `crm:closed_notice:${incoming.instance}:${incoming.number}`;
+          const shouldSendNotice = await redis.set(closedNoticeKey, "1", "EX", 21600, "NX"); // 6h cooldown
+          if (shouldSendNotice === "OK") {
+            await (deps.send ?? sendText)(incoming.number, closedMsg, cfg, incoming.instance);
+            try {
+              await persistOutboundInSupabase(incoming.instance, incoming.number, closedMsg);
+            } catch {}
+          }
         }
         return { status: "disabled", reason: "outside_operating_hours" };
       }
 
-      // 9. Session & Quota check (24h conversation window)
+      // 10. Session & Quota check (24h conversation window)
       if (tenantId) {
         const sessionKey = `crm:session:${tenantId}:${incoming.number}`;
         const isNewSession = await redis.set(sessionKey, "1", "EX", 86400, "NX");
@@ -351,21 +408,21 @@ export async function processWebhook(
         }
       }
 
-      // 10. Attach conversation history to context
+      // 11. Attach conversation history to context
       context.history = convContext.history;
 
       if (deps.maySend && !(await deps.maySend(incoming))) {
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       }
 
-      // 11. Generate answer with fallback support
+      // 12. Generate answer with fallback support
       const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
 
       if (deps.maySend && !(await deps.maySend(incoming))) {
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       }
 
-      // 12. Send response
+      // 13. Send response
       await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
       await markItemsDone();
       try {

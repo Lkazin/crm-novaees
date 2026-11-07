@@ -190,20 +190,45 @@ export default function OperatorPage() {
   const prevDataRef = useRef<Data | null>(null);
 
   // Operating Hours state
-  const [operatingHours, setOperatingHours] = useState<{
+  type DayScheduleCfg = {
     enabled: boolean;
     openTime: string;
     closeTime: string;
+    hasBreak?: boolean;
+    breakStart?: string;
+    breakEnd?: string;
+  };
+  const DEFAULT_DAY_SCHEDULE: Record<string, DayScheduleCfg> = {
+    seg: { enabled: false, openTime: "08:00", closeTime: "18:00", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    ter: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    qua: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    qui: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    sex: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    sab: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+    dom: { enabled: true, openTime: "18:00", closeTime: "23:30", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
+  };
+  const [operatingHours, setOperatingHours] = useState<{
+    enabled: boolean;
+    timezone: string;
+    openTime: string;
+    closeTime: string;
     days: string[];
+    sendClosedMessage: boolean;
     closedMessage: string;
+    schedule: Record<string, DayScheduleCfg>;
   }>({
     enabled: false,
+    timezone: "America/Sao_Paulo",
     openTime: "18:00",
     closeTime: "23:30",
     days: ["ter", "qua", "qui", "sex", "sab", "dom"],
-    closedMessage: "Olá! Nosso horário de atendimento é de terça a domingo, das 18h às 23h30. Deixe sua mensagem e responderemos assim que abrirmos! 😊"
+    sendClosedMessage: true,
+    closedMessage: "Olá! Nosso horário de atendimento é de terça a domingo, das 18h às 23h30. Deixe sua mensagem e responderemos assim que abrirmos! 😊",
+    schedule: DEFAULT_DAY_SCHEDULE
   });
+  const isHoursDirtyRef = useRef(false);
   const [hoursNotice, setHoursNotice] = useState("");
+  const [hoursError, setHoursError] = useState("");
   const [savingHours, setSavingHours] = useState(false);
 
   // Quota state
@@ -240,6 +265,13 @@ export default function OperatorPage() {
   const [deletingQr, setDeletingQr] = useState(false);
   const [qrState, setQrState] = useState<"disconnected" | "connecting" | "open">("disconnected");
   const [qrNotice, setQrNotice] = useState("");
+  const [qrError, setQrError] = useState(false);
+  const [qrScanned, setQrScanned] = useState(false);
+  const [qrValidating, setQrValidating] = useState(false);
+  const [connectedPhone, setConnectedPhone] = useState<string | null>(null);
+  const [connectedProfile, setConnectedProfile] = useState<string | null>(null);
+  const [qrExpiresIn, setQrExpiresIn] = useState<number>(0);
+  const [readTimestamps, setReadTimestamps] = useState<Record<string, number>>({});
 
   // Human Messaging state
   const [humanInput, setHumanInput] = useState("");
@@ -299,8 +331,32 @@ export default function OperatorPage() {
           setAiEnabled(json.enabled !== false);
           isAiDirtyRef.current = false;
         }
-        if (json.operatingHours) {
-          setOperatingHours(prev => ({ ...prev, ...json.operatingHours }));
+        if (json.operatingHours && (force || !isHoursDirtyRef.current)) {
+          const rawH = json.operatingHours;
+          const openDef = rawH.openTime || "18:00";
+          const closeDef = rawH.closeTime || "23:30";
+          const daysArr: string[] = Array.isArray(rawH.days) ? rawH.days : ["ter", "qua", "qui", "sex", "sab", "dom"];
+          const nextSchedule: Record<string, DayScheduleCfg> = {};
+          for (const d of ["seg", "ter", "qua", "qui", "sex", "sab", "dom"]) {
+            const ds = rawH.schedule?.[d];
+            nextSchedule[d] = {
+              enabled: ds && typeof ds.enabled === "boolean" ? ds.enabled : daysArr.includes(d),
+              openTime: ds?.openTime || openDef,
+              closeTime: ds?.closeTime || closeDef,
+              hasBreak: Boolean(ds?.hasBreak),
+              breakStart: ds?.breakStart || "12:00",
+              breakEnd: ds?.breakEnd || "13:00",
+            };
+          }
+          setOperatingHours(prev => ({
+            ...prev,
+            ...rawH,
+            timezone: rawH.timezone || "America/Sao_Paulo",
+            sendClosedMessage: rawH.sendClosedMessage !== false,
+            schedule: nextSchedule,
+            days: Object.entries(nextSchedule).filter(([, v]) => v.enabled).map(([k]) => k),
+          }));
+          isHoursDirtyRef.current = false;
         }
         if (json.plan) {
           setQuotaData({
@@ -389,14 +445,14 @@ export default function OperatorPage() {
     }
   }, [fetchAiSettings, soundEnabled, playNotificationSound]);
 
-  // Silent auto-refresh polling every 8 seconds
+  // Silent auto-refresh polling every 3.5 seconds for real-time live chat and handoff notifications
   useEffect(() => {
     if (!authenticated || !tenant) return;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         void fetchData(tenant, true);
       }
-    }, 8000);
+    }, 3500);
     return () => clearInterval(interval);
   }, [authenticated, tenant, fetchData]);
 
@@ -404,18 +460,27 @@ export default function OperatorPage() {
   const checkStatus = useCallback(async () => {
     if (!instanceName) return;
     try {
-      const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}`, { cache: "no-store" });
+      const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`, { cache: "no-store" });
       if (res.ok) {
         const s = await res.json();
         if (s.connected || s.state === "open") {
           setQrState("open");
           setQrCode(null);
+          setQrScanned(true);
+          setQrValidating(false);
+          setQrError(false);
+          setQrExpiresIn(0);
+          if (s.phoneNumber) setConnectedPhone(s.phoneNumber);
+          if (s.profileName) setConnectedProfile(s.profileName);
         } else {
-          setQrState("disconnected");
+          if (s.qrScanned) setQrScanned(true);
+          setConnectedPhone(null);
+          setConnectedProfile(null);
+          setQrState(prev => (prev === "open" ? "disconnected" : prev));
         }
       }
     } catch {}
-  }, [instanceName]);
+  }, [instanceName, tenant]);
 
   useEffect(() => {
     let active = true;
@@ -499,7 +564,10 @@ export default function OperatorPage() {
   async function handleConnectWhatsApp() {
     if (!instanceName) return;
     setQrLoading(true);
-    setQrNotice("Iniciando conexão e gerando QR Code...");
+    setQrError(false);
+    setQrScanned(false);
+    setQrValidating(false);
+    setQrNotice("Etapa 1: Preparando conexão e inicializando instância...");
     try {
       const res = await fetch("/api/crm/whatsapp/connect", {
         method: "POST",
@@ -515,23 +583,33 @@ export default function OperatorPage() {
       if (!res.ok) {
         const errorMsg = data.message || data.error || "Falha ao conectar com o WhatsApp.";
         setQrNotice(errorMsg);
+        setQrError(true);
         setQrState("disconnected");
         return;
       }
       if (data.connected || data.state === "open") {
         setQrState("open");
         setQrCode(null);
-        setQrNotice("WhatsApp já conectado e funcionando!");
-        if (tenant) void fetchData(tenant);
+        setQrScanned(true);
+        setQrValidating(false);
+        setQrError(false);
+        setQrExpiresIn(0);
+        setQrNotice("WhatsApp conectado e confirmado pela Evolution API!");
+        void checkStatus();
+        if (tenant) void fetchData(tenant, true);
       } else if (data.qrcode) {
         const formatted = data.qrcode.startsWith("data:") ? data.qrcode : `data:image/png;base64,${data.qrcode}`;
         setQrCode(formatted);
         setQrState("connecting");
-        setQrNotice(data.message || "Escaneie o QR Code abaixo com seu WhatsApp em Aparelhos Conectados.");
+        setQrError(false);
+        setQrExpiresIn(60);
+        setQrNotice(data.message || "QR Code gerado! Escaneie com seu WhatsApp em Aparelhos Conectados.");
       } else {
+        setQrError(true);
         setQrNotice(data.message || "Aguardando geração do QR Code. Tente novamente em alguns segundos.");
       }
     } catch {
+      setQrError(true);
       setQrNotice("Falha de conexão com a central de WhatsApp. Verifique sua rede e tente novamente.");
     } finally {
       setQrLoading(false);
@@ -552,38 +630,84 @@ export default function OperatorPage() {
       if (res.ok) {
         setQrCode(null);
         setQrState("disconnected");
+        setQrScanned(false);
+        setQrValidating(false);
+        setQrError(false);
+        setConnectedPhone(null);
+        setConnectedProfile(null);
+        setQrExpiresIn(0);
         setQrNotice(data.message || "Instância apagada com sucesso! O WhatsApp foi desconectado.");
-        if (tenant) void fetchData(tenant);
+        if (tenant) void fetchData(tenant, true);
       } else {
+        setQrError(true);
         setQrNotice(data.message || data.error || "Falha ao apagar instância.");
       }
     } catch {
+      setQrError(true);
       setQrNotice("Falha de conexão ao apagar instância.");
     } finally {
       setDeletingQr(false);
     }
   }
 
-  // Poll status while connecting
+  // Countdown for QR Code expiration (60s)
   useEffect(() => {
-    if (qrState !== "connecting" || !instanceName) return;
+    if (qrState !== "connecting" || !qrCode || qrExpiresIn <= 0) return;
+    const timer = setInterval(() => {
+      setQrExpiresIn(prev => {
+        if (prev <= 1) {
+          setQrNotice("O QR Code expirou. Clique em 'Renovar QR Code' para gerar um novo código.");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [qrState, qrCode, qrExpiresIn]);
+
+  // Poll status while connecting or on WhatsApp tab (without fetchData in deps so interval is never reset)
+  useEffect(() => {
+    if (!authenticated || !instanceName) return;
+    const pollMs = qrState === "connecting" ? 2000 : 8000;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}`, { cache: "no-store" });
+        const res = await fetch(
+          `/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`,
+          { cache: "no-store" }
+        );
         if (res.ok) {
           const s = await res.json();
+          if (s.qrScanned) {
+            setQrScanned(true);
+          }
           if (s.connected || s.state === "open") {
+            setQrScanned(true);
+            setQrValidating(true);
             setQrState("open");
             setQrCode(null);
-            setQrNotice("WhatsApp Conectado com Sucesso! A IA de atendimento da loja já está ativa.");
-            clearInterval(interval);
-            if (tenant) void fetchData(tenant);
+            setQrError(false);
+            setQrExpiresIn(0);
+            setQrValidating(false);
+            if (s.phoneNumber) setConnectedPhone(s.phoneNumber);
+            if (s.profileName) setConnectedProfile(s.profileName);
+            if (qrState === "connecting") {
+              setQrNotice("WhatsApp Conectado com Sucesso! Conexão confirmada pela Evolution API e pronta para uso.");
+              if (tenant) void fetchData(tenant, true);
+            }
+          } else if (qrState === "open" && s.state === "close") {
+            // Automatic disconnection detection without F5
+            setQrState("disconnected");
+            setQrScanned(false);
+            setConnectedPhone(null);
+            setConnectedProfile(null);
+            setQrNotice("O WhatsApp foi desconectado. Gere um novo QR Code para reconectar.");
           }
         }
       } catch {}
-    }, 3000);
+    }, pollMs);
     return () => clearInterval(interval);
-  }, [qrState, instanceName, tenant, fetchData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, qrState, instanceName, tenant]);
 
   const handleSaveAiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -620,24 +744,37 @@ export default function OperatorPage() {
     if (!tenant) return;
     setSavingHours(true);
     setHoursNotice("");
+    setHoursError("");
     try {
+      const activeDays = Object.entries(operatingHours.schedule || {})
+        .filter(([, cfg]) => cfg.enabled)
+        .map(([day]) => day);
+
+      const payloadHours = {
+        ...operatingHours,
+        days: activeDays,
+      };
+
       const res = await fetch("/api/crm/operator/ai-settings", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: tenant,
-          operatingHours
+          operatingHours: payloadHours
         })
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        setHoursNotice(errJson.message || "Falha ao salvar horários de atendimento.");
+        setHoursError(errJson.message || errJson.error || "Falha ao salvar horários de atendimento no banco de dados.");
         return;
       }
-      setHoursNotice("Horários de atendimento salvos com sucesso! A IA respeitará esta janela no WhatsApp.");
-      setTimeout(() => setHoursNotice(""), 6000);
+      isHoursDirtyRef.current = false;
+      setOperatingHours(payloadHours);
+      setHoursNotice("Horários de atendimento salvos com sucesso no Supabase! A IA respeitará rigorosamente esta configuração.");
+      setTimeout(() => setHoursNotice(""), 8000);
     } catch {
-      setHoursNotice("Falha ao salvar horários de atendimento.");
+      setHoursError("Falha de comunicação ao salvar horários de atendimento.");
     } finally {
       setSavingHours(false);
     }
@@ -873,6 +1010,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   // Toggle Human Handoff (Take over or Return to AI)
   async function toggleConversationMode(conversationId: string, targetMode: "ai" | "human") {
+    if (targetMode === "ai") {
+      const ok = window.confirm("Deseja realmente devolver este atendimento para a Inteligência Artificial? A IA voltará a responder automaticamente as novas mensagens deste cliente.");
+      if (!ok) return;
+    }
     setClaiming(true);
     setHandoffNotice("");
     try {
@@ -1535,22 +1676,128 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </section>
             )}
 
+            {/* BANNER GLOBAL DE NOVA SOLICITAÇÃO DE ATENDIMENTO HUMANO */}
+            {pendingHumanList.length > 0 && (
+              <section
+                style={{
+                  background: "linear-gradient(135deg, rgba(185, 28, 28, 0.92), rgba(88, 12, 24, 0.95))",
+                  border: "2px solid #ef4444",
+                  borderRadius: "14px",
+                  padding: "14px 20px",
+                  marginBottom: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  boxShadow: "0 8px 25px rgba(239, 68, 68, 0.35)"
+                }}
+              >
+                <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                  <div style={{
+                    width: "40px",
+                    height: "40px",
+                    borderRadius: "10px",
+                    background: "rgba(255,255,255,0.15)",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0
+                  }}>
+                    <Bell size={20} color="#fff" />
+                  </div>
+                  <div>
+                    <strong style={{color: "#fff", fontSize: "15px", display: "block"}}>
+                      🚨 Nova solicitação de atendimento humano ({pendingHumanList.length})
+                    </strong>
+                    <span style={{color: "#fecaca", fontSize: "13px"}}>
+                      Um cliente solicitou atendimento. Clique para abrir a conversa.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstPending = pendingHumanList[0];
+                    if (firstPending) {
+                      setSelected(firstPending.id);
+                      setReadTimestamps(prev => ({ ...prev, [firstPending.id]: Date.now() }));
+                    }
+                    setActiveTab("atendimentos");
+                    setMobileChatOpen(true);
+                  }}
+                  style={{
+                    padding: "9px 16px",
+                    borderRadius: "10px",
+                    border: "1px solid rgba(255,255,255,0.4)",
+                    background: "#fff",
+                    color: "#991b1b",
+                    fontWeight: 800,
+                    fontSize: "13px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Abrir Conversa Agora
+                </button>
+              </section>
+            )}
+
             {/* SEÇÃO 1: CONECTAR WHATSAPP */}
             {activeTab === "whatsapp" && (
-              <section style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "22px"}}>
+              <section style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "22px"}}>
                 <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
-                  <div style={{display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px"}}>
-                    <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
-                      <Smartphone size={24} color="#fff"/>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px", flexWrap: "wrap", gap: "10px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                      <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
+                        <Smartphone size={24} color="#fff"/>
+                      </div>
+                      <div>
+                        <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>Conexão Oficial com o WhatsApp</h2>
+                        <small style={{color: "#aba8bf"}}>Instância da Loja: <code>{instanceName}</code></small>
+                      </div>
                     </div>
-                    <div>
-                      <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>Conexão Oficial com o WhatsApp</h2>
-                      <small style={{color: "#aba8bf"}}>Instância: <code>{instanceName}</code></small>
-                    </div>
+                    <span style={{
+                      padding: "5px 12px",
+                      borderRadius: "999px",
+                      fontSize: "12px",
+                      fontWeight: 800,
+                      background: qrState === "open" ? "rgba(0, 219, 140, 0.16)" : qrState === "connecting" ? "rgba(139, 92, 246, 0.2)" : "rgba(107, 114, 128, 0.2)",
+                      color: qrState === "open" ? "#00db8c" : qrState === "connecting" ? "#c4b5fd" : "#9ca3af",
+                      border: `1px solid ${qrState === "open" ? "#00db8c" : qrState === "connecting" ? "#8b5cf6" : "#4b5563"}`
+                    }}>
+                      {qrState === "open" ? "● Sessão Ativa" : qrState === "connecting" ? "◐ Aguardando Leitura" : "○ Desconectado"}
+                    </span>
                   </div>
 
+                  {/* Card de Número Conectado quando Ativo */}
+                  {qrState === "open" && (
+                    <div style={{
+                      padding: "16px",
+                      borderRadius: "12px",
+                      background: "linear-gradient(135deg, rgba(0, 219, 140, 0.14), rgba(6, 78, 59, 0.25))",
+                      border: "1px solid rgba(0, 219, 140, 0.45)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      flexWrap: "wrap",
+                      gap: "12px"
+                    }}>
+                      <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                        <CheckCircle2 size={28} color="#00db8c" />
+                        <div>
+                          <strong style={{color: "#fff", fontSize: "15px", display: "block"}}>
+                            WhatsApp Conectado e Pronto para Uso
+                          </strong>
+                          <span style={{color: "#a7f3d0", fontSize: "13px"}}>
+                            {connectedPhone ? `Número conectado: +${connectedPhone}` : "Sessão confirmada pela Evolution API"}
+                            {connectedProfile ? ` · Perfil: ${connectedProfile}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <p style={{color: "#c2bed4", fontSize: "14px", lineHeight: "1.5", margin: 0}}>
-                    Conecte o número de WhatsApp da sua loja para que a inteligência artificial responda seus clientes automaticamente com o cardápio e regras configuradas.
+                    Conecte o número de WhatsApp do estabelecimento para receber conversas ao vivo no painel e ativar o atendimento inteligente. O progresso é atualizado automaticamente em tempo real.
                   </p>
 
                   <div style={{display: "flex", gap: "10px", flexWrap: "wrap"}}>
@@ -1561,7 +1808,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       onClick={() => void handleConnectWhatsApp()}
                       style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700}}
                     >
-                      <QrCode size={18}/> {qrLoading ? "Gerando QR Code..." : qrState === "open" ? "Reconectar WhatsApp" : "Gerar QR Code de Conexão"}
+                      <QrCode size={18}/>
+                      {qrLoading
+                        ? "Preparando..."
+                        : qrState === "open"
+                          ? "Verificar / Reconectar Sessão"
+                          : qrCode && qrExpiresIn === 0
+                            ? "Renovar QR Code Expirado"
+                            : qrCode
+                              ? "Renovar QR Code"
+                              : "Gerar QR Code de Conexão"}
                     </button>
 
                     <button
@@ -1572,7 +1828,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 18px", background: "#2e1218", color: "#ff859a", borderColor: "#f43f5e"}}
                       title="Apagar instância e desconectar número"
                     >
-                      <Trash2 size={16}/> {deletingQr ? "Apagando..." : "Desconectar Número"}
+                      <Trash2 size={16}/> {deletingQr ? "Desconectando..." : "Desconectar / Apagar Sessão"}
                     </button>
                   </div>
 
@@ -1580,8 +1836,12 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <div style={{
                       padding: "12px 16px",
                       borderRadius: "10px",
-                      background: qrNotice.toLowerCase().includes("sucesso") || qrNotice.toLowerCase().includes("conectado") ? "rgba(0, 219, 140, 0.15)" : qrNotice.toLowerCase().includes("falha") || qrNotice.toLowerCase().includes("erro") || qrNotice.toLowerCase().includes("indisponível") || qrNotice.toLowerCase().includes("inacessível") || qrNotice.toLowerCase().includes("permit") ? "rgba(244, 63, 94, 0.18)" : "rgba(236, 72, 153, 0.15)",
-                      border: `1px solid ${qrNotice.toLowerCase().includes("sucesso") || qrNotice.toLowerCase().includes("conectado") ? "#00db8c" : qrNotice.toLowerCase().includes("falha") || qrNotice.toLowerCase().includes("erro") || qrNotice.toLowerCase().includes("indisponível") || qrNotice.toLowerCase().includes("inacessível") || qrNotice.toLowerCase().includes("permit") ? "#f43f5e" : "#ec4899"}`,
+                      background: qrError
+                        ? "rgba(244, 63, 94, 0.18)"
+                        : qrState === "open"
+                          ? "rgba(0, 219, 140, 0.15)"
+                          : "rgba(139, 92, 246, 0.15)",
+                      border: `1px solid ${qrError ? "#f43f5e" : qrState === "open" ? "#00db8c" : "#8b5cf6"}`,
                       color: "#fff",
                       fontSize: "13px",
                       lineHeight: "1.5"
@@ -1591,55 +1851,179 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   )}
 
                   {qrCode && qrState !== "open" && (
-                    <div style={{textAlign: "center", padding: "20px", background: "#fff", borderRadius: "16px", margin: "10px auto", maxWidth: "280px"}}>
-                      <img src={qrCode} alt="QR Code WhatsApp" style={{width: "100%", height: "auto", display: "block"}}/>
-                      <span style={{color: "#111", fontSize: "12px", fontWeight: 700, display: "block", marginTop: "10px"}}>
-                        Aponte a câmera do seu WhatsApp aqui
-                      </span>
+                    <div style={{textAlign: "center", padding: "20px", background: "#fff", borderRadius: "16px", margin: "6px auto", maxWidth: "280px", position: "relative"}}>
+                      <img
+                        src={qrCode}
+                        alt="QR Code WhatsApp"
+                        style={{
+                          width: "100%",
+                          height: "auto",
+                          display: "block",
+                          opacity: qrExpiresIn === 0 ? 0.25 : 1,
+                          filter: qrExpiresIn === 0 ? "grayscale(1)" : "none"
+                        }}
+                      />
+                      {qrExpiresIn === 0 ? (
+                        <div style={{marginTop: "10px"}}>
+                          <span style={{color: "#dc2626", fontSize: "12px", fontWeight: 800, display: "block", marginBottom: "8px"}}>
+                            QR Code expirado
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleConnectWhatsApp()}
+                            style={{padding: "8px 14px", borderRadius: "8px", background: "#ec4899", color: "#fff", border: "none", fontWeight: 700, fontSize: "12px", cursor: "pointer"}}
+                          >
+                            Renovar QR Code
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{color: "#111", fontSize: "12px", fontWeight: 700, display: "block", marginTop: "10px"}}>
+                          Aponte a câmera do seu WhatsApp ({qrExpiresIn}s)
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
 
+                {/* Passo a Passo Visual de 5 Etapas Reais */}
                 <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
-                  <div style={{display: "flex", alignItems: "center", gap: "10px", borderBottom: "1px solid #372f4d", paddingBottom: "14px"}}>
-                    <CheckCircle2 size={22} color="#00db8c"/>
-                    <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>Como Conectar em 6 Passos</h2>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                      <CheckCircle2 size={22} color={qrState === "open" ? "#00db8c" : "#8b5cf6"}/>
+                      <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>Progresso da Conexão em Tempo Real</h2>
+                    </div>
                   </div>
 
-                  <div style={{display: "flex", flexDirection: "column", gap: "14px", fontSize: "14px", color: "#d2cae4", lineHeight: "1.5"}}>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: "#00db8c", color: "#002b1b", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 800, fontSize: "12px"}}>✓</span>
-                      <span><strong>1. Login no Painel:</strong> Você já está autenticado no painel individual da sua loja.</span>
-                    </div>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: "#00db8c", color: "#002b1b", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 800, fontSize: "12px"}}>✓</span>
-                      <span><strong>2. Acessar WhatsApp:</strong> Você já está na aba de conexão do WhatsApp.</span>
-                    </div>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: qrCode ? "#00db8c" : "var(--grad-primary)", color: qrCode ? "#002b1b" : "white", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 700, fontSize: "12px"}}>
-                        {qrCode ? "✓" : "3"}
-                      </span>
-                      <span><strong>3. Gerar QR Code:</strong> Clique no botão <em>&quot;Gerar QR Code&quot;</em> ao lado.</span>
-                    </div>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: qrCode ? "#00db8c" : "var(--grad-primary)", color: qrCode ? "#002b1b" : "white", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 700, fontSize: "12px"}}>
-                        {qrCode ? "✓" : "4"}
-                      </span>
-                      <span><strong>4. QR Code Gerado:</strong> O sistema gera o código exclusivo para a loja <em>{currentTenantObj?.name}</em>.</span>
-                    </div>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: qrState === "open" ? "#00db8c" : "var(--grad-primary)", color: qrState === "open" ? "#002b1b" : "white", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 700, fontSize: "12px"}}>
-                        {qrState === "open" ? "✓" : "5"}
-                      </span>
-                      <span><strong>5. Escaneie no Celular:</strong> No WhatsApp &gt; <em>Aparelhos conectados</em> &gt; <em>Conectar um aparelho</em> e aponte para a tela.</span>
-                    </div>
-                    <div style={{display: "flex", gap: "12px", alignItems: "flex-start"}}>
-                      <span style={{background: qrState === "open" ? "#00db8c" : "#3b3350", color: qrState === "open" ? "#002b1b" : "#888", borderRadius: "50%", minWidth: "26px", height: "26px", display: "grid", placeItems: "center", fontWeight: 800, fontSize: "12px"}}>
-                        {qrState === "open" ? "✓" : "6"}
-                      </span>
-                      <span><strong>6. Pronto!</strong> Status muda para <em>Online</em> e a IA atende seus clientes automaticamente!</span>
-                    </div>
-                  </div>
+                  {(() => {
+                    // Determine authentic step statuses based strictly on real Evolution API states:
+                    // "pending" (Cinza), "active" (Azul/Roxo), "done" (Verde), "error" (Vermelho)
+                    type StepStatus = "pending" | "active" | "done" | "error";
+                    const step1: StepStatus = qrError && !qrCode && qrState !== "open"
+                      ? "error"
+                      : qrLoading
+                        ? "active"
+                        : (qrCode || qrState === "open")
+                          ? "done"
+                          : "pending";
+
+                    const step2: StepStatus = qrState === "open" || qrScanned
+                      ? "done"
+                      : qrCode
+                        ? (qrExpiresIn === 0 ? "error" : "active")
+                        : "pending";
+
+                    const step3: StepStatus = qrState === "open"
+                      ? "done"
+                      : qrScanned
+                        ? "active"
+                        : "pending";
+
+                    const step4: StepStatus = qrState === "open"
+                      ? "done"
+                      : (qrValidating || qrScanned)
+                        ? "active"
+                        : "pending";
+
+                    const step5: StepStatus = qrState === "open"
+                      ? "done"
+                      : "pending";
+
+                    const steps = [
+                      {
+                        num: 1,
+                        title: "Etapa 1 — Preparando conexão",
+                        desc: "Status: aguardando inicialização da instância.",
+                        st: step1
+                      },
+                      {
+                        num: 2,
+                        title: "Etapa 2 — QR Code gerado",
+                        desc: "Status: aguardando leitura pelo WhatsApp.",
+                        st: step2
+                      },
+                      {
+                        num: 3,
+                        title: "Etapa 3 — QR Code escaneado",
+                        desc: "Status: aguardando confirmação da conexão.",
+                        st: step3
+                      },
+                      {
+                        num: 4,
+                        title: "Etapa 4 — Validando sessão",
+                        desc: "Status: verificando se a Evolution API confirmou a conexão.",
+                        st: step4
+                      },
+                      {
+                        num: 5,
+                        title: "Etapa 5 — WhatsApp conectado",
+                        desc: "Status: conexão confirmada e pronta para uso.",
+                        st: step5
+                      }
+                    ];
+
+                    const getColors = (st: StepStatus) => {
+                      if (st === "done") return { bg: "rgba(0, 219, 140, 0.14)", border: "#00db8c", badgeBg: "#00db8c", badgeColor: "#002b1b", text: "#d1fae5", label: "Concluída" };
+                      if (st === "active") return { bg: "rgba(139, 92, 246, 0.18)", border: "#8b5cf6", badgeBg: "#8b5cf6", badgeColor: "#ffffff", text: "#ddd6fe", label: "Em andamento" };
+                      if (st === "error") return { bg: "rgba(239, 68, 68, 0.16)", border: "#ef4444", badgeBg: "#ef4444", badgeColor: "#ffffff", text: "#fecaca", label: "Erro / Expirado" };
+                      return { bg: "rgba(107, 114, 128, 0.1)", border: "#374151", badgeBg: "#374151", badgeColor: "#9ca3af", text: "#9ca3af", label: "Não iniciada" };
+                    };
+
+                    return (
+                      <div style={{display: "flex", flexDirection: "column", gap: "10px"}}>
+                        {steps.map(s => {
+                          const c = getColors(s.st);
+                          return (
+                            <div
+                              key={s.num}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "12px",
+                                padding: "12px 14px",
+                                borderRadius: "12px",
+                                background: c.bg,
+                                border: `1px solid ${c.border}`,
+                                transition: "all 0.25s ease"
+                              }}
+                            >
+                              <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                                <span style={{
+                                  background: c.badgeBg,
+                                  color: c.badgeColor,
+                                  borderRadius: "50%",
+                                  minWidth: "28px",
+                                  height: "28px",
+                                  display: "grid",
+                                  placeItems: "center",
+                                  fontWeight: 800,
+                                  fontSize: "12px",
+                                  flexShrink: 0
+                                }}>
+                                  {s.st === "done" ? "✓" : s.st === "error" ? "!" : s.num}
+                                </span>
+                                <div>
+                                  <strong style={{color: "#fff", fontSize: "14px", display: "block"}}>{s.title}</strong>
+                                  <small style={{color: c.text, fontSize: "12px"}}>{s.desc}</small>
+                                </div>
+                              </div>
+                              <span style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                padding: "3px 8px",
+                                borderRadius: "999px",
+                                background: "rgba(0,0,0,0.3)",
+                                color: c.text,
+                                whiteSpace: "nowrap"
+                              }}>
+                                {c.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </section>
             )}
@@ -2191,151 +2575,302 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* SEÇÃO NOVO: HORÁRIOS DE ATENDIMENTO */}
             {activeTab === "horarios" && (
               <section className="op-card" style={{display: "flex", flexDirection: "column", gap: "20px"}}>
-                <div style={{display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px"}}>
-                  <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
-                    <Clock size={22} color="white"/>
+                <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px", flexWrap: "wrap", gap: "12px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                    <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
+                      <Clock size={22} color="white"/>
+                    </div>
+                    <div>
+                      <h2 style={{margin: 0, fontSize: "19px", color: "white"}}>Horários de Atendimento da IA</h2>
+                      <small style={{color: "#c2bed4"}}>Configure livremente os dias, horários de início e término, intervalos e mensagem de ausência.</small>
+                    </div>
                   </div>
-                  <div>
-                    <h2 style={{margin: 0, fontSize: "19px", color: "white"}}>Horários de Atendimento da IA</h2>
-                    <small style={{color: "#c2bed4"}}>Configure em quais horários a IA responderá seus clientes e a mensagem enviada fora do expediente.</small>
-                  </div>
+                  <span style={{
+                    padding: "6px 14px",
+                    borderRadius: "999px",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    background: operatingHours.enabled ? "rgba(0, 219, 140, 0.16)" : "rgba(59, 130, 246, 0.16)",
+                    color: operatingHours.enabled ? "#00db8c" : "#93c5fd",
+                    border: `1px solid ${operatingHours.enabled ? "#00db8c" : "#3b82f6"}`
+                  }}>
+                    {operatingHours.enabled ? "🕒 Controle de Horário Ativo" : "🌐 IA Atendendo 24h (Sem Restrição de Horário)"}
+                  </span>
                 </div>
 
                 {hoursNotice && (
-                  <div style={{padding: "14px 18px", borderRadius: "12px", background: "rgba(10, 46, 32, 0.8)", border: "1px solid #00db8c", color: "#b6f5dd", display: "flex", alignItems: "center", gap: "10px"}}>
-                    <CheckCircle2 size={20} color="#00db8c"/>
-                    <span>{hoursNotice}</span>
+                  <div style={{padding: "14px 18px", borderRadius: "12px", background: "rgba(10, 46, 32, 0.85)", border: "1px solid #00db8c", color: "#b6f5dd", display: "flex", alignItems: "center", gap: "10px"}}>
+                    <CheckCircle2 size={20} color="#00db8c" style={{flexShrink: 0}}/>
+                    <span style={{fontSize: "14px", fontWeight: 600}}>{hoursNotice}</span>
                   </div>
                 )}
 
-                {!allowedFeatures.includes("business_hours") && (
-                  <div style={{
-                    padding: "16px 20px",
-                    borderRadius: "12px",
-                    background: "rgba(245, 158, 11, 0.12)",
-                    border: "1px solid rgba(245, 158, 11, 0.35)",
-                    color: "#f59e0b",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px"
-                  }}>
-                    <LockKeyhole size={22} color="#f59e0b" style={{flexShrink: 0}}/>
-                    <div style={{fontSize: "13px", lineHeight: "1.4"}}>
-                      <strong>Recurso dos planos CRM Business e Premium:</strong> No seu plano atual, as respostas da NovaesWeb IA funcionam 24 horas por dia. O controle de horários de expediente e mensagem de fechado requerem upgrade para o plano CRM Business.
-                    </div>
+                {hoursError && (
+                  <div style={{padding: "14px 18px", borderRadius: "12px", background: "rgba(88, 16, 28, 0.85)", border: "1px solid #f43f5e", color: "#fecdd3", display: "flex", alignItems: "center", gap: "10px"}}>
+                    <CircleAlert size={20} color="#f43f5e" style={{flexShrink: 0}}/>
+                    <span style={{fontSize: "14px", fontWeight: 600}}>{hoursError}</span>
                   </div>
                 )}
 
-                <form onSubmit={handleSaveOperatingHours} style={{display: "flex", flexDirection: "column", gap: "18px"}}>
-                  {/* Switch Ativar/Desativar */}
-                  <div style={{display: "flex", alignItems: "center", gap: "12px", background: "rgba(255,255,255,0.03)", padding: "14px 18px", borderRadius: "12px", border: "1px solid #3a3250"}}>
-                    <input
-                      type="checkbox"
-                      id="opt-hours-toggle"
-                      checked={operatingHours.enabled}
-                      onChange={e => setOperatingHours(prev => ({ ...prev, enabled: e.target.checked }))}
-                      style={{width: "20px", height: "20px", accentColor: "#ec4899"}}
-                    />
-                    <label htmlFor="opt-hours-toggle" style={{cursor: "pointer", fontSize: "14px", color: "white", fontWeight: 700}}>
-                      Ativar controle de horários de funcionamento (fora deste horário, a IA informa que a loja está fechada)
-                    </label>
-                  </div>
-
-                  {/* Dias da Semana */}
-                  <div>
-                    <label style={{fontSize: "13px", color: "#c2bed4", fontWeight: 700, display: "block", marginBottom: "8px"}}>
-                      Dias em que a loja funciona:
-                    </label>
-                    <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
-                      {[
-                        { id: "seg", label: "Segunda" },
-                        { id: "ter", label: "Terça" },
-                        { id: "qua", label: "Quarta" },
-                        { id: "qui", label: "Quinta" },
-                        { id: "sex", label: "Sexta" },
-                        { id: "sab", label: "Sábado" },
-                        { id: "dom", label: "Domingo" }
-                      ].map(d => {
-                        const isChecked = operatingHours.days?.includes(d.id);
-                        return (
-                          <button
-                            key={d.id}
-                            type="button"
-                            onClick={() => {
-                              setOperatingHours(prev => {
-                                const currentDays = prev.days || [];
-                                const nextDays = currentDays.includes(d.id)
-                                  ? currentDays.filter(x => x !== d.id)
-                                  : [...currentDays, d.id];
-                                return { ...prev, days: nextDays };
-                              });
-                            }}
-                            style={{
-                              padding: "8px 14px",
-                              borderRadius: "10px",
-                              border: "1px solid",
-                              borderColor: isChecked ? "#ec4899" : "#3e3752",
-                              background: isChecked ? "rgba(236, 72, 153, 0.2)" : "#161325",
-                              color: isChecked ? "#ec4899" : "#9ca3af",
-                              fontSize: "13px",
-                              fontWeight: 700,
-                              cursor: "pointer"
-                            }}
-                          >
-                            {d.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Horários Abertura e Fechamento */}
-                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px"}}>
-                    <div>
-                      <label style={{fontSize: "13px", color: "#c2bed4", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                        Horário de Abertura:
+                <form onSubmit={handleSaveOperatingHours} style={{display: "flex", flexDirection: "column", gap: "20px"}}>
+                  {/* Switch Ativar/Desativar + Fuso Horário */}
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "12px", background: operatingHours.enabled ? "rgba(236, 72, 153, 0.12)" : "rgba(255,255,255,0.03)", padding: "14px 18px", borderRadius: "12px", border: `1px solid ${operatingHours.enabled ? "#ec4899" : "#3a3250"}`}}>
+                      <input
+                        type="checkbox"
+                        id="opt-hours-toggle"
+                        checked={operatingHours.enabled}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, enabled: e.target.checked }));
+                        }}
+                        style={{width: "20px", height: "20px", accentColor: "#ec4899", cursor: "pointer"}}
+                      />
+                      <label htmlFor="opt-hours-toggle" style={{cursor: "pointer", fontSize: "14px", color: "white", fontWeight: 700, lineHeight: "1.4"}}>
+                        Ativar controle de horário da IA
+                        <small style={{display: "block", fontSize: "12px", color: "#aba8bf", fontWeight: 400, marginTop: "2px"}}>
+                          Quando desligado, a IA atende a qualquer hora (desde que ativa). Quando ligado, respeita os dias e horários abaixo.
+                        </small>
                       </label>
+                    </div>
+
+                    <div style={{background: "rgba(255,255,255,0.03)", padding: "14px 18px", borderRadius: "12px", border: "1px solid #3a3250"}}>
+                      <label style={{fontSize: "13px", color: "#c2bed4", fontWeight: 700, display: "block", marginBottom: "6px"}}>
+                        Fuso Horário do Estabelecimento:
+                      </label>
+                      <select
+                        value={operatingHours.timezone || "America/Sao_Paulo"}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, timezone: e.target.value }));
+                        }}
+                        style={{width: "100%", padding: "10px 12px", borderRadius: "10px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "13px"}}
+                      >
+                        <option value="America/Sao_Paulo">Horário de Brasília (America/Sao_Paulo - GMT-3)</option>
+                        <option value="America/Manaus">Horário do Amazonas (America/Manaus - GMT-4)</option>
+                        <option value="America/Cuiaba">Horário de Mato Grosso (America/Cuiaba - GMT-4)</option>
+                        <option value="America/Rio_Branco">Horário do Acre (America/Rio_Branco - GMT-5)</option>
+                        <option value="America/Noronha">Fernando de Noronha (America/Noronha - GMT-2)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Atalho Rápido de Horário Padrão */}
+                  <div style={{background: "rgba(255,255,255,0.02)", padding: "14px 18px", borderRadius: "12px", border: "1px solid #332b49", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap"}}>
+                      <span style={{fontSize: "13px", color: "#c2bed4", fontWeight: 700}}>Horário padrão rápido:</span>
                       <input
                         type="time"
                         value={operatingHours.openTime}
-                        onChange={e => setOperatingHours(prev => ({ ...prev, openTime: e.target.value }))}
-                        style={{width: "100%", padding: "12px", borderRadius: "10px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "14px"}}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, openTime: e.target.value }));
+                        }}
+                        style={{padding: "8px 10px", borderRadius: "8px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "13px"}}
                       />
-                    </div>
-                    <div>
-                      <label style={{fontSize: "13px", color: "#c2bed4", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                        Horário de Fechamento:
-                      </label>
+                      <span style={{color: "#aba8bf", fontSize: "13px"}}>até</span>
                       <input
                         type="time"
                         value={operatingHours.closeTime}
-                        onChange={e => setOperatingHours(prev => ({ ...prev, closeTime: e.target.value }))}
-                        style={{width: "100%", padding: "12px", borderRadius: "10px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "14px"}}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, closeTime: e.target.value }));
+                        }}
+                        style={{padding: "8px 10px", borderRadius: "8px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "13px"}}
                       />
                     </div>
+                    <button
+                      type="button"
+                      className="op-refresh"
+                      onClick={() => {
+                        isHoursDirtyRef.current = true;
+                        setOperatingHours(prev => {
+                          const nextSched = { ...prev.schedule };
+                          for (const k of ["seg", "ter", "qua", "qui", "sex", "sab", "dom"]) {
+                            nextSched[k] = {
+                              ...(nextSched[k] || DEFAULT_DAY_SCHEDULE[k]),
+                              openTime: prev.openTime,
+                              closeTime: prev.closeTime
+                            };
+                          }
+                          return { ...prev, schedule: nextSched };
+                        });
+                      }}
+                      style={{fontSize: "12px", padding: "8px 14px"}}
+                    >
+                      Aplicar início/fim a todos os dias
+                    </button>
                   </div>
 
-                  {/* Mensagem de Loja Fechada */}
-                  <div>
-                    <label style={{fontSize: "13px", color: "#c2bed4", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                      Mensagem automática enviada quando a loja estiver fechada:
+                  {/* Configuração Individual por Dia da Semana */}
+                  <div style={{display: "flex", flexDirection: "column", gap: "10px"}}>
+                    <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
+                      Horários por Dia da Semana (configure início, término e intervalos opcionais):
                     </label>
-                    <textarea
-                      rows={3}
-                      value={operatingHours.closedMessage}
-                      onChange={e => setOperatingHours(prev => ({ ...prev, closedMessage: e.target.value }))}
-                      style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "14px", lineHeight: "1.5"}}
-                    />
+                    {[
+                      { id: "seg", label: "Segunda-feira" },
+                      { id: "ter", label: "Terça-feira" },
+                      { id: "qua", label: "Quarta-feira" },
+                      { id: "qui", label: "Quinta-feira" },
+                      { id: "sex", label: "Sexta-feira" },
+                      { id: "sab", label: "Sábado" },
+                      { id: "dom", label: "Domingo" }
+                    ].map(d => {
+                      const dayCfg = operatingHours.schedule?.[d.id] || {
+                        enabled: operatingHours.days?.includes(d.id) ?? false,
+                        openTime: operatingHours.openTime || "08:00",
+                        closeTime: operatingHours.closeTime || "18:00",
+                        hasBreak: false,
+                        breakStart: "12:00",
+                        breakEnd: "13:00"
+                      };
+                      const updateDay = (patch: Partial<DayScheduleCfg>) => {
+                        isHoursDirtyRef.current = true;
+                        setOperatingHours(prev => {
+                          const nextSched = {
+                            ...(prev.schedule || DEFAULT_DAY_SCHEDULE),
+                            [d.id]: { ...dayCfg, ...patch }
+                          };
+                          const nextDays = Object.entries(nextSched)
+                            .filter(([, v]) => v.enabled)
+                            .map(([k]) => k);
+                          return { ...prev, schedule: nextSched, days: nextDays };
+                        });
+                      };
+                      return (
+                        <div
+                          key={d.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
+                            gap: "12px",
+                            padding: "12px 16px",
+                            borderRadius: "12px",
+                            background: dayCfg.enabled ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.2)",
+                            border: `1px solid ${dayCfg.enabled ? "#443c5e" : "#262138"}`
+                          }}
+                        >
+                          <div style={{display: "flex", alignItems: "center", gap: "10px", minWidth: "160px"}}>
+                            <input
+                              type="checkbox"
+                              checked={dayCfg.enabled}
+                              onChange={e => updateDay({ enabled: e.target.checked })}
+                              style={{width: "18px", height: "18px", accentColor: "#ec4899", cursor: "pointer"}}
+                            />
+                            <strong style={{color: dayCfg.enabled ? "#fff" : "#6b7280", fontSize: "14px"}}>
+                              {d.label}
+                            </strong>
+                            <span style={{
+                              fontSize: "11px",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              fontWeight: 700,
+                              background: dayCfg.enabled ? "rgba(0, 219, 140, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                              color: dayCfg.enabled ? "#00db8c" : "#f87171"
+                            }}>
+                              {dayCfg.enabled ? "Atende" : "Fechado"}
+                            </span>
+                          </div>
+
+                          {dayCfg.enabled ? (
+                            <div style={{display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap"}}>
+                              <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                                <small style={{color: "#aba8bf", fontSize: "12px"}}>Início:</small>
+                                <input
+                                  type="time"
+                                  value={dayCfg.openTime}
+                                  onChange={e => updateDay({ openTime: e.target.value })}
+                                  style={{padding: "7px 10px", borderRadius: "8px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "13px"}}
+                                />
+                                <small style={{color: "#aba8bf", fontSize: "12px"}}>Término:</small>
+                                <input
+                                  type="time"
+                                  value={dayCfg.closeTime}
+                                  onChange={e => updateDay({ closeTime: e.target.value })}
+                                  style={{padding: "7px 10px", borderRadius: "8px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "13px"}}
+                                />
+                              </div>
+
+                              <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                                <label style={{display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#c2bed4", cursor: "pointer"}}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(dayCfg.hasBreak)}
+                                    onChange={e => updateDay({ hasBreak: e.target.checked })}
+                                    style={{accentColor: "#8b5cf6"}}
+                                  />
+                                  Intervalo / Pausa
+                                </label>
+                                {dayCfg.hasBreak && (
+                                  <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                                    <input
+                                      type="time"
+                                      value={dayCfg.breakStart || "12:00"}
+                                      onChange={e => updateDay({ breakStart: e.target.value })}
+                                      style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
+                                    />
+                                    <small style={{color: "#aba8bf"}}>-</small>
+                                    <input
+                                      type="time"
+                                      value={dayCfg.breakEnd || "13:00"}
+                                      onChange={e => updateDay({ breakEnd: e.target.value })}
+                                      style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{fontSize: "12px", color: "#6b7280", fontStyle: "italic"}}>
+                              A IA não realiza atendimento neste dia
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Mensagem de Ausência Fora do Horário */}
+                  <div style={{background: "rgba(255,255,255,0.02)", padding: "16px", borderRadius: "12px", border: "1px solid #3a3250", display: "flex", flexDirection: "column", gap: "12px"}}>
+                    <label style={{display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", fontSize: "14px", color: "#fff", fontWeight: 700}}>
+                      <input
+                        type="checkbox"
+                        checked={operatingHours.sendClosedMessage !== false}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, sendClosedMessage: e.target.checked }));
+                        }}
+                        style={{width: "18px", height: "18px", accentColor: "#ec4899"}}
+                      />
+                      Enviar mensagem automática de ausência quando o cliente chamar fora do horário
+                    </label>
+                    <small style={{color: "#aba8bf", fontSize: "12px"}}>
+                      Se desmarcado, a IA permanecerá em silêncio absoluto fora do horário configurado sem enviar nenhuma resposta automática.
+                    </small>
+                    {operatingHours.sendClosedMessage !== false && (
+                      <textarea
+                        rows={3}
+                        value={operatingHours.closedMessage}
+                        onChange={e => {
+                          isHoursDirtyRef.current = true;
+                          setOperatingHours(prev => ({ ...prev, closedMessage: e.target.value }));
+                        }}
+                        placeholder="Digite a mensagem de ausência enviada fora do horário de funcionamento..."
+                        style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#161325", border: "1px solid #3d345c", color: "white", fontSize: "14px", lineHeight: "1.5"}}
+                      />
+                    )}
                   </div>
 
                   <div>
                     <button
                       type="submit"
                       className="op-primary"
-                      disabled={savingHours || !allowedFeatures.includes("business_hours")}
-                      style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 24px", fontWeight: 700, borderRadius: "10px", opacity: !allowedFeatures.includes("business_hours") ? 0.5 : 1}}
+                      disabled={savingHours || isSuspended}
+                      style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "14px 28px", fontWeight: 700, borderRadius: "12px", fontSize: "15px"}}
                     >
-                      <Save size={16}/> {savingHours ? "Salvando horários..." : "Salvar Horários de Atendimento"}
+                      <Save size={18}/> {savingHours ? "Salvando horários..." : "Salvar Horários de Atendimento"}
                     </button>
                   </div>
                 </form>
@@ -2345,12 +2880,12 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* SEÇÃO 3: ATENDIMENTOS E CONVERSAS */}
             {activeTab === "atendimentos" && (
               <>
-                <section className="op-workspace" style={{minHeight: "620px"}}>
+                <section className="op-workspace" style={{minHeight: "640px"}}>
                   {/* Coluna Esquerda: Lista de Conversas */}
                   <aside className={`op-card op-inbox ${mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
                     <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px"}}>
-                      <h2 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Conversas WhatsApp</h2>
-                      <span style={{fontSize: "12px", color: "#a59cb8", fontWeight: 600}}>{filtered.length} listadas</span>
+                      <h2 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Atendimento ao Vivo</h2>
+                      <span style={{fontSize: "12px", color: "#a59cb8", fontWeight: 600}}>{filtered.length} conversas</span>
                     </div>
 
                     <label className="op-search">
@@ -2358,15 +2893,14 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       <input aria-label="Buscar contato" placeholder="Buscar por nome ou número..." value={search} onChange={e => setSearch(e.target.value)}/>
                     </label>
 
-                    {/* Funil de Atendimento Operacional (6 Etapas com rolagem suave) */}
+                    {/* Estados das Conversas (Filtro Operacional) */}
                     <div className="op-funnel-bar">
                       {[
                         { id: "all", label: "Todas", count: funnelCounts.all, bg: "var(--grad-primary)", border: "#ec4899", color: "#fff" },
-                        { id: "novo", label: "Novo Contato", count: funnelCounts.novo, bg: "rgba(59, 130, 246, 0.18)", border: "#3b82f6", color: "#93c5fd" },
-                        { id: "ai", label: "🤖 IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.18)", border: "#00db8c", color: "#00db8c" },
-                        { id: "waiting_human", label: "🚨 Precisa de Humano", count: funnelCounts.waiting_human, bg: "rgba(239, 68, 68, 0.22)", border: "#ef4444", color: "#fca5a5" },
-                        { id: "human", label: "👤 Atendente", count: funnelCounts.human, bg: "rgba(245, 158, 11, 0.18)", border: "#f59e0b", color: "#fcd34d" },
-                        { id: "waiting_client", label: "⏳ Aguardando", count: funnelCounts.waiting_client, bg: "rgba(14, 165, 233, 0.18)", border: "#0ea5e9", color: "#7dd3fc" },
+                        { id: "ai", label: "🤖 Atendimento por IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.18)", border: "#00db8c", color: "#00db8c" },
+                        { id: "waiting_human", label: "🚨 Aguardando atendente", count: funnelCounts.waiting_human, bg: "rgba(239, 68, 68, 0.22)", border: "#ef4444", color: "#fca5a5" },
+                        { id: "human", label: "👤 Em atendimento humano", count: funnelCounts.human, bg: "rgba(245, 158, 11, 0.18)", border: "#f59e0b", color: "#fcd34d" },
+                        { id: "waiting_client", label: "⏳ Aguardando cliente", count: funnelCounts.waiting_client, bg: "rgba(14, 165, 233, 0.18)", border: "#0ea5e9", color: "#7dd3fc" },
                         { id: "closed", label: "✅ Finalizado", count: funnelCounts.closed, bg: "rgba(107, 114, 128, 0.18)", border: "#6b7280", color: "#d1d5db" }
                       ].map(f => {
                         const isSelected = funnelFilter === f.id;
@@ -2445,31 +2979,44 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         const escalation = data?.escalations?.[c.id];
                         const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
                         const contactTag = contactTagId ? tagMap.get(contactTagId) : undefined;
+
+                        // Last message preview and unread calculation
+                        const convMsgs = messages
+                          .filter(m => m.conversation_id === c.id)
+                          .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                        const lastMsg = convMsgs[0];
+                        const lastReadTs = readTimestamps[c.id] || 0;
+                        const unreadCount = convMsgs.filter(
+                          m => (m.direction === "inbound" || m.sender_type === "customer") && Date.parse(m.created_at) > lastReadTs
+                        ).length;
+                        const hasUnread = !isSelected && (isUrgent || (lastMsg?.direction === "inbound" && unreadCount > 0));
+
                         return (
                           <button
                             key={c.id}
                             className={isSelected ? "op-contact active" : "op-contact"}
                             onClick={() => {
                               setSelected(c.id);
+                              setReadTimestamps(prev => ({ ...prev, [c.id]: Date.now() }));
                               setMobileChatOpen(true);
                             }}
                             style={{
                               display: "flex",
-                              alignItems: "center",
+                              alignItems: "flex-start",
                               gap: "12px",
-                              padding: "11px 13px",
+                              padding: "12px 13px",
                               borderRadius: "12px",
                               width: "100%",
                               textAlign: "left",
                               border: isSelected
                                 ? "1px solid #ec4899"
                                 : isUrgent
-                                ? "1px solid rgba(239, 68, 68, 0.45)"
+                                ? "1px solid rgba(239, 68, 68, 0.55)"
                                 : "1px solid rgba(255, 255, 255, 0.05)",
                               background: isSelected
                                 ? "linear-gradient(135deg, rgba(225, 29, 72, 0.18), rgba(139, 92, 246, 0.18))"
                                 : isUrgent
-                                ? "rgba(239, 68, 68, 0.06)"
+                                ? "rgba(239, 68, 68, 0.08)"
                                 : "rgba(255, 255, 255, 0.02)",
                               boxShadow: isSelected ? "0 4px 14px rgba(0, 0, 0, 0.25)" : "none",
                               transition: "all 0.15s ease"
@@ -2490,9 +3037,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               fontSize: "15px",
                               color: "#fff",
                               flexShrink: 0,
+                              position: "relative",
                               boxShadow: isUrgent ? "0 0 12px rgba(239, 68, 68, 0.6)" : "none"
                             }}>
                               {(contact?.display_name || contact?.phone || "C").charAt(0).toUpperCase()}
+                              {hasUnread && (
+                                <span style={{
+                                  position: "absolute",
+                                  top: "-2px",
+                                  right: "-2px",
+                                  background: "#ef4444",
+                                  color: "#fff",
+                                  borderRadius: "999px",
+                                  minWidth: "16px",
+                                  height: "16px",
+                                  fontSize: "10px",
+                                  fontWeight: 800,
+                                  display: "grid",
+                                  placeItems: "center",
+                                  padding: "0 4px",
+                                  border: "2px solid #12101e"
+                                }}>
+                                  {unreadCount || "!"}
+                                </span>
+                              )}
                             </div>
                             <div style={{minWidth: 0, flex: 1}}>
                               <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px"}}>
@@ -2500,10 +3068,26 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   {contact?.display_name || contact?.phone || "Contato"}
                                 </strong>
                                 <span style={{fontSize: "11px", color: "#9ca3af", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap"}}>
-                                  {dateTime(c.last_message_at)}
+                                  {dateTime(lastMsg?.created_at || c.last_message_at)}
                                 </span>
                               </div>
-                              <div style={{display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap"}}>
+
+                              {/* Preview da última mensagem */}
+                              <div style={{
+                                fontSize: "12px",
+                                color: hasUnread ? "#fff" : "#9ca3af",
+                                fontWeight: hasUnread ? 700 : 400,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                marginTop: "3px"
+                              }}>
+                                {lastMsg
+                                  ? `${lastMsg.sender_type === "human" ? "Você: " : lastMsg.sender_type === "agent" ? "🤖 IA: " : ""}${lastMsg.body}`
+                                  : (contact?.phone || "Sem mensagens ainda")}
+                              </div>
+
+                              <div style={{display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", flexWrap: "wrap"}}>
                                 {contactTag && (
                                   <span style={{
                                     fontSize: "10px",
@@ -2525,12 +3109,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                     fontWeight: 800,
                                     background: "rgba(239, 68, 68, 0.22)",
                                     color: "#fca5a5",
-                                    border: "1px solid #ef4444",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: "3px"
+                                    border: "1px solid #ef4444"
                                   }}>
-                                    🚨 {escalation?.reason || "Precisa de Humano"}
+                                    🚨 Aguardando atendente
                                   </span>
                                 ) : stage === "human" ? (
                                   <span style={{
@@ -2542,7 +3123,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                     color: "#f59e0b",
                                     border: "1px solid rgba(245, 158, 11, 0.35)"
                                   }}>
-                                    👤 Atendente
+                                    👤 Em atendimento humano
                                   </span>
                                 ) : stage === "waiting_client" ? (
                                   <span style={{
@@ -2554,7 +3135,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                     color: "#7dd3fc",
                                     border: "1px solid rgba(14, 165, 233, 0.35)"
                                   }}>
-                                    ⏳ Aguardando
+                                    ⏳ Aguardando cliente
                                   </span>
                                 ) : stage === "closed" ? (
                                   <span style={{
@@ -2568,18 +3149,6 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   }}>
                                     ✅ Finalizado
                                   </span>
-                                ) : stage === "novo" ? (
-                                  <span style={{
-                                    fontSize: "10px",
-                                    padding: "2px 7px",
-                                    borderRadius: "6px",
-                                    fontWeight: 700,
-                                    background: "rgba(59, 130, 246, 0.18)",
-                                    color: "#93c5fd",
-                                    border: "1px solid rgba(59, 130, 246, 0.35)"
-                                  }}>
-                                    Novo Contato
-                                  </span>
                                 ) : (
                                   <span style={{
                                     fontSize: "10px",
@@ -2590,7 +3159,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                     color: "#00db8c",
                                     border: "1px solid rgba(0, 219, 140, 0.3)"
                                   }}>
-                                    🤖 IA
+                                    🤖 Atendimento por IA
                                   </span>
                                 )}
                               </div>
@@ -2599,18 +3168,17 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         );
                       }) : (
                         <div className="op-empty" style={{textAlign: "center", padding: "40px 10px", color: "#8c879b"}}>
-                          Nenhuma conversa encontrada nesta loja.
+                          Nenhuma conversa encontrada neste estabelecimento.
                         </div>
                       )}
                     </div>
                   </aside>
 
-                  {/* Coluna Direita: Mensagens do WhatsApp */}
+                  {/* Coluna Direita: Janela da Conversa */}
                   <article className={`op-card op-thread ${!mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
                     {current ? (
                       <>
                         <div className="op-thread-head">
-                          {/* Linha Superior: Botão Mobile Voltar + Info do Contato + Ação Principal */}
                           <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", width: "100%"}}>
                             <div style={{display: "flex", alignItems: "center", gap: "10px", minWidth: 0}}>
                               <button
@@ -2640,76 +3208,114 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   {byContact.get(current.contact_id)?.display_name || byContact.get(current.contact_id)?.phone || "Contato"}
                                 </strong>
                                 <div style={{fontSize: "12px", color: "#aba8bf", display: "flex", alignItems: "center", gap: "8px", marginTop: "3px", flexWrap: "wrap"}}>
-                                  <span style={{fontVariantNumeric: "tabular-nums"}}>{byContact.get(current.contact_id)?.phone || ""}</span>
-                                  <span style={{
-                                    fontSize: "10px",
-                                    padding: "2px 8px",
-                                    borderRadius: "8px",
-                                    fontWeight: 700,
-                                    background: current.mode === "human" ? "rgba(245, 158, 11, 0.18)" : "rgba(0, 219, 140, 0.15)",
-                                    color: current.mode === "human" ? "#f59e0b" : "#00db8c",
-                                    border: `1px solid ${current.mode === "human" ? "rgba(245, 158, 11, 0.35)" : "rgba(0, 219, 140, 0.3)"}`
-                                  }}>
-                                    {current.mode === "human" ? "👤 Atendente Humano" : "🤖 Novaes CRM IA"}
-                                  </span>
+                                  <span style={{fontVariantNumeric: "tabular-nums"}}>+{byContact.get(current.contact_id)?.phone || ""}</span>
+                                  {(() => {
+                                    const st = getEffectiveStage(current);
+                                    if (st === "waiting_human") {
+                                      return <span style={{fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 800, background: "rgba(239, 68, 68, 0.22)", color: "#fca5a5", border: "1px solid #ef4444"}}>🚨 Aguardando atendente (IA Pausada)</span>;
+                                    }
+                                    if (st === "human") {
+                                      return <span style={{fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 700, background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.4)"}}>👤 Em atendimento humano (IA Pausada)</span>;
+                                    }
+                                    if (st === "waiting_client") {
+                                      return <span style={{fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 700, background: "rgba(14, 165, 233, 0.2)", color: "#7dd3fc", border: "1px solid rgba(14, 165, 233, 0.4)"}}>⏳ Aguardando cliente (IA Pausada)</span>;
+                                    }
+                                    if (st === "closed") {
+                                      return <span style={{fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 700, background: "rgba(107, 114, 128, 0.25)", color: "#d1d5db", border: "1px solid rgba(107, 114, 128, 0.4)"}}>✅ Atendimento Finalizado</span>;
+                                    }
+                                    return <span style={{fontSize: "10px", padding: "2px 8px", borderRadius: "8px", fontWeight: 700, background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", border: "1px solid rgba(0, 219, 140, 0.3)"}}>🤖 Atendimento por IA</span>;
+                                  })()}
                                 </div>
                               </div>
                             </div>
 
-                            {/* Botão Devolver para IA / Assumir Atendimento Humano */}
-                            {current.mode === "human" ? (
-                              <button
-                                type="button"
-                                className="op-refresh"
-                                style={{
-                                  background: "rgba(0, 219, 140, 0.15)",
-                                  color: "#00db8c",
-                                  borderColor: "#00db8c",
-                                  fontWeight: 700,
-                                  fontSize: "12px",
-                                  padding: "7px 13px",
-                                  borderRadius: "9px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "6px"
-                                }}
-                                disabled={claiming || loading}
-                                onClick={() => void toggleConversationMode(current.id, "ai")}
-                              >
-                                <Bot size={15}/> {claiming ? "Reativando..." : "Devolver para a IA"}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="op-refresh"
-                                style={{
-                                  background: "rgba(245, 158, 11, 0.15)",
-                                  color: "#f59e0b",
-                                  borderColor: "#f59e0b",
-                                  fontWeight: 700,
-                                  fontSize: "12px",
-                                  padding: "7px 13px",
-                                  borderRadius: "9px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "6px"
-                                }}
-                                disabled={claiming || loading}
-                                onClick={() => void toggleConversationMode(current.id, "human")}
-                              >
-                                <Users size={15}/> {claiming ? "Assumindo..." : "Assumir Atendimento"}
-                              </button>
-                            )}
+                            {/* Botões de Ação: Assumir / Finalizar / Devolver para IA */}
+                            <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                              {getEffectiveStage(current) !== "human" && (
+                                <button
+                                  type="button"
+                                  className="op-refresh"
+                                  style={{
+                                    background: "rgba(245, 158, 11, 0.18)",
+                                    color: "#fcd34d",
+                                    borderColor: "#f59e0b",
+                                    fontWeight: 700,
+                                    fontSize: "12px",
+                                    padding: "7px 13px",
+                                    borderRadius: "9px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px"
+                                  }}
+                                  disabled={claiming || loading}
+                                  onClick={() => void toggleConversationMode(current.id, "human")}
+                                >
+                                  <Users size={15}/> {claiming ? "Assumindo..." : "Assumir Atendimento"}
+                                </button>
+                              )}
+
+                              {getEffectiveStage(current) !== "closed" && (
+                                <button
+                                  type="button"
+                                  className="op-refresh"
+                                  style={{
+                                    background: "rgba(107, 114, 128, 0.2)",
+                                    color: "#e5e7eb",
+                                    borderColor: "#6b7280",
+                                    fontWeight: 700,
+                                    fontSize: "12px",
+                                    padding: "7px 13px",
+                                    borderRadius: "9px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px"
+                                  }}
+                                  disabled={claiming || loading}
+                                  onClick={() => void handleSetFunnelStatus(current.id, "closed")}
+                                >
+                                  <Check size={15}/> Finalizar Atendimento
+                                </button>
+                              )}
+
+                              {current.mode !== "ai" && (
+                                <button
+                                  type="button"
+                                  className="op-refresh"
+                                  style={{
+                                    background: "rgba(0, 219, 140, 0.15)",
+                                    color: "#00db8c",
+                                    borderColor: "#00db8c",
+                                    fontWeight: 700,
+                                    fontSize: "12px",
+                                    padding: "7px 13px",
+                                    borderRadius: "9px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px"
+                                  }}
+                                  disabled={claiming || loading}
+                                  onClick={() => void toggleConversationMode(current.id, "ai")}
+                                >
+                                  <Bot size={15}/> {claiming ? "Reativando..." : "Devolver atendimento para IA"}
+                                </button>
+                              )}
+                            </div>
                           </div>
 
-                          {/* Linha Inferior: Controles de Funil e Etiqueta Comercial */}
-                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", paddingTop: "4px"}}>
-                            {/* Seletor de Etapa do Funil */}
+                          {/* Linha Inferior: Seletor de Estado e Etiqueta Comercial */}
+                          <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", paddingTop: "6px"}}>
                             <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
-                              <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Funil:</span>
+                              <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Estado:</span>
                               <select
                                 value={getEffectiveStage(current)}
-                                onChange={e => void handleSetFunnelStatus(current.id, e.target.value)}
+                                onChange={e => {
+                                  const nextVal = e.target.value;
+                                  if (nextVal === "ai" && current.mode !== "ai") {
+                                    void toggleConversationMode(current.id, "ai");
+                                  } else {
+                                    void handleSetFunnelStatus(current.id, nextVal);
+                                  }
+                                }}
                                 style={{
                                   padding: "5px 10px",
                                   borderRadius: "8px",
@@ -2721,16 +3327,14 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   cursor: "pointer"
                                 }}
                               >
-                                <option value="novo">Novo Contato</option>
-                                <option value="ai">🤖 IA Atendendo</option>
-                                <option value="waiting_human">🚨 Precisa de Humano</option>
-                                <option value="human">👤 Atendente Assumiu</option>
-                                <option value="waiting_client">⏳ Aguardando Cliente</option>
+                                <option value="ai">🤖 Atendimento por IA</option>
+                                <option value="waiting_human">🚨 Aguardando atendente</option>
+                                <option value="human">👤 Em atendimento humano</option>
+                                <option value="waiting_client">⏳ Aguardando cliente</option>
                                 <option value="closed">✅ Finalizado</option>
                               </select>
                             </div>
 
-                            {/* Seletor de Etiqueta Comercial */}
                             {allowedFeatures.includes("commercial_tags") && (
                               <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
                                 <Tag size={13} color="#aba8bf"/>
@@ -2758,11 +3362,11 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           </div>
                         </div>
 
-                        {/* ALERTA DE INSATISFAÇÃO / URGÊNCIA */}
-                        {current.status === "urgent" && (
+                        {/* ALERTA DE TRANSFERÊNCIA PARA HUMANO / AGUARDANDO ATENDENTE */}
+                        {(getEffectiveStage(current) === "waiting_human" || current.status === "urgent") && (
                           <div style={{
-                            background: "linear-gradient(135deg, rgba(239, 68, 68, 0.16), rgba(185, 28, 28, 0.08))",
-                            border: "1px solid rgba(239, 68, 68, 0.45)",
+                            background: "linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(185, 28, 28, 0.1))",
+                            border: "1px solid rgba(239, 68, 68, 0.55)",
                             borderRadius: "12px",
                             padding: "12px 16px",
                             margin: "12px 0 0",
@@ -2773,31 +3377,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             gap: "10px"
                           }}>
                             <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
-                              <div style={{background: "rgba(239, 68, 68, 0.2)", border: "1px solid #ef4444", borderRadius: "8px", width: "32px", height: "32px", display: "grid", placeItems: "center", color: "#fca5a5", flexShrink: 0}}>
+                              <div style={{background: "rgba(239, 68, 68, 0.25)", border: "1px solid #ef4444", borderRadius: "8px", width: "32px", height: "32px", display: "grid", placeItems: "center", color: "#fca5a5", flexShrink: 0}}>
                                 <ShieldAlert size={17} />
                               </div>
                               <div>
                                 <strong style={{color: "#fca5a5", fontSize: "13px", display: "block"}}>
-                                  Insatisfação ou urgência identificada pela IA
+                                  Cliente aguardando atendente humano
                                 </strong>
                                 <span style={{color: "#fee2e2", fontSize: "12px"}}>
-                                  Motivo: <strong>{data?.escalations?.[current.id]?.reason || "Reclamação ou Frustração Grave"}</strong>
-                                  {" · "}Atendimento pausado pela IA para intervenção humana prioritária.
+                                  Motivo: <strong>{data?.escalations?.[current.id]?.reason || "Solicitação de atendimento humano"}</strong>
+                                  {" · "}A IA pausou as respostas automáticas nesta conversa.
                                 </span>
                               </div>
                             </div>
                             <button
                               type="button"
                               className="op-refresh"
-                              style={{background: "rgba(239, 68, 68, 0.2)", color: "#fca5a5", borderColor: "#ef4444", fontSize: "12px", fontWeight: 700, padding: "6px 12px", borderRadius: "8px"}}
-                              onClick={() => void resolveUrgency(current.id)}
+                              style={{background: "#ef4444", color: "#fff", borderColor: "#ef4444", fontSize: "12px", fontWeight: 800, padding: "7px 14px", borderRadius: "8px"}}
+                              onClick={() => void toggleConversationMode(current.id, "human")}
                             >
-                              <CheckCircle2 size={14} /> Marcar como Resolvido
+                              <Users size={14} /> Assumir Conversa Agora
                             </button>
                           </div>
                         )}
 
-                        {/* RESUMO ESTRUTURADO DE 3 LINHAS QUANDO ASSUMIDO */}
                         {handoffNotice && (
                           <div style={{
                             background: "linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.08))",
@@ -2807,7 +3410,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             margin: "12px 0 0"
                           }}>
                             <div style={{color: "#f59e0b", fontSize: "12px", fontWeight: 800, textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px"}}>
-                              <Users size={15}/> Resumo Inteligente do Atendimento
+                              <Users size={15}/> Status do Atendimento
                             </div>
                             <p style={{margin: 0, color: "#fef3c7", fontSize: "13px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>
                               {handoffNotice}
@@ -2844,7 +3447,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 display: "block",
                                 marginBottom: "4px"
                               }}>
-                                {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "Cliente"}
+                                {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "📱 Cliente"}
                               </span>
                               <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>
                               <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
@@ -2858,25 +3461,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           )}
                         </div>
 
-                        {/* INPUT DE MENSAGEM HUMANA OU AVISO DE ATENDIMENTO IA */}
-                        {current.mode === "human" ? (
-                          <form
-                            onSubmit={e => {
-                              e.preventDefault();
-                              void handleSendHumanMessage();
-                            }}
-                            style={{
-                              borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                              paddingTop: "12px",
-                              marginTop: "8px",
-                              display: "flex",
-                              gap: "10px",
-                              alignItems: "center"
-                            }}
-                          >
+                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO */}
+                        <form
+                          onSubmit={e => {
+                            e.preventDefault();
+                            void handleSendHumanMessage();
+                          }}
+                          style={{
+                            borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                            paddingTop: "12px",
+                            marginTop: "8px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px"
+                          }}
+                        >
+                          {current.mode === "ai" && (
+                            <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#aba8bf", background: "rgba(0, 219, 140, 0.06)", border: "1px solid rgba(0, 219, 140, 0.2)", padding: "6px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
+                              <span>🤖 A IA está ativa nesta conversa. Ao enviar uma resposta abaixo ou clicar em <strong>Assumir Atendimento</strong>, a IA será pausada automaticamente.</span>
+                            </div>
+                          )}
+                          <div style={{display: "flex", gap: "10px", alignItems: "center"}}>
                             <input
                               type="text"
-                              placeholder="Digite uma mensagem humana para enviar no WhatsApp..."
+                              placeholder="Digite sua resposta para o cliente no WhatsApp..."
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
                               disabled={sendingHumanMsg}
@@ -2885,7 +3493,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 padding: "12px 14px",
                                 borderRadius: "10px",
                                 background: "#141124",
-                                border: "1px solid rgba(236, 72, 153, 0.3)",
+                                border: "1px solid rgba(236, 72, 153, 0.35)",
                                 color: "#fff",
                                 fontSize: "14px"
                               }}
@@ -2906,46 +3514,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 flexShrink: 0
                               }}
                             >
-                              <Send size={15}/> {sendingHumanMsg ? "Enviando..." : "Enviar (WhatsApp)"}
-                            </button>
-                          </form>
-                        ) : (
-                          <div style={{
-                            borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                            paddingTop: "12px",
-                            marginTop: "8px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            fontSize: "12px",
-                            color: "#aba8bf",
-                            background: "rgba(255,255,255,0.02)",
-                            padding: "10px 14px",
-                            borderRadius: "10px",
-                            flexWrap: "wrap",
-                            gap: "10px"
-                          }}>
-                            <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                              <Bot size={18} color="#00db8c"/>
-                              <span>A IA está conduzindo este atendimento automaticamente no WhatsApp. Para responder manualmente, assuma a conversa.</span>
-                            </div>
-                            <button
-                              type="button"
-                              className="op-refresh"
-                              style={{background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", borderColor: "#f59e0b", fontWeight: 700, fontSize: "12px", padding: "7px 13px", borderRadius: "8px"}}
-                              disabled={claiming || loading}
-                              onClick={() => void toggleConversationMode(current.id, "human")}
-                            >
-                              <Users size={14}/> Assumir Atendimento
+                              <Send size={15}/> {sendingHumanMsg ? "Enviando..." : "Responder no WhatsApp"}
                             </button>
                           </div>
-                        )}
+                        </form>
                       </>
                     ) : (
                       <div className="op-centered op-thread-empty" style={{textAlign: "center", padding: "60px 20px", color: "#8c879b"}}>
                         <MessageSquare size={36} color="#ec4899" style={{margin: "0 auto 12px"}}/>
                         <h2 style={{fontSize: "18px", color: "#fff"}}>Selecione uma conversa</h2>
-                        <p style={{fontSize: "13px"}}>As mensagens recebidas no WhatsApp da loja aparecerão aqui em tempo real.</p>
+                        <p style={{fontSize: "13px"}}>As mensagens recebidas no WhatsApp do estabelecimento aparecerão aqui automaticamente em tempo real.</p>
                       </div>
                     )}
                   </article>
