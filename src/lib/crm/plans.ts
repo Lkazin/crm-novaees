@@ -514,7 +514,9 @@ export function buildFeatureGovernanceMap(
 export function getRedis(providedRedis?: Redis): Redis {
   if (providedRedis) return providedRedis;
   const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
-  return new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1 });
+  const client = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1 });
+  client.on("error", () => {});
+  return client;
 }
 
 function getSupabaseConfig() {

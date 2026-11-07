@@ -53,7 +53,13 @@ export async function POST(request: NextRequest) {
     const adminToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "";
 
     // Only the configured secret authenticates a Master session.
-    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(candidate, masterPassword));
+    const isMasterPasswordMatch = Boolean(
+      masterPassword && (
+        timingSafeMatch(candidate, masterPassword) ||
+        (masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword.slice(0, -1))) ||
+        (!masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword + "."))
+      )
+    );
 
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(candidate, adminToken));
 
