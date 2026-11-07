@@ -1,3 +1,4 @@
+import type { StoredTenantConfig, StoredTenantPlan } from "./settings-types";
 import "server-only";
 import Redis from "ioredis";
 import { syncWhatsappChannelsForPlanLimit } from "./whatsapp-slots";
@@ -845,7 +846,7 @@ export async function saveMasterPlan(
           continue;
         }
 
-        let parsed: Record<string, any>;
+        let parsed: StoredTenantConfig;
         try {
           parsed = JSON.parse(s.business_description);
         } catch {
@@ -1116,17 +1117,14 @@ export async function getEffectiveTenantPlan(
     mockSettingsJson = typeof arg3 === "string" ? arg3 : undefined;
   }
 
-  const redis = getRedis(providedRedis);
-  let ownsConnection = false;
-
   // Authorization always reads current settings and the published catalog.
   // Cached projections must never keep a suspension or downgrade from taking effect.
   // 2. Fetch published master plans (never drafts!)
   const masterPlans = await getMasterPlans(providedRedis);
   const { url, serviceKey } = getSupabaseConfig();
 
-  let rawTenantPlan: Record<string, any> = {};
-  let parsedRoot: Record<string, any> = {};
+  let rawTenantPlan: StoredTenantPlan = {};
+  let parsedRoot: StoredTenantConfig = {};
   let durableAttendanceUsed = 0;
   let isSuspended = false;
   let suspensionReason = "";
@@ -1643,7 +1641,7 @@ export async function convertTrialToPaidPlan(
     if (!rSettings.ok) throw new Error("Falha ao consultar configurações da empresa no Supabase");
 
     const settingsList = (await rSettings.json()) as Array<{ business_description: string }>;
-    let dataObj: Record<string, any> = {};
+    let dataObj: StoredTenantConfig = {};
     if (settingsList[0]?.business_description?.startsWith("{")) {
       dataObj = JSON.parse(settingsList[0].business_description);
     }
@@ -1671,7 +1669,7 @@ export async function convertTrialToPaidPlan(
       }
     };
 
-    await replaceTenantPlan(tenantId, dataObj.plan, url, serviceKey);
+    await replaceTenantPlan(tenantId, dataObj.plan!, url, serviceKey);
 
     await syncTenantUsageLimits(tenantId, targetPlan.quotaLimit, url, serviceKey);
     await syncWhatsappChannelsForPlanLimit(tenantId, targetPlan.maxWhatsappConnections, url, serviceKey);

@@ -1,3 +1,4 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { authorizeCrmTenant, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
@@ -89,7 +90,7 @@ export function normalizeOperatingHours(
 ): OperatingHours {
   const openTime = typeof raw?.openTime === "string" && /^\d{2}:\d{2}$/.test(raw.openTime) ? raw.openTime : "08:00";
   const closeTime = typeof raw?.closeTime === "string" && /^\d{2}:\d{2}$/.test(raw.closeTime) ? raw.closeTime : "18:00";
-  const rawDays = Array.isArray(raw?.days) ? raw!.days.filter(d => ALL_DAYS.includes(d as any)) : DEFAULT_DAYS;
+  const rawDays = Array.isArray(raw?.days) ? raw!.days.filter(d => ALL_DAYS.some(day => day === d)) : DEFAULT_DAYS;
 
   const schedule: Record<string, DaySchedule> = buildDefaultSchedule(openTime, closeTime, rawDays);
   if (raw?.schedule && typeof raw.schedule === "object") {
@@ -197,7 +198,7 @@ export async function GET(request: NextRequest) {
 
     let rawOperatingHours: Partial<OperatingHours> | undefined;
     let dbTimezone = "America/Sao_Paulo";
-    let parsedSettings: Record<string, any> = {};
+    let parsedSettings: StoredTenantConfig & { ai_settings?: { operatingHours?: Partial<OperatingHours> } } = {};
 
     if (rSettings.ok) {
       const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
@@ -240,7 +241,7 @@ export async function GET(request: NextRequest) {
       ? parsedSettings.quickReplies
       : DEFAULT_QUICK_REPLIES;
 
-    const operatorMetadata: Array<Record<string, any>> = Array.isArray(parsedSettings.teamOperators) ? parsedSettings.teamOperators : [];
+    const operatorMetadata: Array<Record<string, unknown>> = Array.isArray(parsedSettings.teamOperators) ? parsedSettings.teamOperators : [];
     const teamOperators = memberships.map((m, idx) => ({
       id: m.user_id, name: idx === 0 ? "Operador Principal (" + tenantName + ")" : "Operador #" + (idx + 1),
       email: "—", ...(operatorMetadata.find(o => o.id === m.user_id) || {}),
@@ -328,7 +329,10 @@ export async function POST(request: NextRequest) {
       // Check if user tried to enable intervals/breaks without Business/Premium plan
       const sched = incomingOperatingHours.schedule || {};
       const requestedBreaks = Object.values(sched).some(
-        (d: any) => d && (d.hasBreak === true || (Array.isArray(d.intervals) && d.intervals.length > 0))
+        (d: unknown) => d && typeof d === "object" && (
+          (d as Record<string, unknown>).hasBreak === true ||
+          (Array.isArray((d as Record<string, unknown>).intervals) && ((d as Record<string, unknown>).intervals as unknown[]).length > 0)
+        )
       );
       if (requestedBreaks && !allowAdvancedHours) {
         const hoursGuard = await requireTenantFeature(tenantId, "business_hours");

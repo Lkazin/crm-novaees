@@ -38,7 +38,6 @@ export async function POST(request: NextRequest) {
     if (!access) return privateJson({ error: "not_authorized" }, 403);
     const featureGuard = await requireTenantFeature(tenantId, "simulator");
     if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
-    const operator = { id: access.operatorId };
 
     // Check for customer dissatisfaction / escalation first
     const escalation = detectCustomerEscalation(message);

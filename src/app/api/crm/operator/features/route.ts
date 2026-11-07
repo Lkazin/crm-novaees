@@ -1,3 +1,4 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { authorizeCrmTenant, ownsCrmResource, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
@@ -23,7 +24,7 @@ async function authorizeTenant(request: NextRequest, tenantId: string) {
   return { authorized: Boolean(access), operatorId: access?.operatorId ?? undefined, operatorEmail: access?.operatorEmail };
 }
 
-async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId: string): Promise<Record<string, any>> {
+async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId: string): Promise<StoredTenantConfig> {
   const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
     headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
     cache: "no-store"
@@ -38,7 +39,7 @@ async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId:
   throw new Error("settings_unavailable");
 }
 
-async function saveTenantSettingsJson(_url: string, _serviceKey: string, tenantId: string, dataObj: Record<string, any>, key: string): Promise<void> {
+async function saveTenantSettingsJson(_url: string, _serviceKey: string, tenantId: string, dataObj: StoredTenantConfig, key: string): Promise<void> {
   await patchCrmConfig(tenantId, { [key]: dataObj[key] });
 }
 
@@ -95,20 +96,20 @@ export async function GET(request: NextRequest) {
       })
     ]);
 
-    const rawConvs = rConvs.ok ? ((await rConvs.json()) as Array<any>) : [];
-    const contacts = rContacts.ok ? ((await rContacts.json()) as Array<any>) : [];
-    const channels = rChannels.ok ? ((await rChannels.json()) as Array<any>) : [];
-    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<any>) : [];
-    const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<any>) : [];
+    const rawConvs = rConvs.ok ? ((await rConvs.json()) as Array<{ id: string; contact_id: string; channel_id: string; assigned_to?: string; mode: string; status: string; last_message_at?: string }>) : [];
+    const contacts = rContacts.ok ? ((await rContacts.json()) as Array<Record<string, unknown>>) : [];
+    const channels = rChannels.ok ? ((await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>) : [];
+    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<{ user_id: string; role: string; created_at?: string }>) : [];
+    const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<Record<string, unknown>>) : [];
 
     const conversationTags: Record<string, string> = dataObj.conversationTags || {};
     const conversationPriorities: Record<string, "low" | "normal" | "high" | "urgent"> = dataObj.conversationPriorities || {};
-    const satisfactionSurveys: Array<Record<string, any>> = Array.isArray(dataObj.satisfactionSurveys) ? dataObj.satisfactionSurveys : [];
+    const satisfactionSurveys: Array<Record<string, unknown>> = Array.isArray(dataObj.satisfactionSurveys) ? dataObj.satisfactionSurveys : [];
     const quickReplies = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0 ? dataObj.quickReplies : DEFAULT_QUICK_REPLIES;
     const upgradeRequests = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
 
-    const operatorMetadata: Array<Record<string, any>> = Array.isArray(dataObj.teamOperators) ? dataObj.teamOperators : [];
-    const teamOperators: Array<Record<string, any>> = memberships.map((m: any, idx: number) => ({
+    const operatorMetadata: Array<Record<string, unknown>> = Array.isArray(dataObj.teamOperators) ? dataObj.teamOperators : [];
+    const teamOperators: Array<Record<string, unknown>> = memberships.map((m, idx: number) => ({
       id: m.user_id, name: idx === 0 ? "Operador Principal" : "Operador #" + (idx + 1),
       email: "—", ...(operatorMetadata.find(o => o.id === m.user_id) || {}),
       role: m.role, status: "active", createdAt: m.created_at,
@@ -238,7 +239,7 @@ export async function GET(request: NextRequest) {
 
       // Per-operator performance metrics
       const activeOps = teamOperators.filter(op => op.status !== "revoked");
-      const operatorMetrics = activeOps.map((op: any) => {
+      const operatorMetrics = activeOps.map((op) => {
         const opConvs = filteredConvs.filter(c => c.assigned_to === op.id || (!c.assigned_to && c.mode === "human" && activeOps.length === 1));
         const opSurveys = satisfactionSurveys.filter(s => s.operatorId === op.id || s.operatorName === op.name);
         const opAvgRating = opSurveys.length > 0
@@ -333,7 +334,7 @@ export async function POST(request: NextRequest) {
       const targetPlan = (await getMasterPlans()).find(p => p.status === "active" && (p.id === requestedPlan || p.name.toLowerCase() === requestedPlan.toLowerCase()));
       if (!targetPlan) return privateJson({ error: "invalid_upgrade_plan" }, 400);
 
-      const upgradeRequests: Array<Record<string, any>> = Array.isArray(dataObj.upgradeRequests)
+      const upgradeRequests: Array<Record<string, unknown>> = Array.isArray(dataObj.upgradeRequests)
         ? dataObj.upgradeRequests
         : [];
 
@@ -370,7 +371,7 @@ export async function POST(request: NextRequest) {
         return privateJson({ error: guard.errorCode, state: guard.state, message: guard.message }, guard.statusHttp);
       }
 
-      const list: Array<Record<string, any>> = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0
+      const list: Array<Record<string, unknown>> = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0
         ? [...dataObj.quickReplies]
         : [...DEFAULT_QUICK_REPLIES];
 
@@ -448,7 +449,7 @@ export async function POST(request: NextRequest) {
       const dayBucket = new Date().toISOString().slice(0, 10);
       const dedupKey = `${conversationId || contactPhone}:${dayBucket}`;
 
-      const surveys: Array<Record<string, any>> = Array.isArray(dataObj.satisfactionSurveys)
+      const surveys: Array<Record<string, unknown>> = Array.isArray(dataObj.satisfactionSurveys)
         ? dataObj.satisfactionSurveys
         : [];
 
@@ -496,7 +497,7 @@ export async function POST(request: NextRequest) {
         }, 403);
       }
 
-      const teamOperators: Array<Record<string, any>> = Array.isArray(dataObj.teamOperators)
+      const teamOperators: Array<Record<string, unknown>> = Array.isArray(dataObj.teamOperators)
         ? [...dataObj.teamOperators]
         : [];
 

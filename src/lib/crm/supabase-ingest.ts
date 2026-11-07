@@ -271,6 +271,8 @@ export async function fetchConversationContext(instance: string, phone: string, 
 }
 
 export async function handoffToHuman(instance: string, phone: string, _isUrgent = false, reason = "Solicitação de atendimento humano"): Promise<string | null> {
+  // Retain the positional flag for callers; escalation currently uses the reason only.
+  void _isUrgent;
   if (!isIngestEnabled(instance)) return null;
   try {
     const channel = await resolveChannelForInstance(instance);

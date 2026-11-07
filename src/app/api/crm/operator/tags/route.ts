@@ -1,3 +1,4 @@
+import type { StoredTenantConfig } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { authorizeCrmTenant, ownsCrmResource, patchCrmConfig } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest) {
     ]);
     const contactTags = rContactTags.ok ? ((await rContactTags.json()) as Array<{ contact_id: string; tag_id: string }>) : [];
     let conversationTags: Record<string, string> = {};
-    let tagHistory: Array<Record<string, any>> = [];
+    let tagHistory: Array<Record<string, unknown>> = [];
     if (rSettings.ok) {
       const sRows = (await rSettings.json()) as Array<{ business_description: string }>;
       if (sRows[0]?.business_description?.startsWith("{")) {
@@ -172,14 +173,14 @@ export async function POST(request: NextRequest) {
       });
       if (rGet.ok) {
         const sRows = (await rGet.json()) as Array<{ business_description: string }>;
-        let parsed: Record<string, any> = {};
+        let parsed: StoredTenantConfig = {};
         if (sRows[0]?.business_description?.startsWith("{")) {
           try { parsed = JSON.parse(sRows[0].business_description); } catch {}
         }
         const convTags: Record<string, string> = parsed.conversationTags && typeof parsed.conversationTags === "object"
           ? parsed.conversationTags
           : {};
-        const tagHistory: Array<Record<string, any>> = Array.isArray(parsed.tagHistory)
+        const tagHistory: Array<Record<string, unknown>> = Array.isArray(parsed.tagHistory)
           ? parsed.tagHistory
           : [];
 

@@ -3325,7 +3325,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <button
                             key={f.id}
                             type="button"
-                            onClick={() => setFunnelFilter(f.id as any)}
+                            onClick={() => setFunnelFilter(f.id as typeof funnelFilter)}
                             style={{
                               padding: "7px 11px",
                               borderRadius: "10px",
@@ -3442,7 +3442,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <Filter size={13} color="#aba8bf"/>
                           <select
                             value={priorityFilter}
-                            onChange={e => setPriorityFilter(e.target.value as any)}
+                            onChange={e => setPriorityFilter(e.target.value as typeof priorityFilter)}
                             style={{
                               flex: 1,
                               background: "transparent",
@@ -3875,7 +3875,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Prioridade:</span>
                                 <select
                                   value={current.priority || "normal"}
-                                  onChange={e => void handleSetConversationPriority(current.id, e.target.value as any)}
+                                  onChange={e => void handleSetConversationPriority(current.id, e.target.value as "low" | "normal" | "high" | "urgent")}
                                   style={{
                                     padding: "5px 10px",
                                     borderRadius: "8px",

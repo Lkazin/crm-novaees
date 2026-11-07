@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const instObj = Array.isArray(infoData)
-              ? infoData.find((i: any) => (i?.name || i?.instance?.instanceName || i?.instanceName) === instanceName) || infoData[0]
+              ? infoData.find((i: { name?: string; instanceName?: string; instance?: { instanceName?: string } }) => (i?.name || i?.instance?.instanceName || i?.instanceName) === instanceName) || infoData[0]
               : infoData?.instance || infoData;
             if (instObj) {
               phoneNumber = phoneNumber || extractPhoneFromJid(instObj.ownerJid || instObj.owner || instObj.number || instObj?.instance?.owner);

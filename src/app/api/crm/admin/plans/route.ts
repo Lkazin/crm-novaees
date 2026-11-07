@@ -3,7 +3,6 @@ import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import {
   CrmPlan,
-  DEFAULT_PLANS,
   TECHNICAL_FEATURES,
   getMasterPlans,
   getMasterPlansWithDrafts,

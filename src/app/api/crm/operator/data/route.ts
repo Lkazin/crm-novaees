@@ -29,7 +29,6 @@ type Message = { id: string; conversation_id: string; direction: string; sender_
 type HandoffRow = { id: string; conversation_id: string; requested_by: string; status: string; reason: string | null; created_at: string };
 type ChannelRow = { id: string; instance_name: string | null; status: string };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PRIORITY_RANK: Record<"low" | "normal" | "high" | "urgent", number> = {
   urgent: 4,

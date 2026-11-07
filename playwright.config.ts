@@ -8,8 +8,11 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: 0,
+  workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI ? [["list"]] : [["list"], ["html", { open: "never" }]],
-  use: { baseURL: testBaseURL, trace: "retain-on-failure", screenshot: "only-on-failure" },
+  use: { launchOptions: process.env.CRM_E2E_CHROMIUM ? { executablePath: process.env.CRM_E2E_CHROMIUM } : undefined, baseURL: testBaseURL, trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: process.env.CI ? `npm run start -- --port ${testPort}` : `npm run dev -- --port ${testPort}`,

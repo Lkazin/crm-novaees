@@ -20,7 +20,22 @@ function matchesSecret(supplied: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-async function handleConnectionOrQrEvent(payload: Record<string, any>) {
+type ConnectionEvent = {
+  apikey?: unknown;
+  event?: unknown;
+  instance?: unknown;
+  instanceName?: unknown;
+  data?: {
+    instance?: unknown;
+    state?: unknown;
+    status?: unknown;
+    statusReason?: unknown;
+    qrcode?: { base64?: unknown };
+    base64?: unknown;
+  };
+};
+
+async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
   const event = String(payload.event ?? "").toUpperCase().replace(/\./g, "_");
   const rawInstance = payload.instance ?? payload.instanceName ?? payload?.data?.instance ?? "";
   const instanceName = String(rawInstance).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
@@ -111,7 +126,7 @@ export async function POST(request: NextRequest) {
   const evoKey = process.env.EVOLUTION_API_KEY ?? "";
   const header = request.headers.get("x-crm-webhook-secret") ?? "";
   const querySecret = request.nextUrl.searchParams.get("secret") ?? "";
-  const bodyObj = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  const bodyObj = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as ConnectionEvent) : {};
   const payloadApiKey = typeof bodyObj.apikey === "string" ? bodyObj.apikey : "";
   // A recognizable payload is never proof of origin.
   const isAuthorized = header.length > 0
@@ -124,9 +139,9 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Handle connection & QR code update events first
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-      const ev = String((payload as Record<string, unknown>).event ?? "").toUpperCase().replace(/\./g, "_");
+      const ev = String((payload as ConnectionEvent).event ?? "").toUpperCase().replace(/\./g, "_");
       if (ev === "CONNECTION_UPDATE" || ev === "QRCODE_UPDATED") {
-        await handleConnectionOrQrEvent(payload as Record<string, any>);
+        await handleConnectionOrQrEvent(payload as ConnectionEvent);
         return json({ status: "ignored", reason: "connection_event_handled" });
       }
     }

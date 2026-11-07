@@ -3,7 +3,7 @@ import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
 import { verifyOperator, isAllowedOrigin } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getEffectiveTenantPlan, getRedis } from "@/lib/crm/plans";
-import { extractSlotFromInstanceName, expectedSlotInstanceName } from "@/lib/crm/whatsapp-slots";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
       }, { status: 401 });
     }
 
-    let body: Record<string, any> = {};
+    let body: Record<string, unknown> = {};
     try {
       body = await req.json();
     } catch {}
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       }, { status: 403 });
     }
 
-    if (body.slot !== undefined && (!Number.isInteger(body.slot) || body.slot < 1 || body.slot > 5)) return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
+    if (body.slot !== undefined && (typeof body.slot !== "number" || !Number.isInteger(body.slot) || body.slot < 1 || body.slot > 5)) return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
     const requestedSlot = typeof body.slot === "number" && body.slot >= 1 && body.slot <= 5
       ? (body.slot as 1 | 2 | 3 | 4 | 5)
       : undefined;
@@ -309,8 +309,9 @@ export async function POST(req: NextRequest) {
         const stateData = await stateRes.json();
         state = stateData?.instance?.state ?? stateData?.state ?? "close";
       }
-    } catch (err: any) {
-      if (err?.name === "TimeoutError" || err?.code === "ECONNREFUSED" || err?.code === "ENOTFOUND" || err?.message?.includes("fetch failed")) {
+    } catch (err) {
+      const failure = err as { name?: string; code?: string; message?: string } | null;
+      if (failure?.name === "TimeoutError" || failure?.code === "ECONNREFUSED" || failure?.code === "ENOTFOUND" || failure?.message?.includes("fetch failed")) {
         evolutionOnline = false;
       }
     }
@@ -391,8 +392,8 @@ export async function POST(req: NextRequest) {
             );
           }
         }
-      } catch (err: any) {
-        console.warn("[WhatsApp Connect] Erro ao criar instância:", err?.message);
+      } catch (err) {
+        console.warn("[WhatsApp Connect] Erro ao criar instância:", err instanceof Error ? err.message : undefined);
       }
     }
 

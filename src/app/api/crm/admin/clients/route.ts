@@ -1,3 +1,4 @@
+import type { StoredTenantConfig, StoredTenantPlan } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { patchCrmConfig, TENANT_UUID } from "@/lib/crm/tenant-access";
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
       cache: "no-store"
     });
     const usersData = await rUsers.json();
-    const users = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, any> }>;
+    const users = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, unknown> }>;
     const userMap = new Map(users.map(u => [u.id, u]));
 
     // 4. Fetch tenant settings
@@ -84,9 +85,8 @@ export async function GET(request: NextRequest) {
       channelsByTenant.set(ch.tenant_id, list);
     }
 
-    const now = new Date();
     const clients = [];
-    const allUpgradeRequests: Array<Record<string, any>> = [];
+    const allUpgradeRequests: Array<Record<string, unknown>> = [];
 
     for (const t of tenants) {
       const tenantMemberships = memberships.filter(m => m.tenant_id === t.id);
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
         ? (masterPlans.find(p => p.id === "crm-premium") || DEFAULT_PLANS[2])
         : (masterPlans.find(p => p.id === "crm-start") || DEFAULT_PLANS[0]);
 
-      let plan: Record<string, any> = {
+      let plan: StoredTenantPlan = {
         planId: defaultCatalogPlan.id,
         name: defaultCatalogPlan.name,
         price: defaultCatalogPlan.price,
@@ -117,9 +117,8 @@ export async function GET(request: NextRequest) {
       };
 
       let suspension: { isSuspended?: boolean; publicReason?: string; internalNote?: string; updatedAt?: string } = {};
-      let paymentHistory: Array<Record<string, any>> = [];
-      let upgradeRequests: Array<Record<string, any>> = [];
-      let teamOperators: Array<Record<string, any>> = [];
+      let paymentHistory: Array<Record<string, unknown>> = [];
+      let upgradeRequests: Array<Record<string, unknown>> = [];
 
       const rawDesc = settingsMap.get(t.id) || "";
       try {
@@ -136,9 +135,6 @@ export async function GET(request: NextRequest) {
           }
           if (Array.isArray(parsed.upgradeRequests)) {
             upgradeRequests = parsed.upgradeRequests;
-          }
-          if (Array.isArray(parsed.teamOperators)) {
-            teamOperators = parsed.teamOperators;
           }
         }
       } catch {}
@@ -289,7 +285,7 @@ export async function POST(request: NextRequest) {
     });
 
     // 4. Save initial Plan settings strictly derived from the Official Plan Catalog
-    let planMeta: Record<string, any>;
+    let planMeta: StoredTenantConfig;
     let effectiveLimit: number;
     let finalPlanName: string;
 
@@ -452,14 +448,14 @@ export async function PATCH(request: NextRequest) {
     if (!TENANT_UUID.test(tenantId)) return privateJson({ error: "invalid_tenant_id" }, 400);
 
     // Helper to load current business_description JSON
-    const loadSettingsObj = async (): Promise<Record<string, any>> => {
+    const loadSettingsObj = async (): Promise<StoredTenantConfig> => {
       const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       });
       if (!rGet.ok) throw new Error("tenant_settings_lookup_failed");
       const current = (await rGet.json()) as Array<{ business_description: string }>;
-      let dataObj: Record<string, any> = { plan: {} };
+      let dataObj: StoredTenantConfig = { plan: {} };
       try {
         if (current[0]?.business_description?.startsWith("{")) {
           dataObj = JSON.parse(current[0].business_description);
@@ -468,8 +464,8 @@ export async function PATCH(request: NextRequest) {
       return dataObj;
     };
 
-    const saveSettingsObj = async (dataObj: Record<string, any>, extraFields: Record<string, any> = {}, fields: string[] = ["plan"]) => {
-      if (fields.includes("plan")) await replaceTenantPlan(tenantId, dataObj.plan, url, serviceKey);
+    const saveSettingsObj = async (dataObj: StoredTenantConfig, extraFields: Record<string, unknown> = {}, fields: string[] = ["plan"]) => {
+      if (fields.includes("plan")) await replaceTenantPlan(tenantId, dataObj.plan!, url, serviceKey);
       const patch = Object.fromEntries(fields.filter(k => k !== "plan").map(k => [k, dataObj[k]]));
       if (Object.keys(patch).length) await patchCrmConfig(tenantId, patch);
       if (Object.keys(extraFields).length) {
@@ -534,13 +530,13 @@ export async function PATCH(request: NextRequest) {
     if (action === "set_payment_status") {
       const newPaymentStatus = body.paymentStatus === "paid" ? "paid" : "pending";
       const dataObj = await loadSettingsObj();
-      const planObj = (dataObj.plan as Record<string, any>) ?? {};
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
       const dueDate = typeof planObj.dueDate === "string" && planObj.dueDate
         ? planObj.dueDate
         : new Date().toISOString().slice(0, 10);
       const billingCycleKey = `${tenantId}:${dueDate}:${planObj.planId || "plan"}`;
 
-      const paymentHistory: Array<Record<string, any>> = Array.isArray(dataObj.paymentHistory)
+      const paymentHistory: Array<Record<string, unknown>> = Array.isArray(dataObj.paymentHistory)
         ? dataObj.paymentHistory
         : [];
 
@@ -632,7 +628,7 @@ export async function PATCH(request: NextRequest) {
     // 4. Action: Update Plan details (synchronizing contractedPlan + WhatsApp slot limits on upgrade/downgrade)
     if (action === "update_plan") {
       const dataObj = await loadSettingsObj();
-      const planObj = (dataObj.plan as Record<string, any>) ?? {};
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
       const masterPlans = await getMasterPlans();
 
       const requestedId = typeof body.planId === "string" ? body.planId : "";
@@ -720,7 +716,7 @@ export async function PATCH(request: NextRequest) {
       const catalog = await getMasterPlans();
       const plan = catalog.find(p => p.id === target.targetPlanId && p.status === "active");
       if (!plan) return privateJson({error:"upgrade_plan_unavailable"},409);
-      const planObj = { ...(dataObj.plan || {}), planId:plan.id,name:plan.name,price:plan.price,
+      const planObj: StoredTenantPlan = { ...(dataObj.plan || {}), planId:plan.id,name:plan.name,price:plan.price,
         quotaLimit:plan.quotaLimit,maxOperators:plan.maxOperators,maxWhatsappConnections:plan.maxWhatsappConnections,
         isTrial:false,status:"paid",contractedPlan:{quotaLimit:plan.quotaLimit,features:plan.features,price:plan.price,
         maxOperators:plan.maxOperators,maxWhatsappConnections:plan.maxWhatsappConnections,version:plan.version,contractedAt:new Date().toISOString()} };

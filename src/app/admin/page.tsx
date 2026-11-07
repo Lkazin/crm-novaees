@@ -128,7 +128,7 @@ type PlanItem = {
   isActive?: boolean;
   isDraft?: boolean;
   hasDraft?: boolean;
-  draftPlan?: any;
+  draftPlan?: Partial<Omit<PlanItem, "draftPlan">>;
   enrolledStores?: Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>;
 };
 
@@ -663,7 +663,8 @@ export default function AdminCRM() {
     const target = (plan.hasDraft && plan.draftPlan) ? { ...plan, ...plan.draftPlan } : plan;
     setEditingPlan({
       ...target,
-      allowedFeatures: target.allowedFeatures || target.features || ["ai_chat", "human_handoff"]
+      allowedFeatures: target.allowedFeatures || target.features.filter((id): id is FeatureId =>
+        TECHNICAL_FEATURES_LIST.some(feature => feature.id === id))
     });
     setEditingFeaturesText((target.features || []).join("\n"));
     setEditPlanModalOpen(true);
@@ -745,7 +746,7 @@ export default function AdminCRM() {
 
       if (data.failedTenants && data.failedTenants.length > 0) {
         setError(
-          `Sincronização com falhas parciais: ${data.succeededTenants?.length || 0} loja(s) sincronizada(s), mas ${data.failedTenants.length} falharam: ${data.failedTenants.map((f: any) => `${f.tenantId}: ${f.error}`).join("; ")}`
+          `Sincronização com falhas parciais: ${data.succeededTenants?.length || 0} loja(s) sincronizada(s), mas ${data.failedTenants.length} falharam: ${data.failedTenants.map((f: { tenantId: string; error: string }) => `${f.tenantId}: ${f.error}`).join("; ")}`
         );
       } else {
         const affectedCount = data.affectedTenants?.length || data.impactedCount || 0;

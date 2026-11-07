@@ -132,7 +132,6 @@ export async function POST(request: NextRequest) {
     }
 
     const masterPassword = process.env.CRM_MASTER_PASSWORD?.trim() || "";
-    const adminToken = process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "";
 
     const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(password, masterPassword));
 
