@@ -498,7 +498,7 @@ export default function AdminCRM() {
       setLoading(false);
       if (typeof window !== "undefined") {
         try { await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" }); } catch {}
-        window.location.href = "/?error=unauthorized_admin";
+        window.location.href = "/novaescrmadm?error=unauthorized_admin";
       }
     }
     void checkMasterSession();
@@ -548,7 +548,7 @@ export default function AdminCRM() {
     setAdminPassword("");
     setInputKey("");
     if (typeof window !== "undefined") {
-      window.location.href = "/";
+      window.location.href = "/novaescrmadm?logout=success";
     }
   };
 

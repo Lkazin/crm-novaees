@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from "react";
 import {
-  Mail, Lock, Eye, EyeOff, LogIn, ShieldCheck, AlertCircle,
-  Bot, MessageCircle, BookOpen, Smartphone, Sparkles, X, CheckCircle2,
-  Crown, Users, Layers, BarChart3
+  Mail, Lock, Eye, EyeOff, LogIn, AlertCircle,
+  Bot, MessageCircle, Users, BarChart3, Store, ShieldCheck, CheckCircle2, X
 } from "lucide-react";
 
-export default function CentralLoginPage() {
+export default function ClientPortalLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -21,7 +20,7 @@ export default function CentralLoginPage() {
   const [forgotSuccess, setForgotSuccess] = useState("");
   const [forgotError, setForgotError] = useState("");
 
-  // Check if user already has an active session on mount
+  // Check if client already has an active session on mount
   useEffect(() => {
     let active = true;
     async function checkExistingSession() {
@@ -45,10 +44,13 @@ export default function CentralLoginPage() {
     return () => { active = false; };
   }, []);
 
-  // Handle unified central login
+  // Handle Client Login using the existing authentication system
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password.trim()) return;
+    if (!email.trim() || !password.trim()) {
+      setError("Informe seu e-mail e senha de acesso.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -75,7 +77,7 @@ export default function CentralLoginPage() {
       if (data.success && data.redirectTo) {
         window.location.href = data.redirectTo;
       } else {
-        setError("Não foi possível determinar o painel de destino da sua conta.");
+        setError("Não foi possível acessar a área da sua empresa.");
       }
     } catch {
       setError("Falha de comunicação com o servidor de autenticação.");
@@ -133,7 +135,7 @@ export default function CentralLoginPage() {
               animation: "spin 0.8s linear infinite"
             }}
           />
-          <span style={{ fontSize: "14px", color: "#c4b5fd" }}>Verificando credenciais...</span>
+          <span style={{ fontSize: "14px", color: "#c4b5fd" }}>Carregando área do cliente...</span>
         </div>
         <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
       </main>
@@ -162,7 +164,7 @@ export default function CentralLoginPage() {
         overflow: "hidden"
       }}
     >
-      {/* Luminous Neon Silk Ribbon Curves (SVG overlay) */}
+      {/* Background Neon Curves */}
       <div
         aria-hidden="true"
         style={{
@@ -181,7 +183,7 @@ export default function CentralLoginPage() {
         >
           <path
             d="M-80 230 C 220 70, 260 400, 520 270 C 760 150, 880 490, 1560 820"
-            stroke="url(#neon-magenta-login)"
+            stroke="url(#neon-magenta-client)"
             strokeWidth="64"
             strokeLinecap="round"
             filter="blur(40px)"
@@ -195,7 +197,7 @@ export default function CentralLoginPage() {
           />
           <path
             d="M-40 840 C 320 730, 440 900, 780 830 C 1080 770, 1220 940, 1540 830"
-            stroke="url(#neon-red-login)"
+            stroke="url(#neon-red-client)"
             strokeWidth="74"
             filter="blur(46px)"
           />
@@ -206,12 +208,12 @@ export default function CentralLoginPage() {
             filter="blur(7px)"
           />
           <defs>
-            <linearGradient id="neon-magenta-login" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id="neon-magenta-client" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#ec4899" />
               <stop offset="50%" stopColor="#d946ef" />
               <stop offset="100%" stopColor="#8b5cf6" />
             </linearGradient>
-            <linearGradient id="neon-red-login" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id="neon-red-client" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#ff1744" />
               <stop offset="50%" stopColor="#e11d48" />
               <stop offset="100%" stopColor="#a824e8" />
@@ -220,7 +222,7 @@ export default function CentralLoginPage() {
         </svg>
       </div>
 
-      {/* Central Content Container: 2-column landscape on desktop */}
+      {/* Content Container */}
       <div
         style={{
           position: "relative",
@@ -234,11 +236,9 @@ export default function CentralLoginPage() {
           margin: "0 auto"
         }}
       >
-        {/* LEFT COLUMN: Brand identity, headline, subtitle, value cards */}
+        {/* Left column: Brand & Client features */}
         <div style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
-          {/* Brand Header: mascot + typography */}
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            {/* Mascot Robot Head wearing glowing headphones */}
             <div
               style={{
                 position: "relative",
@@ -251,7 +251,6 @@ export default function CentralLoginPage() {
               }}
             >
               <svg width="70" height="70" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-                {/* Glowing headphone band */}
                 <path
                   d="M16 38 C 16 22, 25 14, 36 14 C 47 14, 56 22, 56 38"
                   stroke="#ec4899"
@@ -270,7 +269,6 @@ export default function CentralLoginPage() {
               </svg>
             </div>
 
-            {/* Brand Typography with red swoosh over Web */}
             <div style={{ position: "relative", display: "flex", flexDirection: "column" }}>
               <div style={{ position: "relative", display: "inline-flex", alignItems: "baseline" }}>
                 <span style={{ fontSize: "28px", fontWeight: 900, color: "#ffffff", letterSpacing: "-0.5px" }}>
@@ -317,7 +315,6 @@ export default function CentralLoginPage() {
             </div>
           </div>
 
-          {/* Pill Badge: Painel Master */}
           <div>
             <div
               style={{
@@ -331,14 +328,13 @@ export default function CentralLoginPage() {
                 boxShadow: "0 0 16px rgba(236, 72, 153, 0.25)"
               }}
             >
-              <Crown size={14} style={{ color: "#fbbf24" }} />
+              <Store size={14} style={{ color: "#38bdf8" }} />
               <span style={{ fontSize: "13px", fontWeight: 700, color: "#f5d0fe", letterSpacing: "0.2px" }}>
-                Painel Master
+                Área do Cliente
               </span>
             </div>
           </div>
 
-          {/* Main Headline */}
           <h1
             style={{
               fontSize: "clamp(26px, 3.2vw, 36px)",
@@ -349,10 +345,9 @@ export default function CentralLoginPage() {
               margin: 0
             }}
           >
-            Central de Gestão<br />do NovaesWeb CRM IA
+            Atendimento Inteligente<br />para sua Empresa
           </h1>
 
-          {/* Subtitle */}
           <p
             style={{
               fontSize: "14px",
@@ -362,10 +357,9 @@ export default function CentralLoginPage() {
               maxWidth: "460px"
             }}
           >
-            Administre planos, clientes, IA, WhatsApp, funcionalidades e toda a operação da plataforma em um só lugar.
+            Acesse seu painel exclusivo para gerenciar conversas via WhatsApp, inteligência artificial 24 horas, contatos e o crescimento do seu negócio.
           </p>
 
-          {/* 4 Feature Cards */}
           <div
             style={{
               display: "grid",
@@ -374,7 +368,6 @@ export default function CentralLoginPage() {
               marginTop: "12px"
             }}
           >
-            {/* Card 1 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -391,13 +384,12 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <Users size={22} style={{ color: "#f1f5f9" }} />
+              <MessageCircle size={22} style={{ color: "#22c55e" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                Clientes e<br />Empresas
+                WhatsApp<br />Conectado
               </span>
             </div>
 
-            {/* Card 2 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -414,13 +406,12 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <Layers size={22} style={{ color: "#f1f5f9" }} />
+              <Bot size={22} style={{ color: "#38bdf8" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                Planos e<br />Franquias
+                IA Atendente<br />24 Horas
               </span>
             </div>
 
-            {/* Card 3 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -437,13 +428,12 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <Bot size={22} style={{ color: "#f1f5f9" }} />
+              <Users size={22} style={{ color: "#f43f5e" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                IA e<br />Modelos
+                Contatos e<br />Etiquetas
               </span>
             </div>
 
-            {/* Card 4 */}
             <div
               style={{
                 background: "rgba(24, 12, 32, 0.55)",
@@ -460,15 +450,15 @@ export default function CentralLoginPage() {
                 boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)"
               }}
             >
-              <BarChart3 size={22} style={{ color: "#f1f5f9" }} />
+              <BarChart3 size={22} style={{ color: "#eab308" }} />
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3 }}>
-                Relatórios e<br />Uso
+                Relatórios e<br />Desempenho
               </span>
             </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Frosted Glass Login Card */}
+        {/* Right column: Client Login Form */}
         <div style={{ display: "flex", justifyContent: "center" }}>
           <div
             style={{
@@ -483,24 +473,22 @@ export default function CentralLoginPage() {
               boxShadow: "0 24px 60px rgba(0, 0, 0, 0.65), 0 0 32px rgba(217, 70, 239, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16)"
             }}
           >
-            {/* Crown Icon Emblem matching visual reference */}
             <div
               style={{
                 width: "52px",
                 height: "52px",
                 margin: "0 auto 16px",
                 borderRadius: "14px",
-                background: "linear-gradient(135deg, #7c3aed 0%, #c026d3 100%)",
-                boxShadow: "0 6px 20px rgba(192, 38, 211, 0.45)",
+                background: "linear-gradient(135deg, #0284c7 0%, #ec4899 100%)",
+                boxShadow: "0 6px 20px rgba(236, 72, 153, 0.4)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center"
               }}
             >
-              <Crown size={24} style={{ color: "#ffffff" }} />
+              <Store size={24} style={{ color: "#ffffff" }} />
             </div>
 
-            {/* Title and Subtitle */}
             <h2
               style={{
                 fontSize: "22px",
@@ -511,7 +499,7 @@ export default function CentralLoginPage() {
                 letterSpacing: "-0.3px"
               }}
             >
-              Acesso ao Painel Master
+              Acesso da Empresa
             </h2>
             <p
               style={{
@@ -522,12 +510,10 @@ export default function CentralLoginPage() {
                 fontWeight: 500
               }}
             >
-              NovaesWeb CRM IA
+              NovaesWeb CRM IA — Painel do Cliente
             </p>
 
-            {/* Unified Form */}
             <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              {/* Input 1: E-mail do administrador */}
               <div style={{ position: "relative", width: "100%" }}>
                 <Mail
                   size={18}
@@ -542,10 +528,11 @@ export default function CentralLoginPage() {
                 />
                 <input
                   type="email"
-                  placeholder="E-mail do administrador"
+                  placeholder="E-mail da sua empresa"
                   aria-label="E-mail"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
+                  required
                   style={{
                     width: "100%",
                     padding: "13px 14px 13px 44px",
@@ -568,7 +555,6 @@ export default function CentralLoginPage() {
                 />
               </div>
 
-              {/* Input 2: Senha */}
               <div style={{ position: "relative", width: "100%" }}>
                 <Lock
                   size={18}
@@ -583,7 +569,7 @@ export default function CentralLoginPage() {
                 />
                 <input
                   type={showPassword ? "text" : "password"}
-                  placeholder="Senha"
+                  placeholder="Sua senha"
                   aria-label="Senha"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
@@ -631,7 +617,6 @@ export default function CentralLoginPage() {
                 </button>
               </div>
 
-              {/* Row: Manter-me conectado & Esqueceu a senha? */}
               <div
                 style={{
                   display: "flex",
@@ -685,7 +670,6 @@ export default function CentralLoginPage() {
                 </button>
               </div>
 
-              {/* Primary Action Button */}
               <button
                 type="submit"
                 disabled={loading}
@@ -707,23 +691,12 @@ export default function CentralLoginPage() {
                   gap: "10px",
                   transition: "all 0.2s"
                 }}
-                onMouseEnter={e => {
-                  if (!loading) {
-                    e.currentTarget.style.filter = "brightness(1.08)";
-                    e.currentTarget.style.boxShadow = "0 8px 26px rgba(225, 29, 72, 0.55)";
-                  }
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.filter = "none";
-                  e.currentTarget.style.boxShadow = "0 6px 22px rgba(225, 29, 72, 0.4)";
-                }}
               >
                 <LogIn size={18} />
-                <span>{loading ? "Autenticando..." : "Entrar no Painel Master"}</span>
+                <span>{loading ? "Entrando..." : "Entrar no Meu CRM"}</span>
               </button>
             </form>
 
-            {/* Error Message */}
             {error && (
               <div
                 role="alert"
@@ -745,21 +718,21 @@ export default function CentralLoginPage() {
               </div>
             )}
 
-            {/* Security Note */}
             <div
               style={{
                 marginTop: "24px",
+                paddingTop: "16px",
+                borderTop: "1px solid rgba(255, 255, 255, 0.08)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 gap: "8px",
-                color: "rgba(203, 213, 225, 0.65)",
-                fontSize: "12px",
-                textAlign: "center"
+                color: "#94a3b8",
+                fontSize: "12px"
               }}
             >
-              <ShieldCheck size={16} style={{ color: "rgba(203, 213, 225, 0.75)", flexShrink: 0 }} />
-              <span>Acesso seguro e restrito aos gestores da NovaesWeb.</span>
+              <ShieldCheck size={14} style={{ color: "#10b981" }} />
+              <span>Conexão Segura &middot; NovaesWeb</span>
             </div>
           </div>
         </div>
@@ -768,107 +741,114 @@ export default function CentralLoginPage() {
       {/* Forgot Password Modal */}
       {forgotModalOpen && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 100,
+            zIndex: 50,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             padding: "20px",
-            background: "rgba(0, 0, 0, 0.75)",
-            backdropFilter: "blur(12px)"
+            backgroundColor: "rgba(0, 0, 0, 0.8)",
+            backdropFilter: "blur(8px)"
           }}
         >
           <div
             style={{
+              position: "relative",
               width: "100%",
-              maxWidth: "460px",
-              background: "#160b24",
-              border: "1px solid rgba(236, 72, 153, 0.4)",
+              maxWidth: "420px",
+              background: "#180c22",
+              border: "1px solid rgba(255, 255, 255, 0.14)",
               borderRadius: "20px",
-              padding: "28px",
-              boxShadow: "0 20px 50px rgba(0, 0, 0, 0.8)",
-              position: "relative"
+              padding: "28px 24px",
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.7)"
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <ShieldCheck size={20} style={{ color: "#ec4899" }} />
-                <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "#ffffff" }}>
-                  Recuperação de Acesso
-                </h3>
-              </div>
-              <button
-                onClick={() => setForgotModalOpen(false)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#94a3b8",
-                  cursor: "pointer",
-                  padding: "4px"
-                }}
-              >
-                <X size={20} />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setForgotModalOpen(false);
+                setForgotSuccess("");
+                setForgotError("");
+              }}
+              style={{
+                position: "absolute",
+                top: "16px",
+                right: "16px",
+                background: "none",
+                border: "none",
+                color: "#94a3b8",
+                cursor: "pointer",
+                padding: "4px"
+              }}
+            >
+              <X size={20} />
+            </button>
 
-            <p style={{ color: "#cbd5e1", fontSize: "13.5px", lineHeight: 1.6, margin: "0 0 16px" }}>
-              Informe o e-mail cadastrado na sua loja ou conta administrativa para receber as instruções seguras de redefinição de senha.
+            <h3 style={{ fontSize: "18px", fontWeight: 700, color: "#ffffff", margin: "0 0 8px" }}>
+              Recuperar Acesso
+            </h3>
+            <p style={{ fontSize: "13px", color: "rgba(226, 232, 240, 0.7)", margin: "0 0 20px", lineHeight: 1.5 }}>
+              Informe o e-mail cadastrado na sua conta para receber as instruções de redefinição de senha.
             </p>
 
             <form onSubmit={handleForgotPassword} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <input
-                type="email"
-                placeholder="Seu e-mail cadastrado"
-                aria-label="E-mail para recuperação"
-                value={forgotEmail}
-                onChange={e => setForgotEmail(e.target.value)}
-                required
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  background: "rgba(10, 4, 16, 0.8)",
-                  border: "1px solid rgba(255, 255, 255, 0.15)",
-                  borderRadius: "10px",
-                  color: "#ffffff",
-                  fontSize: "14px",
-                  outline: "none"
-                }}
-              />
-
-              {forgotSuccess && (
-                <div style={{ padding: "10px 12px", borderRadius: "8px", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.4)", color: "#a7f3d0", fontSize: "12.5px", display: "flex", gap: "8px", alignItems: "center" }}>
-                  <CheckCircle2 size={16} style={{ color: "#34d399", flexShrink: 0 }} />
-                  <span>{forgotSuccess}</span>
-                </div>
-              )}
-
-              {forgotError && (
-                <div style={{ padding: "10px 12px", borderRadius: "8px", background: "rgba(225, 29, 72, 0.15)", border: "1px solid rgba(225, 29, 72, 0.4)", color: "#fecdd3", fontSize: "12.5px" }}>
-                  {forgotError}
-                </div>
-              )}
+              <div style={{ position: "relative" }}>
+                <Mail size={18} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                <input
+                  type="email"
+                  placeholder="Seu e-mail cadastrado"
+                  value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                  required
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px 12px 42px",
+                    background: "rgba(12, 6, 18, 0.7)",
+                    border: "1px solid rgba(255, 255, 255, 0.14)",
+                    borderRadius: "10px",
+                    color: "#ffffff",
+                    fontSize: "14px",
+                    outline: "none"
+                  }}
+                />
+              </div>
 
               <button
                 type="submit"
                 disabled={forgotLoading}
                 style={{
                   width: "100%",
-                  marginTop: "8px",
                   padding: "12px",
                   borderRadius: "10px",
                   border: "none",
-                  background: "linear-gradient(90deg, #ec4899, #a855f7)",
+                  cursor: forgotLoading ? "wait" : "pointer",
+                  background: "linear-gradient(90deg, #ff1e42 0%, #a824e8 100%)",
                   color: "#ffffff",
-                  fontWeight: 700,
-                  fontSize: "14px",
-                  cursor: forgotLoading ? "wait" : "pointer"
+                  fontWeight: 600,
+                  fontSize: "14px"
                 }}
               >
                 {forgotLoading ? "Enviando..." : "Enviar Instruções"}
               </button>
             </form>
+
+            {forgotSuccess && (
+              <div style={{ marginTop: "14px", padding: "10px 12px", borderRadius: "8px", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.3)", color: "#6ee7b7", fontSize: "13px", display: "flex", gap: "8px", alignItems: "center" }}>
+                <CheckCircle2 size={16} />
+                <span>{forgotSuccess}</span>
+              </div>
+            )}
+
+            {forgotError && (
+              <div style={{ marginTop: "14px", padding: "10px 12px", borderRadius: "8px", background: "rgba(225, 29, 72, 0.15)", border: "1px solid rgba(225, 29, 72, 0.3)", color: "#fecdd3", fontSize: "13px", display: "flex", gap: "8px", alignItems: "center" }}>
+                <AlertCircle size={16} />
+                <span>{forgotError}</span>
+              </div>
+            )}
           </div>
         </div>
       )}

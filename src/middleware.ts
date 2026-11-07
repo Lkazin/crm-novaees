@@ -29,17 +29,30 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL(target, request.url));
   }
 
-  // 2. Protect /admin routes: must have Master session cookie
+  // 2. Protect /admin routes: must have Master session cookie.
+  // Unauthenticated users are redirected to the secret master login route /novaescrmadm
   if (pathname === "/admin" || pathname.startsWith("/admin/")) {
     if (!masterCookie) {
-      const loginUrl = new URL("/", request.url);
+      const loginUrl = new URL("/novaescrmadm", request.url);
       loginUrl.searchParams.set("error", "unauthorized_admin");
       return NextResponse.redirect(loginUrl);
     }
     return NextResponse.next();
   }
 
-  // 3. Protect /cliente routes: must have Client/Operator session cookie
+  // 3. Secret Master Login ("/novaescrmadm"):
+  // If already authenticated as Master, automatically redirect to /admin
+  if (pathname === "/novaescrmadm" || pathname === "/novaescrmadm/") {
+    if (request.nextUrl.searchParams.has("error") || request.nextUrl.searchParams.has("logout")) {
+      return NextResponse.next();
+    }
+    if (masterCookie) {
+      return NextResponse.redirect(new URL("/admin", request.url));
+    }
+    return NextResponse.next();
+  }
+
+  // 4. Protect /cliente routes: must have Client/Operator session cookie
   if (pathname === "/cliente" || pathname.startsWith("/cliente/")) {
     if (!operatorCookie && !masterCookie) {
       const loginUrl = new URL("/", request.url);
@@ -49,10 +62,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 4. Central Login root ("/"): If already authenticated, automatically redirect to correct panel
+  // 5. Client Login root ("/"):
+  // If already authenticated, redirect to the respective workspace
   if (pathname === "/") {
     // If request arrived with an error or explicit logout intent, DO NOT auto-redirect.
-    // This breaks redirect loops and allows users to see the login screen or switch accounts.
     if (request.nextUrl.searchParams.has("error") || request.nextUrl.searchParams.has("logout")) {
       return NextResponse.next();
     }
