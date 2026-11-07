@@ -4,35 +4,62 @@ import Redis from "ioredis";
 export type FeatureId =
   | "ai_chat"
   | "human_handoff"
+  | "simulator"
+  | "business_hours_basic"
+  | "quick_replies"
+  | "basic_indicators"
   | "business_hours"
   | "commercial_tags"
   | "handoff_summary"
   | "sound_notifications"
-  | "simulator"
   | "model_fallback"
-  | "advanced_reports";
+  | "conversation_priority"
+  | "satisfaction_survey"
+  | "commercial_indicators"
+  | "advanced_reports"
+  | "satisfaction_analytics"
+  | "operator_indicators"
+  | "advanced_commercial_filters";
+
+export type FeatureAccessState = "allowed" | "locked_by_plan" | "maintenance" | "suspended";
+
+export type FeatureGovernanceStatus = {
+  id: FeatureId;
+  name: string;
+  description: string;
+  category: "ia" | "atendimento" | "gestao" | "seguranca";
+  state: FeatureAccessState;
+  minPlanId: "crm-start" | "crm-business" | "crm-premium";
+  minPlanName: string;
+  reason?: string;
+};
 
 export type TechnicalFeature = {
   id: FeatureId;
   name: string;
   category: "ia" | "atendimento" | "gestao" | "seguranca";
   description: string;
+  minPlanId?: "crm-start" | "crm-business" | "crm-premium";
+  minPlanName?: string;
   isCore?: boolean;
 };
+
+export const CATALOG_SCHEMA_VERSION = 2;
 
 export type CrmPlan = {
   id: string; // Stable ID: 'crm-start', 'crm-business', 'crm-premium'
   name: string; // Commercial name: 'CRM Start'
-  price: string; // "149,00"
-  quotaLimit: number; // monthly conversations (1 atendimento = 1 conversa ativa com IA ou transbordo no ciclo mensal)
-  maxOperators: number; // 1, 3, 10
-  maxWhatsappConnections: number; // 1, 1, 3 (Plano Premium suporta até 3 conexões)
+  price: string; // "59,90"
+  quotaLimit: number; // monthly conversations (1 atendimento = 1 janela de 24h com resposta efetiva da IA)
+  maxOperators: number; // 1, 3, 5
+  maxWhatsappConnections: number; // 1, 3, 5
   description: string;
   features: FeatureId[]; // Technical feature IDs enabled
   featureBullets: string[]; // Commercial bullets for cards
   status: "active" | "inactive";
   isPopular?: boolean;
   version: number;
+  catalogSchemaVersion?: number;
   updated_at: string;
   isDraft?: boolean;
   hasDraft?: boolean;
@@ -44,7 +71,7 @@ export type PlanAuditEntry = {
   actor: string;
   planId: string;
   planName: string;
-  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard";
+  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard" | "upgrade_approved" | "upgrade_rejected" | "payment_marked_paid" | "suspension_updated";
   vigencia: "immediate" | "new_clients" | "next_cycle";
   previousValues?: Partial<CrmPlan>;
   newValues?: Partial<CrmPlan>;
@@ -59,6 +86,8 @@ export type ContractedSnapshot = {
   quotaLimit: number;
   features: FeatureId[];
   price: string;
+  maxOperators?: number;
+  maxWhatsappConnections?: number;
   version: number;
   contractedAt: string;
 };
@@ -68,6 +97,8 @@ export type PendingPlanUpdate = {
   quotaLimit: number;
   features: FeatureId[];
   price: string;
+  maxOperators?: number;
+  maxWhatsappConnections?: number;
   effectiveAt: string; // ISO date string (YYYY-MM-DD)
   planVersion: number;
 };
@@ -81,12 +112,15 @@ export type EffectiveTenantPlan = {
   maxOperators: number;
   maxWhatsappConnections: number;
   allowedFeatures: FeatureId[];
+  featureStates?: Record<FeatureId, FeatureGovernanceStatus>;
   dueDate: string;
   status: "paid" | "pending" | "trial";
   autoBlock: boolean;
   isOverdue: boolean;
   isSuspended: boolean;
   suspensionReason?: string;
+  publicSuspensionReason?: string;
+  internalSuspensionNote?: string;
   hasCustomOverride: boolean;
   customOverride?: {
     quotaLimit?: number;
@@ -108,60 +142,179 @@ export type EffectiveTenantPlan = {
 export const TECHNICAL_FEATURES: TechnicalFeature[] = [
   {
     id: "ai_chat",
-    name: "Atendimento com IA 24h",
+    name: "IA Personalizada & Base de Conhecimento",
     category: "ia",
-    description: "Respostas automáticas inteligentes no WhatsApp com o cardápio e regras da loja.",
+    description: "Respostas automáticas inteligentes no WhatsApp com a base de conhecimento, regras e assistente de configuração.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start",
     isCore: true
   },
   {
     id: "human_handoff",
-    name: "Central ao Vivo & Envio Real Humano",
+    name: "Atendimento Humano & Transferência IA → Humano",
     category: "atendimento",
-    description: "Atendente pode assumir e devolver conversas, e digitar mensagens reais pelo WhatsApp.",
+    description: "Central de conversas ao vivo, contatos, histórico e transferência entre IA e operador humano.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start",
     isCore: true
   },
   {
     id: "simulator",
-    name: "Simulador de Testes (Chat de Teste)",
+    name: "Simulador da IA",
     category: "ia",
-    description: "Simulador em tempo real para o lojista testar como a IA responde antes de ir para o ar."
+    description: "Simulador em tempo real para testar como a IA responde antes de atender clientes reais.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start"
+  },
+  {
+    id: "business_hours_basic",
+    name: "Horários Básicos de Atendimento",
+    category: "atendimento",
+    description: "Definição de horário de início e término de atendimento por dia da semana e mensagem de ausência.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start"
+  },
+  {
+    id: "quick_replies",
+    name: "Respostas Rápidas",
+    category: "atendimento",
+    description: "Cadastro e atalhos de mensagens prontas para agilizar o atendimento humano.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start"
+  },
+  {
+    id: "basic_indicators",
+    name: "Indicadores Básicos",
+    category: "gestao",
+    description: "Visão essencial do consumo da franquia, atendimentos ativos e volume atendido pela IA e humano.",
+    minPlanId: "crm-start",
+    minPlanName: "CRM Start"
   },
   {
     id: "business_hours",
-    name: "Horários de Atendimento & Folgas",
+    name: "Horários Avançados & Intervalos",
     category: "atendimento",
-    description: "Controle de dias e horários de funcionamento com mensagem automática de loja fechada."
+    description: "Controle avançado de múltiplos turnos, pausas de almoço/intervalos e regras especiais por dia.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
   },
   {
     id: "commercial_tags",
-    name: "Etiquetas Comerciais (CRM de Vendas)",
+    name: "Etiquetas Comerciais",
     category: "gestao",
-    description: "Classificação comercial de leads (Interessado, Orçamento enviado, Venda confirmada, Perdido)."
+    description: "Classificação comercial de conversas e contatos com filtros e histórico persistido no banco.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
   },
   {
     id: "handoff_summary",
-    name: "Resumo Inteligente em 3 Linhas",
+    name: "Resumos Inteligentes de Atendimento",
     category: "atendimento",
-    description: "Geração de resumo estruturado (Cliente, Solicitação, Pendente) ao transferir para humano."
+    description: "Geração automática de resumo estruturado em 3 linhas ao transferir conversa para o atendente.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
   },
   {
     id: "sound_notifications",
-    name: "Notificações com Alerta Sonoro",
+    name: "Alertas Sonoros no Painel",
     category: "atendimento",
-    description: "Alerta sonoro (bip) quando um cliente solicitar atendimento humano ou fizer reclamação."
+    description: "Notificação sonora imediata quando um cliente solicita humano ou entra em fila prioritária.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
   },
   {
     id: "model_fallback",
-    name: "Modelo Reserva / Alta Disponibilidade",
+    name: "Modelo Reserva de IA",
     category: "seguranca",
-    description: "Fallback automático entre modelos de IA para garantir zero quedas."
+    description: "Failover automático entre provedores e modelos de IA para garantir alta disponibilidade.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
+  },
+  {
+    id: "conversation_priority",
+    name: "Prioridade dos Atendimentos",
+    category: "atendimento",
+    description: "Classificação manual e automática pela IA (Baixa, Normal, Alta e Urgente) com ordenação inteligente da fila.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
+  },
+  {
+    id: "satisfaction_survey",
+    name: "Pesquisa de Satisfação (CSAT)",
+    category: "gestao",
+    description: "Coleta de avaliação de 1 a 5 estrelas e comentário opcional após o encerramento do atendimento.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
+  },
+  {
+    id: "commercial_indicators",
+    name: "Indicadores Comerciais",
+    category: "gestao",
+    description: "Métricas de funil por etiquetas comerciais, taxa de transbordo e média de satisfação.",
+    minPlanId: "crm-business",
+    minPlanName: "CRM Business"
   },
   {
     id: "advanced_reports",
-    name: "Relatórios & Métricas Avançadas",
+    name: "Relatórios Avançados",
     category: "gestao",
-    description: "Métricas detalhadas de conversão, tempo de resposta e volume diário de conversas."
+    description: "Relatórios gerenciais completos de volume, conversão, pico de demanda e eficiência operacional.",
+    minPlanId: "crm-premium",
+    minPlanName: "CRM Premium"
+  },
+  {
+    id: "satisfaction_analytics",
+    name: "Análise Avançada de Satisfação",
+    category: "gestao",
+    description: "Distribuição detalhada de notas 1 a 5, comparativo IA vs. humano e auditoria de avaliações críticas.",
+    minPlanId: "crm-premium",
+    minPlanName: "CRM Premium"
+  },
+  {
+    id: "operator_indicators",
+    name: "Indicadores por Atendente",
+    category: "gestao",
+    description: "Ranking e métricas individuais de produtividade, atendimentos assumidos e satisfação por operador.",
+    minPlanId: "crm-premium",
+    minPlanName: "CRM Premium"
+  },
+  {
+    id: "advanced_commercial_filters",
+    name: "Filtros e Análises Comerciais Avançadas",
+    category: "gestao",
+    description: "Filtros combinados por período, canal de WhatsApp, operador, prioridade e etiqueta comercial.",
+    minPlanId: "crm-premium",
+    minPlanName: "CRM Premium"
   }
+];
+
+export const START_FEATURES: FeatureId[] = [
+  "ai_chat",
+  "human_handoff",
+  "simulator",
+  "business_hours_basic",
+  "quick_replies",
+  "basic_indicators"
+];
+
+export const BUSINESS_FEATURES: FeatureId[] = [
+  ...START_FEATURES,
+  "business_hours",
+  "commercial_tags",
+  "handoff_summary",
+  "sound_notifications",
+  "model_fallback",
+  "conversation_priority",
+  "satisfaction_survey",
+  "commercial_indicators"
+];
+
+export const PREMIUM_FEATURES: FeatureId[] = [
+  ...BUSINESS_FEATURES,
+  "advanced_reports",
+  "satisfaction_analytics",
+  "operator_indicators",
+  "advanced_commercial_filters"
 ];
 
 export const DEFAULT_PLANS: CrmPlan[] = [
@@ -173,21 +326,23 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     maxOperators: 1,
     maxWhatsappConnections: 1,
     description: "Ideal para autônomos, pequenos comércios e prestadores de serviços locais.",
-    features: ["ai_chat", "human_handoff", "simulator"],
+    features: [...START_FEATURES],
     featureBullets: [
       "200 atendimentos com IA por mês",
-      "1 número WhatsApp",
+      "1 WhatsApp conectado (de 5 espaços)",
       "1 operador humano",
-      "NovaesWeb IA para responder dúvidas dos clientes",
-      "Base de conhecimento personalizada",
-      "Central de conversas ao vivo",
-      "Atendimento humano com possibilidade de assumir",
-      "Simulador de atendimento com IA",
-      "Notificações visuais no painel",
-      "Histórico e indicadores básicos"
+      "IA personalizada e Base de conhecimento",
+      "Assistente de configuração guiado",
+      "Atendimento humano e Transferência IA → humano",
+      "Simulador da IA em tempo real",
+      "Contatos e histórico completo",
+      "Horários básicos de atendimento",
+      "Respostas rápidas no chat",
+      "Indicadores básicos de operação"
     ],
     status: "active",
     version: 1,
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
     updated_at: new Date().toISOString()
   },
   {
@@ -196,35 +351,27 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     price: "99,90",
     quotaLimit: 600, // 600 atendimentos com IA por mês
     maxOperators: 3,
-    maxWhatsappConnections: 1,
+    maxWhatsappConnections: 3,
     isPopular: true, // Destaque: MAIS RECOMENDADO
     description: "Para empresas e lojas em crescimento que buscam escala e atendimento profissional.",
-    features: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours",
-      "commercial_tags",
-      "handoff_summary",
-      "sound_notifications",
-      "model_fallback"
-    ],
+    features: [...BUSINESS_FEATURES],
     featureBullets: [
       "600 atendimentos com IA por mês",
-      "Tudo do Plano Start incluído",
-      "1 número WhatsApp",
+      "Tudo do CRM Start incluído",
+      "Até 3 WhatsApps conectados (de 5 espaços)",
       "Até 3 operadores humanos",
-      "Configuração de horários e folgas",
-      "Funil comercial completo",
-      "Etiquetas comerciais",
-      "Notificações visuais e sonoras",
-      "Resumo inteligente de 3 linhas",
-      "Modelo reserva de IA (zero quedas)",
-      "Indicadores de atendimento",
-      "Suporte prioritário"
+      "Horários avançados e intervalos",
+      "Etiquetas comerciais persistentes",
+      "Resumos inteligentes de atendimento",
+      "Alertas sonoros de fila",
+      "Modelo reserva de IA (alta disponibilidade)",
+      "Prioridade dos atendimentos",
+      "Pesquisa de satisfação (1 a 5 estrelas)",
+      "Indicadores comerciais"
     ],
     status: "active",
     version: 1,
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
     updated_at: new Date().toISOString()
   },
   {
@@ -233,33 +380,23 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     price: "159,90",
     quotaLimit: 1500, // 1.500 atendimentos com IA por mês
     maxOperators: 5,
-    maxWhatsappConnections: 2, // Até 2 números WhatsApp homologados
+    maxWhatsappConnections: 5, // Todos os 5 espaços de WhatsApp liberados
     description: "Para operações avançadas, redes de lojas, imobiliárias e clínicas de alta demanda.",
-    features: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours",
-      "commercial_tags",
-      "handoff_summary",
-      "sound_notifications",
-      "model_fallback",
-      "advanced_reports"
-    ],
+    features: [...PREMIUM_FEATURES],
     featureBullets: [
       "1.500 atendimentos com IA por mês",
-      "Tudo do Plano Business incluído",
-      "Até 2 números WhatsApp",
+      "Tudo do CRM Business incluído",
+      "Todos os 5 WhatsApps liberados (5 de 5)",
       "Até 5 operadores humanos",
-      "Central de atendimento para múltiplos números",
       "Relatórios avançados",
-      "Métricas do funil comercial",
-      "Indicadores de desempenho dos operadores",
-      "Filtros e análises avançadas",
+      "Análise avançada de satisfação",
+      "Indicadores de desempenho por atendente",
+      "Filtros e análises comerciais avançadas",
       "Suporte prioritário Premium"
     ],
     status: "active",
     version: 1,
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
     updated_at: new Date().toISOString()
   }
 ];
@@ -272,29 +409,104 @@ export const TRIAL_PLAN: CrmPlan & { durationDays: number } = {
   durationDays: 7,
   maxOperators: 1,
   maxWhatsappConnections: 1,
-  description: "Avaliação gratuita de 7 dias com recursos homologados do Plano Business.",
-  features: [
-    "ai_chat",
-    "human_handoff",
-    "simulator",
-    "business_hours",
-    "commercial_tags",
-    "handoff_summary",
-    "sound_notifications",
-    "model_fallback"
-  ],
+  description: "Avaliação gratuita de 7 dias com recursos do CRM Business liberados temporariamente.",
+  features: [...BUSINESS_FEATURES],
   featureBullets: [
     "7 dias corridos de teste grátis",
     "Até 100 atendimentos no período",
-    "1 número WhatsApp",
+    "1 WhatsApp liberado (de 5 espaços)",
     "1 operador humano",
-    "Recursos de avaliação do Business",
-    "Sem cartão obrigatório e sem cobrança automática"
+    "Recursos do CRM Business liberados temporariamente",
+    "Dados preservados ao final do período"
   ],
   status: "active",
   version: 1,
+  catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
   updated_at: new Date().toISOString()
 };
+
+/**
+ * Upgrade any legacy plan entry loaded from Redis (schema < 2) to the v2 commercial definition
+ * without overwriting explicit v2 edits made by the Master.
+ */
+export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
+  const defaultMatch = DEFAULT_PLANS.find(
+    d => d.id === raw.id || d.name.toLowerCase() === String(raw.name || "").toLowerCase()
+  );
+  if (!defaultMatch) {
+    return {
+      ...raw,
+      catalogSchemaVersion: raw.catalogSchemaVersion || CATALOG_SCHEMA_VERSION
+    };
+  }
+
+  const isLegacySchema = !raw.catalogSchemaVersion || raw.catalogSchemaVersion < CATALOG_SCHEMA_VERSION;
+  if (!isLegacySchema) {
+    return raw;
+  }
+
+  // Migrate legacy schema v1 -> v2: ensure new features and updated WhatsApp/operator limits are applied
+  const mergedFeatures = Array.from(new Set([...(raw.features || []), ...defaultMatch.features])) as FeatureId[];
+  // Ensure Start does not accidentally receive Business/Premium features during migration
+  const cleanFeatures = raw.id === "crm-start"
+    ? mergedFeatures.filter(f => START_FEATURES.includes(f))
+    : raw.id === "crm-business"
+      ? mergedFeatures.filter(f => BUSINESS_FEATURES.includes(f))
+      : mergedFeatures;
+
+  const isLegacyDefaultPrice = raw.price === "149,00" || raw.price === "249,00" || raw.price === "399,00" || !raw.price;
+  const isLegacyDefaultQuota = raw.quotaLimit === 500 || !raw.quotaLimit;
+
+  return {
+    ...defaultMatch,
+    ...raw,
+    price: isLegacyDefaultPrice ? defaultMatch.price : raw.price,
+    quotaLimit: isLegacyDefaultQuota ? defaultMatch.quotaLimit : raw.quotaLimit,
+    maxOperators: Math.max(raw.maxOperators || 1, defaultMatch.maxOperators),
+    maxWhatsappConnections: Math.max(raw.maxWhatsappConnections || 1, defaultMatch.maxWhatsappConnections),
+    features: cleanFeatures,
+    featureBullets: defaultMatch.featureBullets,
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION
+  };
+}
+
+export function buildFeatureGovernanceMap(
+  allowedFeatures: FeatureId[],
+  isSuspended: boolean,
+  suspensionReason?: string,
+  maintenanceFeatures: FeatureId[] = []
+): Record<FeatureId, FeatureGovernanceStatus> {
+  const map = {} as Record<FeatureId, FeatureGovernanceStatus>;
+  for (const feat of TECHNICAL_FEATURES) {
+    let state: FeatureAccessState = "locked_by_plan";
+    let reason: string | undefined;
+
+    if (isSuspended) {
+      state = "suspended";
+      reason = suspensionReason || "Conta suspensa administrativamente ou período/franquia encerrado.";
+    } else if (maintenanceFeatures.includes(feat.id)) {
+      state = "maintenance";
+      reason = "Recurso temporariamente indisponível por pendência técnica ou manutenção.";
+    } else if (allowedFeatures.includes(feat.id)) {
+      state = "allowed";
+    } else {
+      state = "locked_by_plan";
+      reason = `Disponível a partir do plano ${feat.minPlanName || "CRM Business"}.`;
+    }
+
+    map[feat.id] = {
+      id: feat.id,
+      name: feat.name,
+      description: feat.description,
+      category: feat.category,
+      state,
+      minPlanId: feat.minPlanId || "crm-business",
+      minPlanName: feat.minPlanName || "CRM Business",
+      reason
+    };
+  }
+  return map;
+}
 
 export function getRedis(providedRedis?: Redis): Redis {
   if (providedRedis) return providedRedis;
@@ -310,6 +522,7 @@ function getSupabaseConfig() {
 
 /**
  * Retrieve master published plans catalog from Redis with fallback to DEFAULT_PLANS.
+ * Automatically upgrades legacy catalog schemas (schema < 2) so old limits/features never stick.
  * NEVER returns draft versions. Runtime and customer execution must use this exclusively.
  */
 export async function getMasterPlans(providedRedis?: Redis): Promise<CrmPlan[]> {
@@ -324,7 +537,13 @@ export async function getMasterPlans(providedRedis?: Redis): Promise<CrmPlan[]> 
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed as CrmPlan[];
+        const normalized = (parsed as CrmPlan[]).map(normalizeCatalogPlan);
+        // If any plan was upgraded from legacy schema, persist the normalized v2 catalog back to Redis
+        const hadLegacy = (parsed as CrmPlan[]).some(p => !p.catalogSchemaVersion || p.catalogSchemaVersion < CATALOG_SCHEMA_VERSION);
+        if (hadLegacy) {
+          await redis.set("crm:master:plans", JSON.stringify(normalized)).catch(() => {});
+        }
+        return normalized;
       }
     }
   } catch (err) {
@@ -458,20 +677,22 @@ export async function saveMasterPlan(
   const currentPublishedPlans = await getMasterPlans(providedRedis);
   const index = currentPublishedPlans.findIndex(p => p.id === planInput.id);
   const previousPlan = index >= 0 ? { ...currentPublishedPlans[index] } : undefined;
+  const fallbackDefault = DEFAULT_PLANS.find(p => p.id === planInput.id) || DEFAULT_PLANS[0];
 
   const targetPlan: CrmPlan = {
     id: planInput.id,
-    name: planInput.name || previousPlan?.name || "Novo Plano",
-    price: planInput.price || previousPlan?.price || "149,00",
-    quotaLimit: typeof planInput.quotaLimit === "number" ? planInput.quotaLimit : (previousPlan?.quotaLimit || 500),
-    maxOperators: typeof planInput.maxOperators === "number" ? planInput.maxOperators : (previousPlan?.maxOperators || 1),
-    maxWhatsappConnections: typeof planInput.maxWhatsappConnections === "number" ? planInput.maxWhatsappConnections : (previousPlan?.maxWhatsappConnections || 1),
-    description: planInput.description ?? (previousPlan?.description || ""),
-    features: Array.isArray(planInput.features) ? planInput.features : (previousPlan?.features || ["ai_chat", "human_handoff"]),
-    featureBullets: Array.isArray(planInput.featureBullets) ? planInput.featureBullets : (previousPlan?.featureBullets || []),
+    name: planInput.name || previousPlan?.name || fallbackDefault.name,
+    price: planInput.price || previousPlan?.price || fallbackDefault.price,
+    quotaLimit: typeof planInput.quotaLimit === "number" ? planInput.quotaLimit : (previousPlan?.quotaLimit || fallbackDefault.quotaLimit),
+    maxOperators: typeof planInput.maxOperators === "number" ? planInput.maxOperators : (previousPlan?.maxOperators || fallbackDefault.maxOperators),
+    maxWhatsappConnections: typeof planInput.maxWhatsappConnections === "number" ? planInput.maxWhatsappConnections : (previousPlan?.maxWhatsappConnections || fallbackDefault.maxWhatsappConnections),
+    description: planInput.description ?? (previousPlan?.description || fallbackDefault.description),
+    features: Array.isArray(planInput.features) ? planInput.features : (previousPlan?.features || [...START_FEATURES]),
+    featureBullets: Array.isArray(planInput.featureBullets) ? planInput.featureBullets : (previousPlan?.featureBullets || fallbackDefault.featureBullets),
     status: planInput.status || previousPlan?.status || "active",
     isPopular: planInput.isPopular !== undefined ? planInput.isPopular : previousPlan?.isPopular,
     version: mode === "apply" ? (previousPlan?.version || 0) + 1 : (previousPlan?.version || 1),
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
     updated_at: new Date().toISOString()
   };
 
@@ -578,23 +799,24 @@ export async function saveMasterPlan(
           const hasCustomQuota = tenantPlan?.customQuotaOverride !== undefined && tenantPlan?.customQuotaOverride !== null && !Number.isNaN(Number(tenantPlan?.customQuotaOverride));
 
           if (vigencia === "immediate") {
-            // IMMEDIATE APPLICATION: Update active quota, update contracted snapshot, clear pending updates
             if (!hasCustomQuota) {
               tenantPlan.quotaLimit = targetPlan.quotaLimit;
             }
             tenantPlan.planId = targetPlan.id;
             tenantPlan.name = targetPlan.name;
+            tenantPlan.price = targetPlan.price;
             tenantPlan.contractedPlan = {
               quotaLimit: targetPlan.quotaLimit,
               features: targetPlan.features,
               price: targetPlan.price,
+              maxOperators: targetPlan.maxOperators,
+              maxWhatsappConnections: targetPlan.maxWhatsappConnections,
               version: targetPlan.version,
               contractedAt: new Date().toISOString()
             };
             delete tenantPlan.pendingPlanUpdate;
             parsed.plan = tenantPlan;
 
-            // Update in Supabase
             const rUpdate = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${s.tenant_id}`, {
               method: "PATCH",
               headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
@@ -605,26 +827,20 @@ export async function saveMasterPlan(
               throw new Error(`Supabase PATCH crm_tenant_settings failed (HTTP ${rUpdate.status}): ${await rUpdate.text()}`);
             }
 
-            // Sync crm_usage_limits in Supabase
             const effectiveQuota = hasCustomQuota ? Number(tenantPlan.customQuotaOverride) : targetPlan.quotaLimit;
             await syncTenantUsageLimits(s.tenant_id, effectiveQuota, url, serviceKey);
-
-            // Invalidate Redis cache for this tenant
-            const rConn = getRedis(providedRedis);
-            try {
-              if (rConn.status !== "ready" && rConn.status !== "connecting") await rConn.connect();
-              await rConn.del(`crm:tenant:effective_plan:${s.tenant_id}`);
-              if (!providedRedis) rConn.disconnect();
-            } catch {}
+            await invalidateEffectivePlanCache(s.tenant_id, providedRedis);
 
             succeededTenants.push(s.tenant_id);
           } else if (vigencia === "new_clients") {
-            // NEW CLIENTS ONLY: Freeze existing client's contractedPlan so they never inherit new master limits
+            // NEW CLIENTS ONLY: Freeze existing client's contractedPlan so they never inherit new master limits automatically
             if (!tenantPlan.contractedPlan) {
               tenantPlan.contractedPlan = {
-                quotaLimit: hasCustomQuota ? Number(tenantPlan.customQuotaOverride) : (previousPlan?.quotaLimit || tenantPlan.quotaLimit || 500),
-                features: previousPlan?.features || ["ai_chat", "human_handoff"],
-                price: previousPlan?.price || tenantPlan.price || "149,00",
+                quotaLimit: hasCustomQuota ? Number(tenantPlan.customQuotaOverride) : (previousPlan?.quotaLimit || tenantPlan.quotaLimit || fallbackDefault.quotaLimit),
+                features: previousPlan?.features || [...START_FEATURES],
+                price: previousPlan?.price || tenantPlan.price || fallbackDefault.price,
+                maxOperators: previousPlan?.maxOperators || fallbackDefault.maxOperators,
+                maxWhatsappConnections: previousPlan?.maxWhatsappConnections || fallbackDefault.maxWhatsappConnections,
                 version: previousPlan?.version || 1,
                 contractedAt: tenantPlan.contractedAt || new Date().toISOString()
               };
@@ -641,17 +857,9 @@ export async function saveMasterPlan(
               }
             }
 
-            // Invalidate Redis cache so getEffectiveTenantPlan reads frozen contract
-            const rConn = getRedis(providedRedis);
-            try {
-              if (rConn.status !== "ready" && rConn.status !== "connecting") await rConn.connect();
-              await rConn.del(`crm:tenant:effective_plan:${s.tenant_id}`);
-              if (!providedRedis) rConn.disconnect();
-            } catch {}
-
+            await invalidateEffectivePlanCache(s.tenant_id, providedRedis);
             succeededTenants.push(s.tenant_id);
           } else if (vigencia === "next_cycle") {
-            // NEXT RENEWAL: Schedule pendingPlanUpdate effective at dueDate
             const dueDate = typeof tenantPlan.dueDate === "string" && tenantPlan.dueDate
               ? tenantPlan.dueDate
               : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
@@ -661,6 +869,8 @@ export async function saveMasterPlan(
               quotaLimit: targetPlan.quotaLimit,
               features: targetPlan.features,
               price: targetPlan.price,
+              maxOperators: targetPlan.maxOperators,
+              maxWhatsappConnections: targetPlan.maxWhatsappConnections,
               planVersion: targetPlan.version,
               effectiveAt: dueDate
             };
@@ -676,14 +886,7 @@ export async function saveMasterPlan(
               throw new Error(`Supabase PATCH crm_tenant_settings schedule update failed (HTTP ${rUpdate.status}): ${await rUpdate.text()}`);
             }
 
-            // Invalidate Redis cache
-            const rConn = getRedis(providedRedis);
-            try {
-              if (rConn.status !== "ready" && rConn.status !== "connecting") await rConn.connect();
-              await rConn.del(`crm:tenant:effective_plan:${s.tenant_id}`);
-              if (!providedRedis) rConn.disconnect();
-            } catch {}
-
+            await invalidateEffectivePlanCache(s.tenant_id, providedRedis);
             succeededTenants.push(s.tenant_id);
           }
         } catch (tenantErr) {
@@ -696,7 +899,6 @@ export async function saveMasterPlan(
       }
     } catch (err) {
       console.error("[plans] Global error during store synchronization:", err);
-      // If we failed to even query tenant settings, mark all as failed
       if (affectedTenants.length === 0) {
         failedTenants.push({
           tenantId: "global_sync_error",
@@ -737,7 +939,6 @@ export async function saveMasterPlan(
     timestamp: new Date().toISOString()
   }, providedRedis);
 
-  // Dispatch operational alert if partial failure occurs
   if (hasFailures) {
     const alertWebhookUrl = process.env.CRM_ALERT_WEBHOOK_URL?.trim();
     if (alertWebhookUrl) {
@@ -770,6 +971,24 @@ export async function saveMasterPlan(
     failedTenants,
     plan: targetPlan
   };
+}
+
+/**
+ * Invalidate the cached EffectiveTenantPlan in Redis so changes take effect immediately.
+ */
+export async function invalidateEffectivePlanCache(tenantId: string, providedRedis?: Redis): Promise<void> {
+  if (!tenantId) return;
+  const rConn = getRedis(providedRedis);
+  let owns = false;
+  try {
+    if (rConn.status !== "ready" && rConn.status !== "connecting") {
+      await rConn.connect();
+      owns = true;
+    }
+    await rConn.del(`crm:tenant:effective_plan:${tenantId}`);
+  } catch {} finally {
+    if (owns && !providedRedis) rConn.disconnect();
+  }
 }
 
 /**
@@ -849,18 +1068,20 @@ export async function getEffectiveTenantPlan(
   const redis = getRedis(providedRedis);
   let ownsConnection = false;
 
-  // 1. Check Redis cache first (60s TTL)
-  try {
-    if (redis.status !== "ready" && redis.status !== "connecting") {
-      await redis.connect();
-      ownsConnection = true;
+  // 1. Check Redis cache first (60s TTL) unless mockSettingsJson is supplied
+  if (!mockSettingsJson) {
+    try {
+      if (redis.status !== "ready" && redis.status !== "connecting") {
+        await redis.connect();
+        ownsConnection = true;
+      }
+      const cached = await redis.get(`crm:tenant:effective_plan:${tenantId}`);
+      if (cached) {
+        return JSON.parse(cached) as EffectiveTenantPlan;
+      }
+    } catch {} finally {
+      if (ownsConnection && !providedRedis) redis.disconnect();
     }
-    const cached = await redis.get(`crm:tenant:effective_plan:${tenantId}`);
-    if (cached) {
-      return JSON.parse(cached) as EffectiveTenantPlan;
-    }
-  } catch {} finally {
-    if (ownsConnection && !providedRedis) redis.disconnect();
   }
 
   // 2. Fetch published master plans (never drafts!)
@@ -868,14 +1089,18 @@ export async function getEffectiveTenantPlan(
   const { url, serviceKey } = getSupabaseConfig();
 
   let rawTenantPlan: Record<string, any> = {};
+  let parsedRoot: Record<string, any> = {};
   let isSuspended = false;
   let suspensionReason = "";
+  let publicSuspensionReason: string | undefined;
+  let internalSuspensionNote: string | undefined;
 
   if (mockSettingsJson) {
     try {
       const parsed = typeof mockSettingsJson === "string" && mockSettingsJson.startsWith("{")
         ? JSON.parse(mockSettingsJson)
         : mockSettingsJson;
+      parsedRoot = parsed && typeof parsed === "object" ? parsed : {};
       if (parsed.plan) rawTenantPlan = parsed.plan;
       else rawTenantPlan = parsed;
     } catch {}
@@ -886,7 +1111,7 @@ export async function getEffectiveTenantPlan(
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
           cache: "no-store"
         }),
-        fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=status&limit=1`, {
+        fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=status,name&limit=1`, {
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
           cache: "no-store"
         })
@@ -897,21 +1122,51 @@ export async function getEffectiveTenantPlan(
         const rawDesc = settings[0]?.business_description ?? "";
         if (rawDesc.startsWith("{")) {
           const parsed = JSON.parse(rawDesc);
+          parsedRoot = parsed;
           if (parsed.plan) rawTenantPlan = parsed.plan;
         }
       }
 
       if (rTenant.ok) {
-        const tenants = (await rTenant.json()) as Array<{ status: string }>;
+        const tenants = (await rTenant.json()) as Array<{ status: string; name?: string }>;
         if (tenants[0]?.status === "suspended") {
           isSuspended = true;
           suspensionReason = "admin_suspended";
+        }
+        // Own operational environment of NovaesWeb defaults to CRM Premium if no explicit plan is set
+        if (!rawTenantPlan.planId && !rawTenantPlan.name && tenants[0]?.name?.toLowerCase().includes("novaesweb")) {
+          rawTenantPlan = {
+            planId: "crm-premium",
+            name: "CRM Premium",
+            status: "paid",
+            autoBlock: false
+          };
         }
       }
     } catch {}
   }
 
+  if (parsedRoot.suspension && typeof parsedRoot.suspension === "object") {
+    if (typeof parsedRoot.suspension.publicReason === "string" && parsedRoot.suspension.publicReason.trim()) {
+      publicSuspensionReason = parsedRoot.suspension.publicReason.trim();
+    }
+    if (typeof parsedRoot.suspension.internalNote === "string" && parsedRoot.suspension.internalNote.trim()) {
+      internalSuspensionNote = parsedRoot.suspension.internalNote.trim();
+    }
+    if (parsedRoot.suspension.isSuspended === true) {
+      isSuspended = true;
+      if (!suspensionReason) suspensionReason = "admin_suspended";
+    }
+  }
+  if (typeof rawTenantPlan.publicSuspensionReason === "string" && rawTenantPlan.publicSuspensionReason.trim()) {
+    publicSuspensionReason = rawTenantPlan.publicSuspensionReason.trim();
+  }
+  if (typeof rawTenantPlan.internalSuspensionNote === "string" && rawTenantPlan.internalSuspensionNote.trim()) {
+    internalSuspensionNote = rawTenantPlan.internalSuspensionNote.trim();
+  }
+
   const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
 
   // 3. Check for Trial vs Paid Plan
   const isTrial = Boolean(rawTenantPlan.isTrial || rawTenantPlan.planId === "crm-trial" || rawTenantPlan.status === "trial");
@@ -921,7 +1176,10 @@ export async function getEffectiveTenantPlan(
   let trialStatus: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted" | undefined;
   let quotaUsed = 0;
 
-  // Read quotaUsed from Redis
+  // Read quotaUsed from Redis + durable fallback in parsedRoot.usageCounters
+  const durableTrialUsed = Number(parsedRoot?.usageCounters?.trialUsed ?? rawTenantPlan?.trialQuotaUsed ?? 0) || 0;
+  const durableMonthUsed = Number(parsedRoot?.usageCounters?.monthly?.[monthKey] ?? rawTenantPlan?.monthlyQuotaUsed?.[monthKey] ?? 0) || 0;
+
   try {
     const rConn = getRedis(providedRedis);
     let owns = false;
@@ -931,14 +1189,15 @@ export async function getEffectiveTenantPlan(
     }
     if (isTrial) {
       const u = await rConn.get(`crm:quota:trial:${tenantId}`);
-      quotaUsed = parseInt(u || "0", 10);
+      quotaUsed = Math.max(parseInt(u || "0", 10), durableTrialUsed);
     } else {
-      const monthKey = now.toISOString().slice(0, 7);
       const u = await rConn.get(`crm:quota:${tenantId}:${monthKey}`);
-      quotaUsed = parseInt(u || "0", 10);
+      quotaUsed = Math.max(parseInt(u || "0", 10), durableMonthUsed);
     }
     if (owns && !providedRedis) rConn.disconnect();
-  } catch {}
+  } catch {
+    quotaUsed = isTrial ? durableTrialUsed : durableMonthUsed;
+  }
 
   let matchedPlan: CrmPlan;
 
@@ -956,10 +1215,16 @@ export async function getEffectiveTenantPlan(
       trialStatus = "expired";
       isSuspended = true;
       if (!suspensionReason) suspensionReason = "trial_expired";
+      if (!publicSuspensionReason) {
+        publicSuspensionReason = "Seu período de Teste Grátis (7 dias) terminou. Seus dados estão preservados — escolha um plano para continuar.";
+      }
     } else if (quotaUsed >= 100) {
       trialStatus = "quota_exhausted";
       isSuspended = true;
       if (!suspensionReason) suspensionReason = "trial_quota_exhausted";
+      if (!publicSuspensionReason) {
+        publicSuspensionReason = "Você atingiu o limite de 100 atendimentos do Teste Grátis. Seus dados estão preservados — faça upgrade para continuar.";
+      }
     } else if (trialDaysLeft <= 3) {
       trialStatus = "expiring_soon";
     } else {
@@ -977,6 +1242,8 @@ export async function getEffectiveTenantPlan(
   let baseQuota = matchedPlan.quotaLimit;
   let baseFeatures: FeatureId[] = [...matchedPlan.features];
   let basePrice = matchedPlan.price;
+  let baseMaxOperators = matchedPlan.maxOperators || 1;
+  let baseMaxWhatsapp = matchedPlan.maxWhatsappConnections || 1;
   let isContractFrozen = false;
   let contractedVersion: number | undefined;
 
@@ -987,25 +1254,23 @@ export async function getEffectiveTenantPlan(
     if (pendingUpdate && pendingUpdate.effectiveAt) {
       const effectiveDate = new Date(pendingUpdate.effectiveAt);
       if (now >= effectiveDate) {
-        // Pending update has matured and becomes active!
         baseQuota = pendingUpdate.quotaLimit;
         baseFeatures = [...pendingUpdate.features];
         basePrice = pendingUpdate.price;
+        if (pendingUpdate.maxOperators) baseMaxOperators = pendingUpdate.maxOperators;
+        if (pendingUpdate.maxWhatsappConnections) baseMaxWhatsapp = pendingUpdate.maxWhatsappConnections;
         contractedVersion = pendingUpdate.planVersion;
-      } else {
-        // Still before renewal date: maintain contracted snapshot if available
-        if (contractedSnapshot) {
-          baseQuota = contractedSnapshot.quotaLimit;
-          baseFeatures = [...contractedSnapshot.features];
-          basePrice = contractedSnapshot.price;
-          contractedVersion = contractedSnapshot.version;
-          isContractFrozen = true;
-        }
+      } else if (contractedSnapshot) {
+        baseQuota = contractedSnapshot.quotaLimit;
+        baseFeatures = Array.from(new Set([...contractedSnapshot.features, ...matchedPlan.features]));
+        basePrice = contractedSnapshot.price;
+        contractedVersion = contractedSnapshot.version;
+        isContractFrozen = true;
       }
     } else if (contractedSnapshot) {
-      // Contract is frozen (e.g. from new_clients only update)
       baseQuota = contractedSnapshot.quotaLimit;
-      baseFeatures = [...contractedSnapshot.features];
+      // Preserve contracted snapshot while ensuring new baseline features of the matched tier (e.g., quick_replies, basic_indicators) are present
+      baseFeatures = Array.from(new Set([...contractedSnapshot.features, ...matchedPlan.features]));
       basePrice = contractedSnapshot.price;
       contractedVersion = contractedSnapshot.version;
       isContractFrozen = true;
@@ -1034,23 +1299,40 @@ export async function getEffectiveTenantPlan(
   if (isOverdue) {
     isSuspended = true;
     if (!suspensionReason) suspensionReason = "payment_overdue";
+    if (!publicSuspensionReason) {
+      publicSuspensionReason = "Sua fatura está vencida. Regularize o pagamento para reativar os disparos automáticos da IA.";
+    }
   }
+
+  const maintenanceFeatures: FeatureId[] = Array.isArray(parsedRoot.maintenanceFeatures)
+    ? parsedRoot.maintenanceFeatures
+    : [];
+
+  const featureStates = buildFeatureGovernanceMap(
+    finalFeatures,
+    isSuspended,
+    publicSuspensionReason || suspensionReason,
+    maintenanceFeatures
+  );
 
   const effective: EffectiveTenantPlan = {
     tenantId,
     planId: matchedPlan.id,
     planName: matchedPlan.name,
-    price: isTrial ? "0,00" : ((typeof rawTenantPlan.price === "string" && rawTenantPlan.price) ? rawTenantPlan.price : basePrice),
+    price: isTrial ? "0,00" : basePrice,
     quotaLimit: isTrial ? 100 : finalQuota,
-    maxOperators: matchedPlan.maxOperators || 1,
-    maxWhatsappConnections: matchedPlan.maxWhatsappConnections || 1,
+    maxOperators: isTrial ? 1 : baseMaxOperators,
+    maxWhatsappConnections: isTrial ? 1 : baseMaxWhatsapp,
     allowedFeatures: finalFeatures,
+    featureStates,
     dueDate,
     status: isTrial ? "trial" : paymentStatus,
     autoBlock,
     isOverdue,
     isSuspended,
     suspensionReason,
+    publicSuspensionReason,
+    internalSuspensionNote,
     hasCustomOverride: !isTrial && (hasCustomQuota || hasCustomFeatures),
     customOverride: (!isTrial && (hasCustomQuota || hasCustomFeatures)) ? {
       quotaLimit: hasCustomQuota ? Number(customQuotaRaw) : undefined,
@@ -1069,18 +1351,85 @@ export async function getEffectiveTenantPlan(
   };
 
   // 7. Cache in Redis for 60s
-  try {
-    const rCache = getRedis(providedRedis);
-    let owns = false;
-    if (rCache.status !== "ready" && rCache.status !== "connecting") {
-      await rCache.connect();
-      owns = true;
-    }
-    await rCache.set(`crm:tenant:effective_plan:${tenantId}`, JSON.stringify(effective), "EX", 60);
-    if (owns && !providedRedis) rCache.disconnect();
-  } catch {}
+  if (!mockSettingsJson) {
+    try {
+      const rCache = getRedis(providedRedis);
+      let owns = false;
+      if (rCache.status !== "ready" && rCache.status !== "connecting") {
+        await rCache.connect();
+        owns = true;
+      }
+      await rCache.set(`crm:tenant:effective_plan:${tenantId}`, JSON.stringify(effective), "EX", 60);
+      if (owns && !providedRedis) rCache.disconnect();
+    } catch {}
+  }
 
   return effective;
+}
+
+/**
+ * Centralized backend guard to enforce plan permissions and suspension state on any API route.
+ */
+export async function requireTenantFeature(
+  tenantId: string,
+  featureId: FeatureId,
+  providedRedis?: Redis
+): Promise<{
+  allowed: boolean;
+  state: FeatureAccessState;
+  statusHttp: number;
+  errorCode?: string;
+  message?: string;
+  effectivePlan: EffectiveTenantPlan;
+}> {
+  const effectivePlan = await getEffectiveTenantPlan(tenantId, providedRedis);
+  const gov = effectivePlan.featureStates?.[featureId];
+
+  if (effectivePlan.isSuspended) {
+    return {
+      allowed: false,
+      state: "suspended",
+      statusHttp: 403,
+      errorCode: "ACCOUNT_SUSPENDED",
+      message: effectivePlan.publicSuspensionReason || "Conta suspensa administrativamente ou período de avaliação encerrado.",
+      effectivePlan
+    };
+  }
+
+  if (gov?.state === "maintenance") {
+    return {
+      allowed: false,
+      state: "maintenance",
+      statusHttp: 503,
+      errorCode: "FEATURE_MAINTENANCE",
+      message: gov.reason || "Este recurso está temporariamente em manutenção técnica.",
+      effectivePlan
+    };
+  }
+
+  // Note: If a tenant has "business_hours" (advanced), they also automatically have "business_hours_basic"
+  const isAllowed =
+    effectivePlan.allowedFeatures.includes(featureId) ||
+    (featureId === "business_hours_basic" && effectivePlan.allowedFeatures.includes("business_hours"));
+
+  if (!isAllowed) {
+    const featMeta = TECHNICAL_FEATURES.find(f => f.id === featureId);
+    return {
+      allowed: false,
+      state: "locked_by_plan",
+      statusHttp: 403,
+      errorCode: "PLAN_FEATURE_LOCKED",
+      message: `O recurso "${featMeta?.name || featureId}" não está incluído no seu plano atual (${effectivePlan.planName}). Solicite upgrade para o plano ${featMeta?.minPlanName || "CRM Business"}.`,
+      effectivePlan
+    };
+  }
+
+  return {
+    allowed: true,
+    state: "allowed",
+    statusHttp: 200,
+    effectivePlan
+  };
 }
 
 /**
@@ -1095,14 +1444,13 @@ export async function recordPlanAudit(entry: PlanAuditEntry, providedRedis?: Red
       ownsConnection = true;
     }
     await redis.lpush("crm:master:plan_history", JSON.stringify(entry));
-    await redis.ltrim("crm:master:plan_history", 0, 99); // Keep latest 100 audit entries
+    await redis.ltrim("crm:master:plan_history", 0, 99);
   } catch (err) {
     console.warn("[plans] Failed to record plan audit in Redis", err);
   } finally {
     if (ownsConnection && !providedRedis) redis.disconnect();
   }
 
-  // Also log into Supabase crm_audit_events
   const { url, serviceKey } = getSupabaseConfig();
   if (url && serviceKey) {
     try {
@@ -1208,7 +1556,6 @@ export async function recordTrialRegistration(
       await redis.connect();
       ownsConnection = true;
     }
-    // Keep record permanently (365 days)
     await Promise.all([
       redis.set(`crm:trial:registered:store:${normName}`, tenantId, "EX", 365 * 86400),
       redis.set(`crm:trial:registered:email:${normEmail}`, tenantId, "EX", 365 * 86400),
@@ -1230,7 +1577,7 @@ export async function convertTrialToPaidPlan(
   providedRedis?: Redis
 ): Promise<{ success: boolean; plan: CrmPlan; error?: string }> {
   const masterPlans = await getMasterPlans(providedRedis);
-  const targetPlan = masterPlans.find(p => p.id === newPlanId) || masterPlans[1] || DEFAULT_PLANS[1]; // defaults to Business
+  const targetPlan = masterPlans.find(p => p.id === newPlanId) || masterPlans[1] || DEFAULT_PLANS[1];
 
   const { url, serviceKey } = getSupabaseConfig();
   if (!url || !serviceKey) {
@@ -1238,7 +1585,6 @@ export async function convertTrialToPaidPlan(
   }
 
   try {
-    // 1. Fetch current settings to preserve knowledge base, operating hours, ai settings, and connections
     const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&limit=1`, {
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
       cache: "no-store"
@@ -1253,7 +1599,6 @@ export async function convertTrialToPaidPlan(
 
     const calculatedDueDate = dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 
-    // 2. Update plan payload, clearing trial flags
     dataObj.plan = {
       planId: targetPlan.id,
       name: targetPlan.name,
@@ -1268,12 +1613,13 @@ export async function convertTrialToPaidPlan(
         quotaLimit: targetPlan.quotaLimit,
         features: targetPlan.features,
         price: targetPlan.price,
+        maxOperators: targetPlan.maxOperators,
+        maxWhatsappConnections: targetPlan.maxWhatsappConnections,
         version: targetPlan.version,
         contractedAt: new Date().toISOString()
       }
     };
 
-    // 3. Update Supabase
     const rUpdate = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
@@ -1284,17 +1630,14 @@ export async function convertTrialToPaidPlan(
     });
     if (!rUpdate.ok) throw new Error("Falha ao salvar novo plano no Supabase");
 
-    // 4. Update status in crm_tenants to active (if it was suspended by trial expiration)
     await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
       body: JSON.stringify({ status: "active" })
     });
 
-    // 5. Update crm_usage_limits in Supabase
     await syncTenantUsageLimits(tenantId, targetPlan.quotaLimit, url, serviceKey);
 
-    // 6. Invalidate Redis cache
     const redis = getRedis(providedRedis);
     let ownsConnection = false;
     try {
@@ -1308,7 +1651,6 @@ export async function convertTrialToPaidPlan(
       if (ownsConnection && !providedRedis) redis.disconnect();
     }
 
-    // 7. Audit log
     await recordPlanAudit({
       id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       actor,

@@ -3,6 +3,8 @@ import Redis from "ioredis";
 import { privateJson, supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { getBrazilMonthKey } from "@/lib/agent/processor";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,11 +12,32 @@ export const dynamic = "force-dynamic";
 type Membership = { tenant_id: string; role: string };
 type Tenant = { id: string; name: string; status: string };
 type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
-type Conversation = { id: string; contact_id: string; status: string; mode: string; last_message_at: string | null; assigned_to: string | null };
+type Conversation = {
+  id: string;
+  contact_id: string;
+  channel_id?: string | null;
+  status: string;
+  mode: string;
+  last_message_at: string | null;
+  assigned_to: string | null;
+  priority?: "low" | "normal" | "high" | "urgent";
+  priorityRank?: number;
+  tag?: string | null;
+  channelSlot?: number;
+  satisfaction?: { rating: number; comment: string; createdAt: string } | null;
+};
 type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string };
 type HandoffRow = { id: string; conversation_id: string; requested_by: string; status: string; reason: string | null; created_at: string };
+type ChannelRow = { id: string; instance_name: string | null; status: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const PRIORITY_RANK: Record<"low" | "normal" | "high" | "urgent", number> = {
+  urgent: 4,
+  high: 3,
+  normal: 2,
+  low: 1,
+};
 
 function getServiceConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
@@ -90,14 +113,34 @@ export async function GET(request: NextRequest) {
     }
 
     const query = "tenant_id=eq." + encodeURIComponent(selected);
-    const [contacts, rawConversations, messages, tags, contactTags, handoffs] = await Promise.all([
+    const [contacts, rawConversations, messages, tags, contactTags, handoffs, channels, settingsRows] = await Promise.all([
       serviceQuery<Contact[]>(url, serviceKey, "crm_contacts?select=id,phone,display_name,created_at&" + query + "&order=created_at.desc&limit=100", user.token).catch(() => []),
-      serviceQuery<Conversation[]>(url, serviceKey, "crm_conversations?select=id,contact_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token).catch(() => []),
+      serviceQuery<Conversation[]>(url, serviceKey, "crm_conversations?select=id,contact_id,channel_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token).catch(() => []),
       serviceQuery<Message[]>(url, serviceKey, "crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token).catch(() => []),
       serviceQuery<Array<{ id: string; name: string; color: string }>>(url, serviceKey, "crm_tags?select=id,name,color&" + query, user.token).catch(() => []),
       serviceQuery<Array<{ contact_id: string; tag_id: string }>>(url, serviceKey, "crm_contact_tags?select=contact_id,tag_id&" + query, user.token).catch(() => []),
-      serviceQuery<HandoffRow[]>(url, serviceKey, "crm_handoffs?select=id,conversation_id,requested_by,status,reason,created_at&" + query + "&order=created_at.desc&limit=100", user.token).catch(() => [])
+      serviceQuery<HandoffRow[]>(url, serviceKey, "crm_handoffs?select=id,conversation_id,requested_by,status,reason,created_at&" + query + "&order=created_at.desc&limit=100", user.token).catch(() => []),
+      serviceQuery<ChannelRow[]>(url, serviceKey, "crm_channels?select=id,instance_name,status&" + query, user.token).catch(() => []),
+      serviceQuery<Array<{ config_jsonb: Record<string, unknown> }>>(url, serviceKey, "crm_tenant_settings?select=config_jsonb&" + query + "&limit=1", user.token).catch(() => []),
     ]);
+
+    const channelSlotMap = new Map<string, number>();
+    for (const ch of channels) {
+      channelSlotMap.set(ch.id, extractSlotFromInstanceName(ch.instance_name || ""));
+    }
+
+    const tenantSettings = settingsRows?.[0]?.config_jsonb || {};
+    const persistedConvTags = (tenantSettings.conversationTags as Record<string, string>) || {};
+    const persistedConvPriorities = (tenantSettings.conversationPriorities as Record<string, { priority?: string }>) || {};
+    const persistedSurveys = Array.isArray(tenantSettings.satisfactionSurveys)
+      ? (tenantSettings.satisfactionSurveys as Array<{ conversationId?: string; rating: number; comment: string; createdAt: string }>)
+      : [];
+    const surveyByConvId = new Map<string, { rating: number; comment: string; createdAt: string }>();
+    for (const s of persistedSurveys) {
+      if (s.conversationId && !surveyByConvId.has(s.conversationId)) {
+        surveyByConvId.set(s.conversationId, { rating: s.rating, comment: s.comment, createdAt: s.createdAt });
+      }
+    }
 
     // Map latest handoff per conversation
     const pendingHandoffMap = new Map<string, HandoffRow>();
@@ -107,45 +150,61 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Fetch escalation info & quota usage from Redis
+    const monthKey = getBrazilMonthKey();
+    const quotaHistory = (tenantSettings.quotaHistory as Record<string, number>) || {};
+    let quotaUsed = effectivePlan.isTrial
+      ? Number(tenantSettings.trialQuotaUsed || 0)
+      : Number(quotaHistory[monthKey] || 0);
+
+    // Fetch escalation info, tags, priorities & quota usage from Redis
     const escalations: Record<string, { category: string; reason: string; text?: string; timestamp?: string; sentiment?: string }> = {};
-    let quotaUsed = 0;
+    const redisConvTags: Record<string, string> = {};
+    const redisConvPriorities: Record<string, string> = {};
+
     const redisUrl = process.env.CRM_REDIS_URL;
     if (redisUrl) {
       try {
         const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 });
         await redis.connect();
-        const monthKey = new Date().toISOString().slice(0, 7);
         const quotaKey = effectivePlan.isTrial ? `crm:quota:trial:${selected}` : `crm:quota:${selected}:${monthKey}`;
         const quotaUsedRaw = await redis.get(quotaKey);
-        quotaUsed = parseInt(quotaUsedRaw || "0", 10);
+        if (quotaUsedRaw !== null) {
+          quotaUsed = Math.max(quotaUsed, parseInt(quotaUsedRaw || "0", 10));
+        }
 
         for (const c of rawConversations) {
-          const raw = await redis.get(`crm:escalation:${c.id}`);
-          if (raw) {
+          const [rawEsc, rawTag, rawPrio] = await Promise.all([
+            redis.get(`crm:escalation:${c.id}`).catch(() => null),
+            redis.get(`crm:conv_tag:${c.id}`).catch(() => null),
+            redis.get(`crm:conv_priority:${c.id}`).catch(() => null),
+          ]);
+          if (rawEsc) {
             try {
-              escalations[c.id] = JSON.parse(raw);
+              escalations[c.id] = JSON.parse(rawEsc);
             } catch {}
           }
+          if (rawTag) redisConvTags[c.id] = rawTag;
+          if (rawPrio) redisConvPriorities[c.id] = rawPrio;
         }
         redis.disconnect();
       } catch {}
     }
 
-    // Derive logical conversation status & mode from DB (mode: 'ai'|'human'|'paused', status: 'open'|'pending'|'resolved')
-    const conversations: Conversation[] = rawConversations.map(c => {
+    // Derive logical conversation status, mode, priority, tag, slot & satisfaction
+    const mappedConversations: Conversation[] = rawConversations.map(c => {
       const convMsgs = messages.filter(m => m.conversation_id === c.id);
-      // messages are ordered created_at.desc, so convMsgs[0] is the newest message
       const newestMsg = convMsgs[0];
       const pendingHandoff = pendingHandoffMap.get(c.id);
 
+      let derivedMode = c.mode;
+      let derivedStatus = c.status;
+
       // 1. Closed / Resolved
       if (c.status === "resolved" || c.status === "closed" || c.mode === "paused") {
-        return { ...c, mode: "paused", status: "closed" };
-      }
-
-      // 2. Waiting for human operator (unclaimed human request or pending handoff)
-      if ((c.mode === "human" && c.status === "pending" && !c.assigned_to) || (pendingHandoff && !c.assigned_to && c.mode === "human")) {
+        derivedMode = "paused";
+        derivedStatus = "closed";
+      } else if ((c.mode === "human" && c.status === "pending" && !c.assigned_to) || (pendingHandoff && !c.assigned_to && c.mode === "human")) {
+        // 2. Waiting for human operator (unclaimed human request or pending handoff)
         if (!escalations[c.id]) {
           const lastInbound = convMsgs.find(m => m.direction === "inbound" || m.sender_type === "customer");
           const esc = lastInbound ? detectCustomerEscalation(lastInbound.body) : { isEscalation: false };
@@ -158,27 +217,55 @@ export async function GET(request: NextRequest) {
           };
         }
         const isSevere = escalations[c.id]?.sentiment === "urgent" || escalations[c.id]?.sentiment === "frustrated";
-        return {
-          ...c,
-          mode: "human",
-          status: isSevere ? "urgent" : "waiting_human"
-        };
-      }
-
-      // 3. In Human Attendance (claimed by operator)
-      if (c.mode === "human") {
+        derivedMode = "human";
+        derivedStatus = isSevere ? "urgent" : "waiting_human";
+      } else if (c.mode === "human") {
+        // 3. In Human Attendance (claimed by operator)
         const lastWasHumanReply = newestMsg && newestMsg.direction === "outbound" && newestMsg.sender_type === "human";
-        if (c.status === "pending" || lastWasHumanReply) {
-          return { ...c, mode: "human", status: "waiting_client" };
-        }
-        return { ...c, mode: "human", status: "human" };
+        derivedMode = "human";
+        derivedStatus = c.status === "pending" || lastWasHumanReply ? "waiting_client" : "human";
+      } else {
+        // 4. AI Mode
+        derivedMode = "ai";
+        derivedStatus = "ai";
       }
 
-      // 4. AI Mode
-      if (convMsgs.length <= 1 && newestMsg?.direction === "inbound") {
-        return { ...c, mode: "ai", status: "ai" };
+      const rawPrio = redisConvPriorities[c.id] || persistedConvPriorities[c.id]?.priority;
+      const priority: "low" | "normal" | "high" | "urgent" =
+        rawPrio === "urgent" || rawPrio === "high" || rawPrio === "normal" || rawPrio === "low"
+          ? rawPrio
+          : derivedStatus === "urgent"
+          ? "urgent"
+          : derivedStatus === "waiting_human"
+          ? "high"
+          : "normal";
+
+      const tag = redisConvTags[c.id] || persistedConvTags[c.id] || null;
+      const channelSlot = c.channel_id ? (channelSlotMap.get(c.channel_id) || 1) : 1;
+      const satisfaction = surveyByConvId.get(c.id) || null;
+
+      return {
+        ...c,
+        mode: derivedMode,
+        status: derivedStatus,
+        priority,
+        priorityRank: PRIORITY_RANK[priority],
+        tag,
+        channelSlot,
+        satisfaction,
+      };
+    });
+
+    // Sort active conversations by priority first (if priority feature is active), then by last_message_at desc
+    const sortByPriority = effectivePlan.allowedFeatures.includes("conversation_priority");
+    const conversations = [...mappedConversations].sort((a, b) => {
+      if (sortByPriority && a.status !== "closed" && b.status !== "closed") {
+        const rankDiff = (b.priorityRank || 2) - (a.priorityRank || 2);
+        if (rankDiff !== 0) return rankDiff;
       }
-      return { ...c, mode: "ai", status: "ai" };
+      const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return timeB - timeA;
     });
 
     const planData = {
@@ -191,8 +278,10 @@ export async function GET(request: NextRequest) {
       selectedTenant: selected,
       isSuspended,
       suspensionReason,
+      publicSuspensionReason: effectivePlan.publicSuspensionReason,
       plan: planData,
       allowedFeatures: effectivePlan.allowedFeatures,
+      featureStates: effectivePlan.featureStates,
       contacts,
       conversations,
       messages,

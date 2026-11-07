@@ -1,7 +1,7 @@
 import "server-only";
 import type { Incoming } from "@/lib/agent/parse";
 
-type Channel = { id: string; tenant_id: string; status: string };
+export type Channel = { id: string; tenant_id: string; status: string; instance_name?: string };
 type TenantRow = { id: string; name: string; status: string };
 type RecordId = { id: string };
 type RequestMethod = "GET" | "POST" | "PATCH";
@@ -51,9 +51,11 @@ async function db<T>(table: string, query: string, method: RequestMethod, payloa
 
 export async function resolveChannelForInstance(instanceName: string): Promise<Channel | null> {
   const normalizedInstance = instanceName.trim().toLowerCase();
+  const baseInstance = normalizedInstance.replace(/_[2345]$/, "");
+
   let channels = await db<Channel[]>(
     "crm_channels",
-    "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
+    "?select=id,tenant_id,status,instance_name&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
     "GET"
   );
 
@@ -61,7 +63,7 @@ export async function resolveChannelForInstance(instanceName: string): Promise<C
     return channels[0];
   }
 
-  // Try matching tenant by expected instance slug
+  // Try matching tenant by expected instance slug (supporting slots _2.._5)
   const allTenants = await db<TenantRow[]>(
     "crm_tenants",
     "?select=id,name,status&order=created_at.desc",
@@ -69,13 +71,15 @@ export async function resolveChannelForInstance(instanceName: string): Promise<C
   );
   if (!allTenants.length) return null;
 
-  let matchedTenant = allTenants.find(t => tenantInstanceSlug(t.name) === normalizedInstance);
-  if (!matchedTenant && normalizedInstance.startsWith("loja_")) {
-    const prefix = normalizedInstance.slice(0, 18);
+  let matchedTenant = allTenants.find(
+    t => tenantInstanceSlug(t.name) === normalizedInstance || tenantInstanceSlug(t.name) === baseInstance
+  );
+  if (!matchedTenant && baseInstance.startsWith("loja_")) {
+    const prefix = baseInstance.slice(0, 18);
     matchedTenant = allTenants.find(t => tenantInstanceSlug(t.name).startsWith(prefix));
   }
-  if (!matchedTenant && (normalizedInstance === "novaesweb-ia-teste" || allTenants.length === 1)) {
-    matchedTenant = allTenants.find(t => t.status === "active") || allTenants[0];
+  if (!matchedTenant && (baseInstance === "novaesweb-ia-teste" || allTenants.length === 1)) {
+    matchedTenant = allTenants.find(t => t.name.toLowerCase().includes("novaesweb")) || allTenants.find(t => t.status === "active") || allTenants[0];
   }
 
   if (!matchedTenant) return null;
@@ -89,7 +93,7 @@ export async function resolveChannelForInstance(instanceName: string): Promise<C
 
   channels = await db<Channel[]>(
     "crm_channels",
-    "?select=id,tenant_id,status&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
+    "?select=id,tenant_id,status,instance_name&instance_name=eq." + encodeURIComponent(normalizedInstance) + "&limit=1",
     "GET"
   );
   return channels[0] ?? null;
@@ -104,8 +108,8 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
     if (!channel) return "off";
     const t = channel.tenant_id;
 
-    // Ensure channel is marked connected when receiving real messages
-    if (channel.status !== "connected") {
+    // Ensure channel is marked connected when receiving real messages, UNLESS paused by downgrade
+    if (channel.status !== "connected" && channel.status !== "paused") {
       await db("crm_channels", "?id=eq." + channel.id, "PATCH", { status: "connected" }).catch(() => {});
     }
 
@@ -126,7 +130,7 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
     if (!contacts.length) return "off";
     const contact = contacts[0];
 
-    // 3. Find or create conversation
+    // 3. Find or create conversation (scoped to tenant_id + contact_id + channel_id so each WhatsApp channel is separated)
     const conversationQuery = "?select=id,mode,status,assigned_to&tenant_id=eq." + t +
       "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1";
     let threads = await db<Array<{ id: string; mode: string; status: string; assigned_to: string | null }>>("crm_conversations", conversationQuery, "GET");
@@ -157,13 +161,11 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
       delivery_status: "received"
     });
 
-    // Update conversation last_message_at (preserve human mode if in human/paused mode)
     const patchPayload: Record<string, unknown> = {
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
     if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
-      // Customer replied while operator was waiting_client -> back to active human attendance ('open')
       patchPayload.status = "open";
     }
     await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", patchPayload);
@@ -212,6 +214,7 @@ export async function persistOutboundInSupabase(instance: string, phone: string,
 
 export type ConversationContext = {
   conversationId?: string;
+  channelStatus?: string;
   mode: "ai" | "human";
   status?: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
@@ -229,14 +232,13 @@ export async function fetchConversationContext(instance: string, phone: string, 
 
     const contacts = await db<RecordId[]>("crm_contacts",
       "?select=id&tenant_id=eq." + t + "&phone=eq." + phone + "&limit=1", "GET");
-    if (!contacts.length) return fallback;
+    if (!contacts.length) return { ...fallback, channelStatus: channel.status };
     const contact = contacts[0];
 
     const threads = await db<Array<{ id: string; mode: string; status?: string }>>("crm_conversations",
       "?select=id,mode,status&tenant_id=eq." + t + "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1", "GET");
-    if (!threads.length) return fallback;
+    if (!threads.length) return { ...fallback, channelStatus: channel.status };
     const conversation = threads[0];
-    // Pause AI if mode is 'human' or 'paused', or status is 'pending' (waiting_human) or 'resolved' (closed)
     const isAiPaused = conversation.mode !== "ai" || conversation.status === "pending" || conversation.status === "resolved";
     const mode: "ai" | "human" = isAiPaused ? "human" : "ai";
     const status = conversation.status || "open";
@@ -246,10 +248,9 @@ export async function fetchConversationContext(instance: string, phone: string, 
       "?conversation_id=eq." + conversation.id + "&select=direction,sender_type,body,created_at&order=created_at.desc&limit=" + limit, "GET");
 
     if (!rawMsgs || rawMsgs.length === 0) {
-      return { conversationId: conversation.id, mode, status, history: [], isFirstInteraction: true };
+      return { conversationId: conversation.id, channelStatus: channel.status, mode, status, history: [], isFirstInteraction: true };
     }
 
-    // Sort chronologically (oldest to newest)
     const history = rawMsgs.reverse().map(m => ({
       role: (m.direction === "outbound" || m.sender_type === "agent" || m.sender_type === "human" ? "assistant" : "user") as "user" | "assistant",
       content: m.body || ""
@@ -257,6 +258,7 @@ export async function fetchConversationContext(instance: string, phone: string, 
 
     return {
       conversationId: conversation.id,
+      channelStatus: channel.status,
       mode,
       status,
       history,
@@ -285,8 +287,6 @@ export async function handoffToHuman(instance: string, phone: string, _isUrgent 
     if (!threads.length) return null;
     const conv = threads[0];
 
-    // Set mode = 'human' and status = 'pending' (valid in DB check constraint: 'open' | 'pending' | 'resolved')
-    // 'pending' with mode='human' and assigned_to=null means "Aguardando atendente" (waiting_human)
     await db("crm_conversations", "?id=eq." + conv.id, "PATCH", {
       mode: "human",
       status: "pending",
@@ -295,7 +295,6 @@ export async function handoffToHuman(instance: string, phone: string, _isUrgent 
       updated_at: new Date().toISOString()
     });
 
-    // Record handoff in crm_handoffs table
     await db("crm_handoffs", "", "POST", {
       tenant_id: t,
       conversation_id: conv.id,

@@ -11,12 +11,30 @@ import {
   resolveChannelForInstance
 } from "@/lib/crm/supabase-ingest";
 import { detectCustomerEscalation } from "./escalation";
-import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, invalidateEffectivePlanCache } from "@/lib/crm/plans";
+import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export type ProcessResult = {
   status: "ignored" | "duplicate" | "disabled" | "sent" | "buffered";
   reason?: string;
 };
+
+export const MAX_AI_REPLIES_PER_24H_WINDOW = 25;
+
+export function getBrazilMonthKey(nowDate: Date = new Date()): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit"
+    }).formatToParts(nowDate);
+    const y = parts.find(p => p.type === "year")?.value || String(nowDate.getUTCFullYear());
+    const m = parts.find(p => p.type === "month")?.value || String(nowDate.getUTCMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  } catch {
+    return nowDate.toISOString().slice(0, 7);
+  }
+}
 
 function matchesAllowedNumber(incoming: string, allowed: string): boolean {
   if (!allowed || allowed === "*" || allowed === "all") return true;
@@ -49,9 +67,10 @@ export function isWithinOperatingHours(
     openTime?: string;
     closeTime?: string;
     days?: string[];
-    schedule?: Record<string, DaySchedule>;
+    schedule?: Record<string, DaySchedule & { intervals?: Array<{ start: string; end: string }> }>;
   },
-  nowDate?: Date
+  nowDate?: Date,
+  allowIntervals = true
 ): boolean {
   if (!hours || !hours.enabled) return true;
   try {
@@ -87,13 +106,26 @@ export function isWithinOperatingHours(
         return false;
       }
 
-      // Check interval/break if configured
-      if (dayConfig.hasBreak && dayConfig.breakStart && dayConfig.breakEnd) {
-        const breakStartMin = parseMinutes(dayConfig.breakStart, -1);
-        const breakEndMin = parseMinutes(dayConfig.breakEnd, -1);
-        if (breakStartMin >= 0 && breakEndMin >= 0 && breakEndMin > breakStartMin) {
-          if (currentMinutes >= breakStartMin && currentMinutes < breakEndMin) {
-            return false;
+      // Check interval/break if configured AND allowed by plan (Business/Premium)
+      if (allowIntervals) {
+        if (dayConfig.hasBreak && dayConfig.breakStart && dayConfig.breakEnd) {
+          const breakStartMin = parseMinutes(dayConfig.breakStart, -1);
+          const breakEndMin = parseMinutes(dayConfig.breakEnd, -1);
+          if (breakStartMin >= 0 && breakEndMin >= 0 && breakEndMin > breakStartMin) {
+            if (currentMinutes >= breakStartMin && currentMinutes < breakEndMin) {
+              return false;
+            }
+          }
+        }
+        if (Array.isArray(dayConfig.intervals) && dayConfig.intervals.length > 0) {
+          for (const iv of dayConfig.intervals) {
+            const ivStart = parseMinutes(iv.start, -1);
+            const ivEnd = parseMinutes(iv.end, -1);
+            if (ivStart >= 0 && ivEnd >= 0 && ivEnd > ivStart) {
+              if (currentMinutes >= ivStart && currentMinutes < ivEnd) {
+                return false;
+              }
+            }
           }
         }
       }
@@ -116,13 +148,90 @@ export function isWithinOperatingHours(
   }
 }
 
+/**
+ * Persist durable quota counter in Supabase crm_tenant_settings and crm_ai_usage_events
+ * so monthly/trial usage survives Redis restarts.
+ */
+async function persistDurableQuotaUsage(
+  tenantId: string,
+  isTrial: boolean | undefined,
+  monthKey: string,
+  newCount: number,
+  phone: string
+): Promise<void> {
+  const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
+  const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key || !tenantId) return;
+
+  try {
+    const rGet = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      cache: "no-store"
+    });
+    if (rGet.ok) {
+      const rows = (await rGet.json()) as Array<{ business_description: string }>;
+      let parsed: Record<string, any> = {};
+      if (rows[0]?.business_description?.startsWith("{")) {
+        try { parsed = JSON.parse(rows[0].business_description); } catch {}
+      }
+      if (!parsed.usageCounters || typeof parsed.usageCounters !== "object") {
+        parsed.usageCounters = { trialUsed: 0, monthly: {} };
+      }
+      if (isTrial) {
+        parsed.usageCounters.trialUsed = Math.max(Number(parsed.usageCounters.trialUsed || 0), newCount);
+        if (parsed.plan && typeof parsed.plan === "object") {
+          parsed.plan.trialQuotaUsed = parsed.usageCounters.trialUsed;
+        }
+      } else {
+        if (!parsed.usageCounters.monthly || typeof parsed.usageCounters.monthly !== "object") {
+          parsed.usageCounters.monthly = {};
+        }
+        parsed.usageCounters.monthly[monthKey] = Math.max(Number(parsed.usageCounters.monthly[monthKey] || 0), newCount);
+      }
+      parsed.usageCounters.lastUpdatedAt = new Date().toISOString();
+
+      await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+        method: "PATCH",
+        headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ business_description: JSON.stringify(parsed) })
+      });
+    }
+
+    // Record metering event in crm_ai_usage_events (idempotent by request_key per 24h window)
+    const dayBucket = new Date().toISOString().slice(0, 10);
+    await fetch(`${url}/rest/v1/crm_ai_usage_events`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenant_id: tenantId,
+        provider: "omniroute",
+        model: "ai_attendance_window_24h",
+        status: "success",
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        estimated_cost_usd: 0,
+        request_key: `window:${tenantId}:${phone}:${dayBucket}:${newCount}`
+      })
+    }).catch(() => {});
+
+    // If trial reached 100, invalidate effective plan cache immediately so suspension activates
+    if (isTrial && newCount >= 100) {
+      await invalidateEffectivePlanCache(tenantId);
+    }
+  } catch (err) {
+    console.warn("[quota-durable-sync] Warning:", err);
+  }
+}
+
 async function getStoreAiContext(instanceName: string): Promise<{
   context?: StoreAiContext;
   isBlocked?: boolean;
+  blockedReason?: string;
   channelFound?: boolean;
   tenantId?: string;
   quotaLimit?: number;
   isTrial?: boolean;
+  allowAdvancedHours?: boolean;
 }> {
   try {
     if (instanceName === "crmtest") return {};
@@ -135,6 +244,11 @@ async function getStoreAiContext(instanceName: string): Promise<{
     const tenantId = channel?.tenant_id;
     if (!tenantId) return {};
 
+    // Check if channel is paused (e.g. excess channel suspended on downgrade)
+    if (channel?.status === "paused") {
+      return { isBlocked: true, blockedReason: "channel_paused_by_plan", channelFound: true, tenantId };
+    }
+
     // 2. Check tenant status (active vs suspended)
     const rTenant = await fetch(`${url}/rest/v1/crm_tenants?id=eq.${tenantId}&select=name,status`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -142,7 +256,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
     });
     const tenants = (await rTenant.json()) as Array<{ name: string; status: string }>;
     if (tenants?.[0]?.status === "suspended") {
-      return { isBlocked: true, channelFound: true, tenantId };
+      return { isBlocked: true, blockedReason: "store_suspended_or_overdue", channelFound: true, tenantId };
     }
 
     // 3. Fetch agent instructions and preferred route
@@ -152,7 +266,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
     });
     const agents = (await rAgent.json()) as Array<{ label: string; instructions: string; enabled: boolean; provider_route: string }>;
     if (agents?.[0] && !agents[0].enabled) {
-      return { isBlocked: true, channelFound: true, tenantId };
+      return { isBlocked: true, blockedReason: "agent_disabled", channelFound: true, tenantId };
     }
 
     // 4. Fetch store knowledge articles (up to 20 published articles)
@@ -170,20 +284,29 @@ async function getStoreAiContext(instanceName: string): Promise<{
 
     // 5. Fetch effective plan & operating hours
     let operatingHours: StoreAiContext["operatingHours"] = undefined;
-    let quotaLimit = 500;
+    let quotaLimit = 200;
     let primaryModel = agents?.[0]?.provider_route || undefined;
     let fallbackModel = undefined;
 
     const effectivePlan = await getEffectiveTenantPlan(tenantId);
     if (effectivePlan.isSuspended || (effectivePlan.autoBlock && effectivePlan.isOverdue)) {
-      return { isBlocked: true, channelFound: true, tenantId };
+      return { isBlocked: true, blockedReason: "store_suspended_or_overdue", channelFound: true, tenantId };
     }
+
+    // Verify WhatsApp slot limit on incoming instance
+    const slotNumber = extractSlotFromInstanceName(instanceName);
+    if (slotNumber > effectivePlan.maxWhatsappConnections) {
+      return { isBlocked: true, blockedReason: "channel_paused_by_plan", channelFound: true, tenantId };
+    }
+
     quotaLimit = effectivePlan.quotaLimit;
 
-    // Feature gating: check if AI Chat is allowed
     if (!effectivePlan.allowedFeatures.includes("ai_chat")) {
-      return { isBlocked: true, channelFound: true, tenantId };
+      return { isBlocked: true, blockedReason: "feature_locked", channelFound: true, tenantId };
     }
+
+    const allowAdvancedHours = effectivePlan.allowedFeatures.includes("business_hours");
+    const allowBasicHours = allowAdvancedHours || effectivePlan.allowedFeatures.includes("business_hours_basic");
 
     const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -196,10 +319,25 @@ async function getStoreAiContext(instanceName: string): Promise<{
       if (rawDesc.startsWith("{")) {
         try {
           const parsed = JSON.parse(rawDesc);
-          if (parsed.ai_settings?.operatingHours) {
+          if (parsed.ai_settings?.operatingHours && allowBasicHours) {
+            const rawHours = parsed.ai_settings.operatingHours;
+            // If plan only has basic hours (Start), strip advanced intervals/breaks
+            let cleanSchedule = rawHours.schedule;
+            if (!allowAdvancedHours && cleanSchedule && typeof cleanSchedule === "object") {
+              cleanSchedule = { ...cleanSchedule };
+              for (const k of Object.keys(cleanSchedule)) {
+                cleanSchedule[k] = {
+                  ...cleanSchedule[k],
+                  hasBreak: false,
+                  breakStart: undefined,
+                  breakEnd: undefined
+                };
+              }
+            }
             operatingHours = {
               timezone: dbTimezone,
-              ...parsed.ai_settings.operatingHours
+              ...rawHours,
+              schedule: cleanSchedule
             };
           }
           if (parsed.ai_settings?.primaryModel) primaryModel = parsed.ai_settings.primaryModel;
@@ -215,6 +353,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       tenantId,
       quotaLimit,
       isTrial: effectivePlan.isTrial,
+      allowAdvancedHours,
       context: {
         storeName: tenants?.[0]?.name,
         agentLabel: agents?.[0]?.label || "Assistente Virtual",
@@ -241,14 +380,16 @@ export async function processWebhook(
     getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
     fetchConvContext?: typeof fetchConversationContext;
     handoff?: typeof handoffToHuman;
+    nowDate?: Date;
   } = {},
 ): Promise<ProcessResult> {
   const incoming = parseIncoming(payload);
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
 
   // Check store context & permission
-  const { context = {}, isBlocked, tenantId, quotaLimit, isTrial } = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
-  if (isBlocked) return { status: "disabled", reason: "store_suspended_or_overdue" };
+  const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
+  const { context = {}, isBlocked, blockedReason, tenantId, quotaLimit, isTrial, allowAdvancedHours = true } = storeCtx;
+  if (isBlocked) return { status: "disabled", reason: blockedReason || "store_suspended_or_overdue" };
 
   const isAuthorizedInstance = Boolean(incoming.instance);
   if (!isAuthorizedInstance) return { status: "ignored", reason: "wrong_instance" };
@@ -265,7 +406,7 @@ export async function processWebhook(
   try {
     if (ownsClient) await redis.connect();
 
-    // 1. Anti-duplication check: if exact message was already processed
+    // 1. Anti-duplication check: if exact message was already processed (never consumes quota twice)
     if (await redis.exists(doneKey)) return { status: "duplicate" };
 
     // 2. Add message to buffer for this contact
@@ -309,10 +450,14 @@ export async function processWebhook(
       const escalation = detectCustomerEscalation(combinedText);
       const isUrgent = escalation.isEscalation && (escalation.sentiment === "urgent" || escalation.sentiment === "frustrated");
 
-      // 7. Check if conversation is already in human mode or paused
+      // 7. Check if conversation is already in human mode or channel paused
       const convContext = await (deps.fetchConvContext ?? fetchConversationContext)(incoming.instance, incoming.number, 10);
+      if (convContext.channelStatus === "paused") {
+        return { status: "disabled", reason: "channel_paused_by_plan" };
+      }
+
       if (convContext.mode === "human") {
-        // If customer is complaining while in human mode, ensure escalation metadata is updated
+        // Exclusively human attendance: NEVER consumes AI quota!
         if (isUrgent && convContext.conversationId) {
           try {
             await redis.set(
@@ -321,6 +466,7 @@ export async function processWebhook(
                 category: escalation.category,
                 reason: escalation.reason,
                 sentiment: escalation.sentiment,
+                priority: "urgent",
                 text: combinedText.slice(0, 300),
                 timestamp: new Date().toISOString()
               }),
@@ -332,7 +478,7 @@ export async function processWebhook(
         return { status: "disabled", reason: "conversation_in_human_mode" };
       }
 
-      // 8. If in AI mode and escalation/human request was detected -> hand off to human immediately
+      // 8. If in AI mode and escalation/human request was detected BEFORE AI reply -> hand off to human without charging AI quota
       if (escalation.isEscalation) {
         const convId = await (deps.handoff ?? handoffToHuman)(
           incoming.instance,
@@ -349,6 +495,7 @@ export async function processWebhook(
                 category: escalation.category,
                 reason: escalation.reason || "Solicitação de Atendente Humano",
                 sentiment: escalation.sentiment || "neutral",
+                priority: isUrgent ? "urgent" : "high",
                 text: combinedText.slice(0, 300),
                 timestamp: new Date().toISOString()
               }),
@@ -368,8 +515,9 @@ export async function processWebhook(
         return { status: "sent", reason: `escalated_${escalation.category || "human"}` };
       }
 
-      // 9. Operating hours check
-      if (context.operatingHours && !isWithinOperatingHours(context.operatingHours)) {
+      // 9. Operating hours check (respecting basic vs advanced hours)
+      const now = deps.nowDate ?? new Date();
+      if (context.operatingHours && !isWithinOperatingHours(context.operatingHours, now, allowAdvancedHours)) {
         const sendAbsence = context.operatingHours.sendClosedMessage !== false;
         const closedMsg = (context.operatingHours.closedMessage ?? "").trim();
         if (sendAbsence && closedMsg) {
@@ -385,27 +533,36 @@ export async function processWebhook(
         return { status: "disabled", reason: "outside_operating_hours" };
       }
 
-      // 10. Session & Quota check (24h conversation window)
+      // 10. Pre-check Quota & 24h Session Window BEFORE generating AI response
+      const sessionKey = tenantId ? `crm:session:${tenantId}:${incoming.number}` : "";
+      const sessionMsgsKey = tenantId ? `crm:session_msgs:${tenantId}:${incoming.number}` : "";
+      const monthKey = getBrazilMonthKey(now);
+      const quotaKey = tenantId
+        ? (isTrial ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${monthKey}`)
+        : "";
+      const maxLimit = quotaLimit || (isTrial ? 100 : 200);
+
       if (tenantId) {
-        const sessionKey = `crm:session:${tenantId}:${incoming.number}`;
-        const isNewSession = await redis.set(sessionKey, "1", "EX", 86400, "NX");
-        const monthKey = new Date().toISOString().slice(0, 7);
-        const quotaKey = isTrial
-          ? `crm:quota:trial:${tenantId}`
-          : `crm:quota:${tenantId}:${monthKey}`;
-
-        if (isNewSession === "OK") {
-          await redis.incr(quotaKey);
-          await redis.expire(quotaKey, 86400 * 60);
-        }
-
+        const hasActiveWindow = Boolean(await redis.exists(sessionKey));
         const currentUsageRaw = await redis.get(quotaKey);
         const currentUsage = parseInt(currentUsageRaw || "0", 10);
-        const maxLimit = quotaLimit || (isTrial ? 100 : 200);
 
-        if (currentUsage > maxLimit) {
-          console.warn(`[crm-quota-exceeded] Tenant ${tenantId} used ${currentUsage}/${maxLimit}`);
+        if (!hasActiveWindow && currentUsage >= maxLimit) {
+          console.warn(`[crm-quota-exceeded] Tenant ${tenantId} reached limit ${currentUsage}/${maxLimit}`);
           return { status: "disabled", reason: "quota_exceeded" };
+        }
+
+        if (hasActiveWindow) {
+          const msgCountInWindow = parseInt((await redis.get(sessionMsgsKey)) || "0", 10);
+          if (msgCountInWindow >= MAX_AI_REPLIES_PER_24H_WINDOW) {
+            await (deps.handoff ?? handoffToHuman)(
+              incoming.instance,
+              incoming.number,
+              false,
+              "Limite de segurança de respostas automáticas na janela de 24h atingido"
+            );
+            return { status: "disabled", reason: "session_message_cap_handoff" };
+          }
         }
       }
 
@@ -423,8 +580,24 @@ export async function processWebhook(
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       }
 
-      // 13. Send response
+      // 13. Send response via Evolution API
       await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+
+      // 14. Commit 24h Window & Quota ONLY AFTER successful AI reply delivery!
+      // If send() failed above, it threw before reaching here -> 0 quota charged on send failure!
+      if (tenantId) {
+        const isNewSession = await redis.set(sessionKey, "1", "EX", 86400, "NX");
+        if (isNewSession === "OK") {
+          const newCount = await redis.incr(quotaKey);
+          await redis.expire(quotaKey, 86400 * 60);
+          await redis.set(sessionMsgsKey, "1", "EX", 86400);
+          await persistDurableQuotaUsage(tenantId, isTrial, monthKey, newCount, incoming.number);
+        } else {
+          const curMsgs = parseInt((await redis.get(sessionMsgsKey)) || "0", 10);
+          await redis.set(sessionMsgsKey, String(curMsgs + 1), "EX", 86400);
+        }
+      }
+
       await markItemsDone();
       try {
         await persistOutboundInSupabase(incoming.instance, incoming.number, answer);

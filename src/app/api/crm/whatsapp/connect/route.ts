@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
-import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, getRedis } from "@/lib/crm/plans";
+import { extractSlotFromInstanceName, expectedSlotInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,6 @@ function sanitizeQr(val: unknown): string | null {
   if (!val || typeof val !== "string") return null;
   const trimmed = val.trim();
   if (trimmed.startsWith("data:image/")) return trimmed;
-  // If raw base64 string
   if (trimmed.length > 80 && /^[A-Za-z0-9+/=\r\n]+$/.test(trimmed)) {
     return `data:image/png;base64,${trimmed.replace(/[\r\n]/g, "")}`;
   }
@@ -30,10 +30,8 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
     const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
     if (!supaUrl || !supaKey) return;
 
-    // DB check constraint on crm_channels.status only allows: 'disconnected' | 'connected' | 'paused'
     const dbStatus = status === "connected" ? "connected" : "disconnected";
 
-    // First try updating existing record by instance_name
     const res = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
       method: "PATCH",
       headers: {
@@ -47,7 +45,6 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
 
     const updated = res.ok ? await res.json() : [];
     if (Array.isArray(updated) && updated.length === 0 && tenantId) {
-      // Channel doesn't exist yet for this instance; insert it
       await fetch(`${supaUrl}/rest/v1/crm_channels`, {
         method: "POST",
         headers: {
@@ -68,9 +65,8 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
   }
 }
 
-async function configureEvolutionWebhook(url: string, key: string, secret: string, instanceName: string, _reqOrigin?: string, _isVercel?: boolean) {
+async function configureEvolutionWebhook(url: string, key: string, secret: string, instanceName: string) {
   try {
-    // Evolution API runs in Docker alongside the local CRM processor (port 3040) which has access to Omniroute AI (:20128), Redis, and Supabase.
     const webhookBase = process.env.EVOLUTION_WEBHOOK_TARGET_URL || "http://host.docker.internal:3040/api/evolution/webhook";
     const targetWebhookUrl = secret
       ? `${webhookBase.replace(/\/$/, "")}?secret=${encodeURIComponent(secret)}`
@@ -97,7 +93,6 @@ async function configureEvolutionWebhook(url: string, key: string, secret: strin
     });
 
     if (!res.ok) {
-      // Fallback for Evolution API v1 flat webhook schema
       await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: key },
@@ -138,6 +133,46 @@ export async function POST(req: NextRequest) {
       body = await req.json();
     } catch {}
 
+    const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
+    const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
+
+    // 1. Resolve tenantId strictly
+    let tenantId = (
+      (typeof body.tenantId === "string" && body.tenantId) ? body.tenantId :
+      (typeof body.tenant_id === "string" && body.tenant_id) ? body.tenant_id :
+      req.nextUrl.searchParams.get("tenantId") ||
+      req.nextUrl.searchParams.get("tenant") ||
+      undefined
+    );
+
+    if (!tenantId && operator?.id && supaUrl && supaKey) {
+      try {
+        const rMem = await fetch(`${supaUrl}/rest/v1/crm_tenant_memberships?user_id=eq.${encodeURIComponent(operator.id)}&select=tenant_id&limit=1`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000)
+        });
+        if (rMem.ok) {
+          const mems = await rMem.json();
+          if (Array.isArray(mems) && mems[0]?.tenant_id) {
+            tenantId = mems[0].tenant_id;
+          }
+        }
+      } catch {}
+    }
+
+    // Fail-closed if an operator tries to connect without a resolved tenantId
+    if (!tenantId && !masterAuth.authorized) {
+      return NextResponse.json({
+        error: "tenant_verification_failed",
+        message: "Não foi possível confirmar o estabelecimento vinculado à sua sessão. Faça login novamente."
+      }, { status: 403 });
+    }
+
+    const requestedSlot = typeof body.slot === "number" && body.slot >= 1 && body.slot <= 5
+      ? (body.slot as 1 | 2 | 3 | 4 | 5)
+      : undefined;
+
     const rawName = (
       body.instance ||
       body.instanceName ||
@@ -148,75 +183,96 @@ export async function POST(req: NextRequest) {
       req.nextUrl.searchParams.get("instanceName") ||
       "novaesweb-ia-teste"
     );
-    const instanceName = String(rawName).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32) || "novaesweb_crm";
+    let instanceName = String(rawName).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32) || "novaesweb_crm";
 
-    // Detect tenantId from body or operator
-    let tenantId = (
-      (typeof body.tenantId === "string" && body.tenantId) ? body.tenantId :
-      (typeof body.tenant_id === "string" && body.tenant_id) ? body.tenant_id :
-      req.nextUrl.searchParams.get("tenantId") ||
-      req.nextUrl.searchParams.get("tenant") ||
-      undefined
-    );
-
-    if (!tenantId && operator?.id) {
-      const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
-      const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
-      if (supaUrl && supaKey) {
-        try {
-          const rMem = await fetch(`${supaUrl}/rest/v1/crm_tenant_memberships?user_id=eq.${encodeURIComponent(operator.id)}&select=tenant_id&limit=1`, {
-            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
-            cache: "no-store",
-            signal: AbortSignal.timeout(3000)
-          });
-          if (rMem.ok) {
-            const mems = await rMem.json();
-            if (Array.isArray(mems) && mems[0]?.tenant_id) {
-              tenantId = mems[0].tenant_id;
-            }
-          }
-        } catch {}
-      }
+    if (requestedSlot && requestedSlot > 1 && !/_\d$/.test(instanceName)) {
+      instanceName = `${instanceName.slice(0, 30)}_${requestedSlot}`;
     }
 
-    // Validar limite de conexões WhatsApp conforme plano contratado
+    const slotNumber = requestedSlot || extractSlotFromInstanceName(instanceName);
+
+    // 2. FAIL-CLOSED verification of plan limits, slot permissions, and concurrent attempts
     if (tenantId) {
-      try {
-        const effectivePlan = await getEffectiveTenantPlan(tenantId);
-        const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
-        const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
-        if (supaUrl && supaKey) {
-          const rCh = await fetch(`${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${encodeURIComponent(tenantId)}&select=instance_name,status`, {
-            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
-            cache: "no-store",
-            signal: AbortSignal.timeout(4000)
-          });
-          if (rCh.ok) {
-            const channels = (await rCh.json()) as Array<{ instance_name: string; status: string }>;
-            const activeConnections = channels.filter(c => c.status === "connected" || c.status === "open");
-            const isExistingInstance = channels.some(c => c.instance_name === instanceName);
-            if (!isExistingInstance && activeConnections.length >= effectivePlan.maxWhatsappConnections) {
-              return NextResponse.json({
-                error: "whatsapp_limit_reached",
-                message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxWhatsappConnections} conexão(ões) WhatsApp simultânea(s). Faça upgrade para conectar mais números.`
-              }, { status: 403 });
-            }
-          }
-        }
-      } catch (planErr) {
-        console.warn("[WhatsApp Connect] Erro não impeditivo ao validar franquia de conexões:", planErr);
+      if (!supaUrl || !supaKey) {
+        return NextResponse.json({
+          error: "plan_verification_unavailable",
+          message: "Serviço de validação de assinatura indisponível. Conexão bloqueada por segurança."
+        }, { status: 503 });
       }
+
+      let effectivePlan;
+      let existingChannels: Array<{ instance_name: string; status: string }> = [];
+      try {
+        effectivePlan = await getEffectiveTenantPlan(tenantId);
+        const rCh = await fetch(`${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${encodeURIComponent(tenantId)}&select=instance_name,status`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(4000)
+        });
+        if (!rCh.ok) {
+          throw new Error(`Channel lookup failed with HTTP ${rCh.status}`);
+        }
+        existingChannels = (await rCh.json()) as Array<{ instance_name: string; status: string }>;
+      } catch (verifyErr) {
+        // FAIL-CLOSED: If we cannot verify the tenant's plan or channels, deny connection creation!
+        console.error("[WhatsApp Connect] Fail-closed on limit check:", verifyErr);
+        return NextResponse.json({
+          error: "limit_verification_failed",
+          message: "Não foi possível confirmar a permissão do seu plano no momento. Por segurança, a conexão foi negada até que a validação seja restabelecida."
+        }, { status: 503 });
+      }
+
+      if (effectivePlan.isSuspended) {
+        return NextResponse.json({
+          error: "account_suspended",
+          message: effectivePlan.publicSuspensionReason || "Sua conta está suspensa ou o período de avaliação terminou. Regularize seu plano para conectar o WhatsApp."
+        }, { status: 403 });
+      }
+
+      // Check slot number against maxWhatsappConnections (1 for Trial/Start, 3 for Business, 5 for Premium)
+      if (slotNumber > effectivePlan.maxWhatsappConnections) {
+        const requiredPlan = slotNumber <= 3 ? "CRM Business" : "CRM Premium";
+        return NextResponse.json({
+          error: "whatsapp_slot_locked",
+          slot: slotNumber,
+          maxAllowed: effectivePlan.maxWhatsappConnections,
+          requiredPlan,
+          message: `O Espaço WhatsApp #${slotNumber} está bloqueado no seu plano ${effectivePlan.planName} (limite: ${effectivePlan.maxWhatsappConnections} de 5). Solicite upgrade para o ${requiredPlan} para liberar este espaço.`
+        }, { status: 403 });
+      }
+
+      // Also verify total non-paused channels + concurrent connection attempts so user cannot bypass slot naming
+      const isAlreadyRegisteredForTenant = existingChannels.some(c => c.instance_name === instanceName);
+      const occupiedChannels = existingChannels.filter(
+        c => c.status !== "paused" && c.instance_name !== instanceName
+      );
+
+      if (!isAlreadyRegisteredForTenant && occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
+        return NextResponse.json({
+          error: "whatsapp_limit_reached",
+          maxAllowed: effectivePlan.maxWhatsappConnections,
+          message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxWhatsappConnections} conexão(ões) de WhatsApp (de 5 espaços). Solicite upgrade para liberar mais números.`
+        }, { status: 403 });
+      }
+
+      // Control simultaneous connection attempts via Redis lock
+      try {
+        const redis = getRedis();
+        if (redis.status !== "ready" && redis.status !== "connecting") await redis.connect();
+        const lockKey = `crm:wa:connecting_lock:${tenantId}:${slotNumber}`;
+        await redis.set(lockKey, instanceName, "EX", 60);
+        redis.disconnect();
+      } catch {}
     }
 
     const { url, key, secret } = getEvolutionConfig();
 
-    // Check if running on Vercel with local-only host
     const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
     const isLocalUrl = url.includes("host.docker.internal") || url.includes("localhost") || url.includes("127.0.0.1");
     if (isVercel && isLocalUrl) {
       return NextResponse.json({
         error: "evolution_cloud_unreachable",
-        message: `A Evolution API está configurada com URL local (${url}). Na Vercel (nuvem), configure a variável de ambiente EVOLUTION_API_URL com a URL pública da sua Evolution API (ex: via Cloudflare Tunnel, Ngrok ou VPS).`
+        message: `A Evolution API está configurada com URL local (${url}). Configure EVOLUTION_API_URL com a URL pública da sua Evolution API.`
       }, { status: 503 });
     }
 
@@ -227,7 +283,7 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    // 1. Verificar se a instância já existe e está conectada
+    // 3. Check if instance already exists and is connected
     let state = "close";
     let qrcodeBase64: string | null = null;
     let evolutionOnline = true;
@@ -251,22 +307,23 @@ export async function POST(req: NextRequest) {
     if (!evolutionOnline) {
       return NextResponse.json({
         error: "evolution_unavailable",
-        message: `Servidor de WhatsApp indisponível no momento (${url}). Verifique se o container da Evolution API está ativo e acessível.`
+        message: `Servidor de WhatsApp indisponível no momento (${url}). Verifique se o container da Evolution API está ativo.`
       }, { status: 503 });
     }
 
     if (state === "open") {
-      await configureEvolutionWebhook(url, key, secret, instanceName, req.nextUrl.origin, isVercel);
+      await configureEvolutionWebhook(url, key, secret, instanceName);
       await syncChannelStatus(instanceName, tenantId, "connected");
       return NextResponse.json({
+        slot: slotNumber,
         instanceName,
         state: "open",
         connected: true,
-        message: "WhatsApp já está conectado e pronto para atendimento!"
+        message: `WhatsApp #${slotNumber} já está conectado e pronto para atendimento!`
       });
     }
 
-    // 2. Se a instância existe mas está desconectada, pedir novo QR Code
+    // 4. Request QR Code for existing disconnected instance
     try {
       const connectRes = await fetch(`${url}/instance/connect/${encodeURIComponent(instanceName)}`, {
         headers: { apikey: key },
@@ -284,7 +341,7 @@ export async function POST(req: NextRequest) {
       }
     } catch {}
 
-    // 3. Se ainda não tem QR Code, criar nova instância
+    // 5. Create new instance if QR Code not yet generated
     if (!qrcodeBase64) {
       try {
         const createRes = await fetch(`${url}/instance/create`, {
@@ -308,7 +365,6 @@ export async function POST(req: NextRequest) {
             null
           );
         } else {
-          // If instance already existed on Evolution, retry connect one more time
           const connectRetry = await fetch(`${url}/instance/connect/${encodeURIComponent(instanceName)}`, {
             headers: { apikey: key },
             cache: "no-store",
@@ -329,18 +385,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Configurar Webhook automaticamente para esta instância
-    await configureEvolutionWebhook(url, key, secret, instanceName, req.nextUrl.origin, isVercel);
-
-    // 5. Sincronizar canal no Supabase vinculando à empresa (status 'disconnected' até confirmar leitura do QR)
+    // 6. Auto-configure webhook and register channel in Supabase
+    await configureEvolutionWebhook(url, key, secret, instanceName);
     await syncChannelStatus(instanceName, tenantId, "disconnected");
 
     return NextResponse.json({
+      slot: slotNumber,
       instanceName,
       state: "connecting",
       connected: false,
       qrcode: qrcodeBase64,
-      message: qrcodeBase64 ? "QR Code gerado com sucesso! Aponte a câmera do WhatsApp em Aparelhos Conectados." : "Instância iniciada. Aguarde alguns segundos para carregar o QR Code."
+      message: qrcodeBase64
+        ? `QR Code do WhatsApp #${slotNumber} gerado com sucesso! Aponte a câmera do WhatsApp em Aparelhos Conectados.`
+        : `Instância #${slotNumber} iniciada. Aguarde alguns segundos para carregar o QR Code.`
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Erro desconhecido ao conectar WhatsApp.";
@@ -386,7 +443,6 @@ export async function DELETE(req: NextRequest) {
 
     const instanceName = instance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
 
-    // 1. Logout da sessão no Evolution API
     try {
       await fetch(`${url}/instance/logout/${encodeURIComponent(instanceName)}`, {
         method: "DELETE",
@@ -396,7 +452,6 @@ export async function DELETE(req: NextRequest) {
       });
     } catch {}
 
-    // 2. Apagar a instância no Evolution API
     let deleted = false;
     try {
       const delRes = await fetch(`${url}/instance/delete/${encodeURIComponent(instanceName)}`, {
@@ -408,7 +463,6 @@ export async function DELETE(req: NextRequest) {
       deleted = delRes.ok;
     } catch {}
 
-    // 3. Atualizar canal no Supabase
     const tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
     await syncChannelStatus(instanceName, tenantId, "disconnected");
 
@@ -416,7 +470,7 @@ export async function DELETE(req: NextRequest) {
       success: true,
       instanceName,
       deleted,
-      message: "Instância desconectada e apagada com sucesso! O WhatsApp foi desvinculado."
+      message: "Instância desconectada com sucesso! Os contatos e históricos foram preservados."
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Erro desconhecido ao desconectar.";

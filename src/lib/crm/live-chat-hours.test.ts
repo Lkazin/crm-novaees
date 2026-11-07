@@ -158,6 +158,7 @@ test("6.1.c Comportamento fora do horário: não envia mensagem automática se s
       mode: "ai",
       history: [],
       conversationId: "00000000-0000-0000-0000-000000000002",
+      isFirstInteraction: false,
     }),
     send: async (_num, txt) => {
       sentTexts.push(txt);
@@ -328,6 +329,7 @@ test("6.3.a Solicitação de atendimento humano ('Quero falar com uma pessoa.') 
       mode: "ai",
       history: [],
       conversationId: "00000000-0000-0000-0000-000000000099",
+      isFirstInteraction: false,
     }),
     handoff: async () => {
       handoffCalled = true;
@@ -377,6 +379,7 @@ test("6.3.b Pausa da IA após transferência: novas mensagens do cliente não ge
       mode: "human", // Conversa em 'Aguardando atendente' ou 'Em atendimento humano'
       history: [],
       conversationId: "00000000-0000-0000-0000-000000000099",
+      isFirstInteraction: false,
     }),
     generate: async () => {
       aiCalled = true;

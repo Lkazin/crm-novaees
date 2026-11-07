@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Redis from "ioredis";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { buildTenantWhatsappSlots, extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,20 +28,73 @@ export async function GET(req: NextRequest) {
     const key = process.env.EVOLUTION_API_KEY ?? "";
     const rawInstance = req.nextUrl.searchParams.get("instance") || req.nextUrl.searchParams.get("instanceName") || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
     const instanceName = rawInstance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
-    const tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
+    let tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
+    const includeAllSlots = req.nextUrl.searchParams.get("allSlots") === "1";
+
+    const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
+    const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
+
+    if (!tenantId && operator?.id && supaUrl && supaKey) {
+      try {
+        const rMem = await fetch(`${supaUrl}/rest/v1/crm_tenant_memberships?user_id=eq.${encodeURIComponent(operator.id)}&select=tenant_id&limit=1`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000)
+        });
+        if (rMem.ok) {
+          const mems = await rMem.json();
+          if (Array.isArray(mems) && mems[0]?.tenant_id) {
+            tenantId = mems[0].tenant_id;
+          }
+        }
+      } catch {}
+    }
+
+    let whatsappSlots = undefined;
+    let isChannelPausedByDowngrade = false;
+
+    if (tenantId && supaUrl && supaKey) {
+      try {
+        const [effectivePlan, rTenant, rCh] = await Promise.all([
+          getEffectiveTenantPlan(tenantId),
+          fetch(`${supaUrl}/rest/v1/crm_tenants?id=eq.${encodeURIComponent(tenantId)}&select=name&limit=1`, {
+            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+            cache: "no-store"
+          }),
+          fetch(`${supaUrl}/rest/v1/crm_channels?tenant_id=eq.${encodeURIComponent(tenantId)}&select=id,instance_name,status&order=created_at.asc`, {
+            headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+            cache: "no-store"
+          })
+        ]);
+        const tData = rTenant.ok ? await rTenant.json() : [];
+        const tenantName = tData?.[0]?.name || "Empresa";
+        const channels = rCh.ok ? await rCh.json() : [];
+        const slots = buildTenantWhatsappSlots(tenantName, channels, effectivePlan);
+        if (includeAllSlots) {
+          whatsappSlots = slots;
+        }
+        const currentSlotNum = extractSlotFromInstanceName(instanceName);
+        const currentSlotObj = slots.find(s => s.slot === currentSlotNum);
+        if (currentSlotObj?.pausedByDowngrade) {
+          isChannelPausedByDowngrade = true;
+        }
+      } catch {}
+    }
 
     if (!key) {
       return NextResponse.json({
         instanceName,
-        state: "disconnected",
+        slot: extractSlotFromInstanceName(instanceName),
+        state: isChannelPausedByDowngrade ? "paused" : "disconnected",
         connected: false,
+        pausedByDowngrade: isChannelPausedByDowngrade,
         qrScanned: false,
         phoneNumber: null,
+        whatsappSlots,
         message: "Evolution API Key não configurada"
       }, { status: 200 });
     }
 
-    // Check Redis for real-time webhook events (CONNECTION_UPDATE / QRCODE_UPDATED)
     let qrScannedFromWebhook = false;
     let qrcodeFromWebhook: string | null = null;
     const redisUrl = process.env.CRM_REDIS_URL;
@@ -69,22 +124,24 @@ export async function GET(req: NextRequest) {
       if (!response.ok) {
         return NextResponse.json({
           instanceName,
-          state: "disconnected",
+          slot: extractSlotFromInstanceName(instanceName),
+          state: isChannelPausedByDowngrade ? "paused" : "disconnected",
           connected: false,
+          pausedByDowngrade: isChannelPausedByDowngrade,
           qrScanned: false,
-          phoneNumber: null
+          phoneNumber: null,
+          whatsappSlots
         }, { status: 200 });
       }
 
       const data = await response.json();
       const state = data?.instance?.state ?? data?.state ?? "close";
-      const isConnected = state === "open";
+      const isConnected = state === "open" && !isChannelPausedByDowngrade;
 
-      // Fetch instance details (connected phone number & profile name) if connected or connecting
       let phoneNumber: string | null = extractPhoneFromJid(data?.instance?.owner ?? data?.instance?.wuid ?? data?.ownerJid);
       let profileName: string | null = data?.instance?.profileName ?? null;
 
-      if (isConnected || state === "connecting") {
+      if (state === "open" || state === "connecting") {
         try {
           const infoRes = await fetch(`${url}/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, {
             headers: { apikey: key },
@@ -107,10 +164,8 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
 
-      // Sync channel status in Supabase
-      const supaUrl = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "");
-      const supaKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim();
-      if (supaUrl && supaKey && (isConnected || state === "close")) {
+      // Sync channel status in Supabase ONLY if not paused by downgrade
+      if (supaUrl && supaKey && !isChannelPausedByDowngrade && (isConnected || state === "close")) {
         const dbStatus = isConnected ? "connected" : "disconnected";
         try {
           const patchRes = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}`, {
@@ -143,7 +198,6 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
 
-      // Auto-heal webhook on Evolution API if connected and webhook is missing
       if (isConnected) {
         try {
           const whCheck = await fetch(`${url}/webhook/find/${encodeURIComponent(instanceName)}`, {
@@ -180,20 +234,26 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json({
         instanceName,
-        state,
+        slot: extractSlotFromInstanceName(instanceName),
+        state: isChannelPausedByDowngrade ? "paused" : state,
         connected: isConnected,
+        pausedByDowngrade: isChannelPausedByDowngrade,
         qrScanned: isConnected || qrScannedFromWebhook,
         phoneNumber,
         profileName,
-        qrcode: isConnected ? null : qrcodeFromWebhook
+        qrcode: isConnected ? null : qrcodeFromWebhook,
+        whatsappSlots
       });
     } catch {
       return NextResponse.json({
         instanceName,
-        state: "disconnected",
+        slot: extractSlotFromInstanceName(instanceName),
+        state: isChannelPausedByDowngrade ? "paused" : "disconnected",
         connected: false,
+        pausedByDowngrade: isChannelPausedByDowngrade,
         qrScanned: false,
         phoneNumber: null,
+        whatsappSlots,
         message: "Evolution API inacessível no momento"
       }, { status: 200 });
     }

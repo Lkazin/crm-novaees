@@ -13,12 +13,18 @@ import {
 type Client = {
   id: string;
   name: string;
+  slug?: string;
   status: string;
   email: string;
   userId: string | null;
   created_at: string;
   instanceName?: string | null;
   whatsappStatus?: string;
+  connectedWhatsappCount?: number;
+  maxWhatsappConnections?: number;
+  operatorsCount?: number;
+  maxOperators?: number;
+  isMasterOwnTenant?: boolean;
   plan: {
     planId?: string;
     name: string;
@@ -29,8 +35,12 @@ type Client = {
     isOverdue: boolean;
     quotaLimit?: number;
     quotaUsed?: number;
+    maxOperators?: number;
+    maxWhatsappConnections?: number;
     customQuotaOverride?: number | null;
     exceptionReason?: string | null;
+    adminSuspensionReason?: string | null;
+    adminInternalNote?: string | null;
     isTrial?: boolean;
     trialDaysLeft?: number;
     trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted" | string;
@@ -50,16 +60,43 @@ type Client = {
   };
 };
 
+type UpgradeRequestItem = {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  tenantSlug?: string;
+  currentPlanId: string;
+  currentPlanName: string;
+  requestedPlanId: string;
+  requestedPlanName: string;
+  reason?: string;
+  status: "pending" | "approved" | "rejected";
+  requestedAt: string;
+  resolvedAt?: string | null;
+};
+
 type FeatureId =
   | "ai_chat"
+  | "knowledge_base"
+  | "setup_wizard"
   | "human_handoff"
+  | "simulator"
+  | "contacts_history"
+  | "basic_hours"
+  | "quick_replies"
+  | "basic_indicators"
   | "business_hours"
   | "commercial_tags"
   | "handoff_summary"
   | "sound_notifications"
-  | "simulator"
   | "model_fallback"
-  | "advanced_reports";
+  | "attendance_priority"
+  | "satisfaction_survey"
+  | "commercial_indicators"
+  | "advanced_reports"
+  | "satisfaction_analytics"
+  | "operator_indicators"
+  | "advanced_commercial_filters";
 
 type PlanItem = {
   id: string;
@@ -93,15 +130,27 @@ type AuditEntry = {
 };
 
 const TECHNICAL_FEATURES_LIST: Array<{ id: FeatureId; name: string; category: string; description: string; isCore?: boolean }> = [
-  { id: "ai_chat", name: "IA de Atendimento 24h", category: "IA", description: "Respostas inteligentes automatizadas com IA no WhatsApp." },
-  { id: "human_handoff", name: "Atendimento Humano Básico", category: "Atendimento", description: "Operador humano assume o chat e pausa a IA naquela conversa.", isCore: true },
-  { id: "business_hours", name: "Horários de Atendimento", category: "Gestão", description: "Configuração de expediente e mensagem automática fora do horário." },
-  { id: "commercial_tags", name: "Etiquetas Comerciais & Funil", category: "Atendimento", description: "Organização por etapas: Interessado, Orçamento, Venda, Perdido." },
-  { id: "handoff_summary", name: "Resumo Inteligente de Transferência", category: "IA", description: "Síntese automática em 3 linhas gerada para o atendente humano." },
-  { id: "sound_notifications", name: "Notificações Sonoras & Visuais", category: "Atendimento", description: "Alerta em áudio real e contagem no sino quando cliente solicita humano." },
-  { id: "simulator", name: "Simulador de Testes no Painel", category: "IA", description: "Ambiente para o lojista simular diálogos antes de ativar o WhatsApp." },
-  { id: "model_fallback", name: "IA Principal + Modelo Reserva", category: "Segurança", description: "Fallback automático de rota de IA garantindo zero indisponibilidade." },
-  { id: "advanced_reports", name: "Relatórios Comerciais Avançados", category: "Gestão", description: "Métricas consolidadas de conversão, tempos de resposta e uso." }
+  { id: "ai_chat", name: "IA Personalizada 24h", category: "IA", description: "Respostas inteligentes automatizadas com IA no WhatsApp.", isCore: true },
+  { id: "knowledge_base", name: "Base de Conhecimento", category: "IA", description: "Treinamento com preços, produtos, serviços e FAQ da empresa.", isCore: true },
+  { id: "setup_wizard", name: "Assistente de Configuração", category: "IA", description: "Configuração guiada de perfil comercial e comportamento da IA.", isCore: true },
+  { id: "human_handoff", name: "Atendimento Humano & Transferência", category: "Atendimento", description: "Operador humano assume o chat e pausa a IA naquela conversa.", isCore: true },
+  { id: "simulator", name: "Simulador da IA", category: "IA", description: "Ambiente para o lojista simular diálogos antes de ativar o WhatsApp.", isCore: true },
+  { id: "contacts_history", name: "Contatos e Histórico", category: "Atendimento", description: "Base de clientes atendidos e histórico completo.", isCore: true },
+  { id: "basic_hours", name: "Horários Básicos", category: "Gestão", description: "Configuração simples de abertura e fechamento.", isCore: true },
+  { id: "quick_replies", name: "Respostas Rápidas", category: "Atendimento", description: "Atalhos de mensagens prontas para agilizar o operador.", isCore: true },
+  { id: "basic_indicators", name: "Indicadores Básicos", category: "Gestão", description: "Visão essencial do volume de atendimentos e consumo.", isCore: true },
+  { id: "business_hours", name: "Horários Avançados e Intervalos", category: "Gestão", description: "Configuração por dia da semana, intervalos de almoço e mensagem fora do expediente." },
+  { id: "commercial_tags", name: "Etiquetas Comerciais", category: "Atendimento", description: "Classificação por etapas: Novo Lead, Orçamento, Vendido, Perdido." },
+  { id: "handoff_summary", name: "Resumos Inteligentes de Atendimento", category: "IA", description: "Síntese automática em 3 linhas gerada para o atendente humano." },
+  { id: "sound_notifications", name: "Alertas Sonoros", category: "Atendimento", description: "Alerta em áudio quando cliente solicita atendente humano." },
+  { id: "model_fallback", name: "Modelo Reserva de IA", category: "Segurança", description: "Fallback automático de rota de IA garantindo zero indisponibilidade." },
+  { id: "attendance_priority", name: "Prioridade dos Atendimentos", category: "Atendimento", description: "Classificação e ordenação de fila por urgência (Baixa, Normal, Alta, Urgente)." },
+  { id: "satisfaction_survey", name: "Pesquisa de Satisfação", category: "Atendimento", description: "Coleta de nota 1 a 5 e comentário ao encerrar o atendimento." },
+  { id: "commercial_indicators", name: "Indicadores Comerciais", category: "Gestão", description: "Métricas de funil comercial, etiquetas e conversão." },
+  { id: "advanced_reports", name: "Relatórios Avançados", category: "Gestão", description: "Relatórios gerenciais detalhados de operação e tendências." },
+  { id: "satisfaction_analytics", name: "Análise de Satisfação (CSAT)", category: "Gestão", description: "Distribuição de notas, média CSAT e comentários." },
+  { id: "operator_indicators", name: "Indicadores por Atendente", category: "Gestão", description: "Produtividade individual e volume por operador da equipe." },
+  { id: "advanced_commercial_filters", name: "Filtros e Análises Comerciais Avançadas", category: "Gestão", description: "Segmentação avançada por período, etiqueta, prioridade e atendente." }
 ];
 
 const DEFAULT_PLANS: PlanItem[] = [
@@ -114,18 +163,29 @@ const DEFAULT_PLANS: PlanItem[] = [
     maxWhatsAppConnections: 1,
     isActive: true,
     description: "Ideal para autônomos, pequenos comércios e prestadores de serviços locais.",
-    allowedFeatures: ["ai_chat", "human_handoff", "simulator"],
+    allowedFeatures: [
+      "ai_chat",
+      "knowledge_base",
+      "setup_wizard",
+      "human_handoff",
+      "simulator",
+      "contacts_history",
+      "basic_hours",
+      "quick_replies",
+      "basic_indicators"
+    ],
     features: [
       "200 atendimentos com IA por mês",
-      "1 número WhatsApp",
+      "1 número WhatsApp (1/5 espaços)",
       "1 operador humano",
-      "NovaesWeb IA para responder dúvidas",
-      "Base de conhecimento personalizada",
-      "Central de conversas ao vivo",
-      "Atendimento humano com transbordo",
-      "Simulador de atendimento com IA",
-      "Notificações visuais no painel",
-      "Histórico e indicadores básicos"
+      "IA personalizada + Base de conhecimento",
+      "Assistente de configuração",
+      "Atendimento humano + Transferência IA → humano",
+      "Simulador da IA",
+      "Contatos e histórico",
+      "Horários básicos",
+      "Respostas rápidas",
+      "Indicadores básicos"
     ]
   },
   {
@@ -134,33 +194,42 @@ const DEFAULT_PLANS: PlanItem[] = [
     price: "99,90",
     quotaLimit: 600,
     maxOperators: 3,
-    maxWhatsAppConnections: 1,
-    isPopular: true, // MAIS RECOMENDADO
+    maxWhatsAppConnections: 3,
+    isPopular: true,
     isActive: true,
     description: "Para empresas e lojas em crescimento que buscam escala e atendimento profissional.",
     allowedFeatures: [
       "ai_chat",
+      "knowledge_base",
+      "setup_wizard",
       "human_handoff",
       "simulator",
+      "contacts_history",
+      "basic_hours",
+      "quick_replies",
+      "basic_indicators",
       "business_hours",
       "commercial_tags",
       "handoff_summary",
       "sound_notifications",
-      "model_fallback"
+      "model_fallback",
+      "attendance_priority",
+      "satisfaction_survey",
+      "commercial_indicators"
     ],
     features: [
       "600 atendimentos com IA por mês",
-      "Tudo do Plano Start incluído",
-      "1 número WhatsApp",
+      "Até 3 números WhatsApp (3/5 espaços)",
       "Até 3 operadores humanos",
-      "Configuração de horários e folgas",
-      "Funil comercial completo",
+      "Tudo do Plano Start incluído",
+      "Horários avançados e intervalos",
       "Etiquetas comerciais",
-      "Notificações visuais e sonoras",
-      "Resumo inteligente de 3 linhas",
+      "Resumos inteligentes de atendimento",
+      "Alertas sonoros",
       "Modelo reserva de IA (zero quedas)",
-      "Indicadores de atendimento",
-      "Suporte prioritário"
+      "Prioridade dos atendimentos",
+      "Pesquisa de satisfação",
+      "Indicadores comerciais"
     ]
   },
   {
@@ -169,37 +238,48 @@ const DEFAULT_PLANS: PlanItem[] = [
     price: "159,90",
     quotaLimit: 1500,
     maxOperators: 5,
-    maxWhatsAppConnections: 2,
+    maxWhatsAppConnections: 5,
     isActive: true,
     description: "Para operações avançadas, redes de lojas, imobiliárias e clínicas de alta demanda.",
     allowedFeatures: [
       "ai_chat",
+      "knowledge_base",
+      "setup_wizard",
       "human_handoff",
       "simulator",
+      "contacts_history",
+      "basic_hours",
+      "quick_replies",
+      "basic_indicators",
       "business_hours",
       "commercial_tags",
       "handoff_summary",
       "sound_notifications",
       "model_fallback",
-      "advanced_reports"
+      "attendance_priority",
+      "satisfaction_survey",
+      "commercial_indicators",
+      "advanced_reports",
+      "satisfaction_analytics",
+      "operator_indicators",
+      "advanced_commercial_filters"
     ],
     features: [
       "1.500 atendimentos com IA por mês",
-      "Tudo do Plano Business incluído",
-      "Até 2 números WhatsApp",
+      "Até 5 números WhatsApp (5/5 espaços)",
       "Até 5 operadores humanos",
-      "Central de atendimento para múltiplos números",
+      "Tudo do Plano Business incluído",
       "Relatórios avançados",
-      "Métricas do funil comercial",
-      "Indicadores de desempenho dos operadores",
-      "Filtros e análises avançadas",
-      "Suporte prioritário Premium"
+      "Análise de satisfação",
+      "Indicadores por atendente",
+      "Filtros e análises comerciais avançadas"
     ]
   }
 ];
 
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
+  const [upgradeRequests, setUpgradeRequests] = useState<UpgradeRequestItem[]>([]);
   const [plans, setPlans] = useState<PlanItem[]>(DEFAULT_PLANS);
   const [clientCountsMap, setClientCountsMap] = useState<Record<string, number>>({});
   const [enrolledStoresMap, setEnrolledStoresMap] = useState<Record<string, Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>>>({});
@@ -221,13 +301,13 @@ export default function AdminCRM() {
   const [rememberMe, setRememberMe] = useState(true);
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
 
-  // Create client form state
+  // Create client form state (initialized with official CRM Start values)
   const [storeName, setStoreName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [planName, setPlanName] = useState("CRM Start");
-  const [planPrice, setPlanPrice] = useState("149,00");
-  const [quotaLimit, setQuotaLimit] = useState(500);
+  const [planPrice, setPlanPrice] = useState("59,90");
+  const [quotaLimit, setQuotaLimit] = useState(200);
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -237,6 +317,14 @@ export default function AdminCRM() {
   const [autoBlock, setAutoBlock] = useState(true);
   const [creating, setCreating] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+
+  // Administrative Suspension Modal state (with public reason + internal note)
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [clientToBlock, setClientToBlock] = useState<Client | null>(null);
+  const [blockPublicReason, setBlockPublicReason] = useState("Conta suspensa administrativamente. Entre em contato com o suporte financeiro NovaesWeb.");
+  const [blockInternalNote, setBlockInternalNote] = useState("");
+  const [togglingBlock, setTogglingBlock] = useState(false);
+  const [resolvingUpgradeId, setResolvingUpgradeId] = useState<string | null>(null);
 
   // Change Plan Modal
   const [changePlanModalOpen, setChangePlanModalOpen] = useState(false);
@@ -316,6 +404,7 @@ export default function AdminCRM() {
       setAuthenticated(true);
       const data = await res.json();
       setClients(data.clients || []);
+      setUpgradeRequests(Array.isArray(data.upgradeRequests) ? data.upgradeRequests : []);
     } catch {
       setError("Falha de comunicação com o servidor.");
     } finally {
@@ -772,29 +861,73 @@ export default function AdminCRM() {
     }
   };
 
-  const handleToggleBlock = async (client: Client) => {
-    const isSuspended = client.status === "suspended";
-    const confirmMsg = isSuspended
-      ? `Deseja DESBLOQUEAR o painel da loja ${client.name}?`
-      : `Deseja BLOQUEAR o painel da loja ${client.name}? O cliente não conseguirá acessar nem a IA responderá.`;
-    if (!window.confirm(confirmMsg)) return;
+  const handleToggleBlock = (client: Client) => {
+    setClientToBlock(client);
+    setBlockPublicReason(
+      client.plan.adminSuspensionReason ||
+        "Conta suspensa administrativamente. Entre em contato com o suporte financeiro NovaesWeb."
+    );
+    setBlockInternalNote(client.plan.adminInternalNote || "");
+    setBlockModalOpen(true);
+  };
 
+  const handleConfirmToggleBlock = async () => {
+    if (!clientToBlock) return;
+    const isSuspended = clientToBlock.status === "suspended";
+    setTogglingBlock(true);
+    setError("");
     try {
       const res = await fetch("/api/crm/admin/clients", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tenantId: client.id,
+          tenantId: clientToBlock.id,
           action: "toggle_block",
-          suspend: !isSuspended
+          suspend: !isSuspended,
+          publicReason: !isSuspended ? blockPublicReason.trim() : undefined,
+          internalNote: blockInternalNote.trim() || undefined
         })
       });
       if (!res.ok) throw new Error();
-      setNotice(`Status da loja ${client.name} atualizado para ${isSuspended ? "Ativo (Liberado)" : "Bloqueado"}.`);
+      setNotice(`Status da loja ${clientToBlock.name} atualizado para ${isSuspended ? "Ativo (Liberado)" : "Suspenso Administrativamente"}.`);
+      setBlockModalOpen(false);
+      setClientToBlock(null);
       await fetchClients();
     } catch {
       setError("Falha ao alterar status de bloqueio.");
+    } finally {
+      setTogglingBlock(false);
+    }
+  };
+
+  const handleResolveUpgradeRequest = async (reqItem: UpgradeRequestItem, decision: "approved" | "rejected") => {
+    setResolvingUpgradeId(reqItem.id);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/admin/clients", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: reqItem.tenantId,
+          action: "resolve_upgrade_request",
+          requestId: reqItem.id,
+          decision
+        })
+      });
+      if (!res.ok) throw new Error();
+      setNotice(
+        decision === "approved"
+          ? `Upgrade aprovado! Loja "${reqItem.tenantName}" migrada para ${reqItem.requestedPlanName}.`
+          : `Solicitação de upgrade de "${reqItem.tenantName}" rejeitada.`
+      );
+      await fetchClients();
+      await fetchPlans();
+    } catch {
+      setError("Falha ao processar solicitação de upgrade.");
+    } finally {
+      setResolvingUpgradeId(null);
     }
   };
 
@@ -1660,6 +1793,20 @@ export default function AdminCRM() {
           <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
           <Link
+            href="/cliente?tenant=novaesweb"
+            className="nw-nav-button"
+            style={{
+              textDecoration: "none",
+              background: "linear-gradient(90deg, rgba(236, 72, 153, 0.16), rgba(139, 92, 246, 0.16))",
+              border: "1px solid rgba(236, 72, 153, 0.35)"
+            }}
+          >
+            <Crown size={19} color="#fbbf24"/>
+            <span style={{color: "#fff", fontWeight: 700}}>Meu CRM (NovaesWeb)</span>
+            <ChevronRight size={14} style={{marginLeft: "auto", opacity: 0.8}}/>
+          </Link>
+
+          <Link
             href="/admin/ai-providers"
             className="nw-nav-button"
             style={{textDecoration: "none"}}
@@ -1771,6 +1918,133 @@ export default function AdminCRM() {
           <div className="op-card" style={{border: "1px solid #00db8c", background: "rgba(6, 43, 30, 0.8)", color: "#b9f5dc", padding: "14px 18px", marginBottom: "18px", display: "flex", alignItems: "center", gap: "10px"}}>
             <CheckCircle2 size={20} color="#00db8c"/>
             <span>{notice}</span>
+          </div>
+        )}
+
+        {/* BANNER: OPERAÇÃO PRÓPRIA NOVAESWEB (CRM PRÓPRIO NO MASTER) */}
+        <div
+          className="op-card"
+          style={{
+            marginBottom: "20px",
+            padding: "16px 22px",
+            background: "linear-gradient(135deg, rgba(60, 20, 80, 0.55), rgba(15, 10, 30, 0.85))",
+            border: "1px solid rgba(236, 72, 153, 0.4)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "14px"
+          }}
+        >
+          <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
+            <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "linear-gradient(135deg, #ec4899, #8b5cf6)", display: "grid", placeItems: "center", boxShadow: "0 0 18px rgba(236, 72, 153, 0.4)"}}>
+              <Crown size={22} color="#fef08a"/>
+            </div>
+            <div>
+              <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                <strong style={{fontSize: "16px", color: "#fff"}}>CRM Próprio — Operação NovaesWeb</strong>
+                <span style={{padding: "2px 8px", borderRadius: "999px", fontSize: "10px", fontWeight: 800, background: "rgba(0, 219, 140, 0.18)", color: "#00db8c", border: "1px solid rgba(0, 219, 140, 0.35)"}}>
+                  ISOLADO DOS CLIENTES
+                </span>
+              </div>
+              <p style={{margin: "2px 0 0", fontSize: "12.5px", color: "#cbd5e1"}}>
+                Acesse o atendimento comercial próprio da NovaesWeb (WhatsApp, IA, contatos, etiquetas e relatórios da agência) sem misturar com as lojas clientes.
+              </p>
+            </div>
+          </div>
+
+          <Link
+            href="/cliente?tenant=novaesweb"
+            style={{
+              padding: "10px 18px",
+              borderRadius: "10px",
+              background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+              color: "#fff",
+              textDecoration: "none",
+              fontWeight: 800,
+              fontSize: "13px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              boxShadow: "0 4px 14px rgba(236, 72, 153, 0.35)"
+            }}
+          >
+            <Smartphone size={16}/> Abrir Meu CRM (NovaesWeb)
+          </Link>
+        </div>
+
+        {/* FILA DE SOLICITAÇÕES DE UPGRADE DOS CLIENTES */}
+        {upgradeRequests.filter(r => r.status === "pending").length > 0 && (
+          <div
+            className="op-card"
+            style={{
+              marginBottom: "22px",
+              padding: "18px 22px",
+              border: "1px solid rgba(245, 158, 11, 0.5)",
+              background: "rgba(45, 28, 10, 0.45)"
+            }}
+          >
+            <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px"}}>
+              <Sparkles size={20} color="#fbbf24"/>
+              <h3 style={{margin: 0, fontSize: "16px", fontWeight: 800, color: "#fef08a"}}>
+                Solicitações de Upgrade Pendentes ({upgradeRequests.filter(r => r.status === "pending").length})
+              </h3>
+            </div>
+            <div style={{display: "flex", flexDirection: "column", gap: "10px"}}>
+              {upgradeRequests
+                .filter(r => r.status === "pending")
+                .map(reqItem => (
+                  <div
+                    key={reqItem.id}
+                    style={{
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      background: "rgba(0,0,0,0.35)",
+                      border: "1px solid rgba(245, 158, 11, 0.3)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "12px"
+                    }}
+                  >
+                    <div>
+                      <strong style={{color: "#fff", fontSize: "14px"}}>
+                        {reqItem.tenantName}
+                      </strong>{" "}
+                      <span style={{fontSize: "12px", color: "#cbd5e1"}}>
+                        solicitou upgrade de <strong>{reqItem.currentPlanName}</strong> para{" "}
+                        <strong style={{color: "#ec4899"}}>{reqItem.requestedPlanName}</strong>
+                      </span>
+                      {reqItem.reason && (
+                        <small style={{display: "block", color: "#9ca3af", marginTop: "3px"}}>
+                          Motivo/Recurso desejado: {reqItem.reason}
+                        </small>
+                      )}
+                    </div>
+                    <div style={{display: "flex", gap: "8px"}}>
+                      <button
+                        type="button"
+                        className="op-primary"
+                        disabled={resolvingUpgradeId === reqItem.id}
+                        onClick={() => handleResolveUpgradeRequest(reqItem, "approved")}
+                        style={{padding: "7px 14px", fontSize: "12px", background: "#00db8c", color: "#052e16", fontWeight: 800, borderRadius: "8px"}}
+                      >
+                        ✅ Aprovar &amp; Ativar {reqItem.requestedPlanName}
+                      </button>
+                      <button
+                        type="button"
+                        className="op-refresh"
+                        disabled={resolvingUpgradeId === reqItem.id}
+                        onClick={() => handleResolveUpgradeRequest(reqItem, "rejected")}
+                        style={{padding: "7px 12px", fontSize: "12px", color: "#f43f5e", borderRadius: "8px"}}
+                      >
+                        Recusar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
           </div>
         )}
 
@@ -2344,14 +2618,24 @@ export default function AdminCRM() {
                         </div>
 
                         <div>
-                          <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                          <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
                             <strong style={{fontSize: "17px", color: "white"}}>{client.name}</strong>
+                            {client.isMasterOwnTenant && (
+                              <span style={{
+                                background: "rgba(251, 191, 36, 0.2)",
+                                color: "#fbbf24",
+                                border: "1px solid rgba(251, 191, 36, 0.4)",
+                                padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 800
+                              }}>
+                                👑 OPERAÇÃO PRÓPRIA MASTER
+                              </span>
+                            )}
                             <span style={{
                               background: isBlocked ? "rgba(244,63,94,0.2)" : isOverdue ? "rgba(245,158,11,0.2)" : "rgba(0,219,140,0.2)",
                               color: isBlocked ? "#f43f5e" : isOverdue ? "#f59e0b" : "#00db8c",
                               padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
                             }}>
-                              {isBlocked ? "BLOQUEADO" : isOverdue ? "PAGAMENTO PENDENTE" : "ATIVO"}
+                              {isBlocked ? "SUSPENSO / BLOQUEADO" : isOverdue ? "PAGAMENTO PENDENTE" : "ATIVO"}
                             </span>
                           </div>
 
@@ -2362,15 +2646,38 @@ export default function AdminCRM() {
                           <div style={{display: "flex", alignItems: "center", gap: "12px", marginTop: "6px", fontSize: "12px", color: "#b3a9c7", flexWrap: "wrap"}}>
                             <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
                               <Smartphone size={13} color={client.whatsappStatus === "connected" ? "#00db8c" : "#8e87a2"}/>
-                              {client.whatsappStatus === "connected" ? "WhatsApp Conectado" : "WhatsApp Desconectado"}
+                              WhatsApp: <strong>{client.connectedWhatsappCount ?? (client.whatsappStatus === "connected" ? 1 : 0)}/{client.maxWhatsappConnections ?? client.plan.maxWhatsappConnections ?? 1}</strong> (de 5 espaços)
+                            </span>
+                            <span>•</span>
+                            <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
+                              <Users size={13} color="#a855f7"/>
+                              Operadores: <strong>{client.operatorsCount ?? 1}/{client.maxOperators ?? client.plan.maxOperators ?? 1}</strong>
+                            </span>
+                            <span>•</span>
+                            <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
+                              <Bot size={13} color="#ec4899"/>
+                              Consumo IA: <strong>{client.plan.quotaUsed ?? 0}/{client.plan.customQuotaOverride || client.plan.quotaLimit || 200}</strong>
                             </span>
                             <span>•</span>
                             <span style={{display: "flex", alignItems: "center", gap: "4px"}}>
                               <Calendar size={13}/> Vence em: {client.plan.dueDate}
                             </span>
-                            <span>•</span>
-                            <span>AutoBloqueio: {client.plan.autoBlock ? "Ativado" : "Desativado"}</span>
                           </div>
+
+                          {isBlocked && (client.plan.adminSuspensionReason || client.plan.adminInternalNote) && (
+                            <div style={{marginTop: "6px", display: "flex", flexDirection: "column", gap: "2px"}}>
+                              {client.plan.adminSuspensionReason && (
+                                <span style={{fontSize: "11.5px", color: "#fda4af"}}>
+                                  🚫 <strong>Motivo público (exibido ao cliente):</strong> {client.plan.adminSuspensionReason}
+                                </span>
+                              )}
+                              {client.plan.adminInternalNote && (
+                                <span style={{fontSize: "11.5px", color: "#fbbf24"}}>
+                                  🔒 <strong>Nota interna Master:</strong> {client.plan.adminInternalNote}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {hasException && (
                             <div style={{marginTop: "6px"}}>
@@ -2681,7 +2988,7 @@ export default function AdminCRM() {
                   </div>
                 </div>
 
-                <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px"}}>
+                <div style={{display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px"}}>
                   <div>
                     <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Preço Mensal (R$)</label>
                     <input
@@ -2701,11 +3008,24 @@ export default function AdminCRM() {
                     />
                   </div>
                   <div>
+                    <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Max WhatsApps (1-5)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={editingPlan.maxWhatsAppConnections || 1}
+                      onChange={e => setEditingPlan({ ...editingPlan, maxWhatsAppConnections: Math.min(5, Math.max(1, Number(e.target.value))) })}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+                  <div>
                     <label style={{fontSize: "12px", color: "#a599c2", display: "block", marginBottom: "4px"}}>Max Operadores</label>
                     <input
                       type="number"
+                      min={1}
+                      max={20}
                       value={editingPlan.maxOperators || 1}
-                      onChange={e => setEditingPlan({ ...editingPlan, maxOperators: Number(e.target.value) })}
+                      onChange={e => setEditingPlan({ ...editingPlan, maxOperators: Math.max(1, Number(e.target.value)) })}
                       style={{width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
@@ -3286,6 +3606,93 @@ export default function AdminCRM() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {/* MODAL 8: SUSPENSÃO ADMINISTRATIVA / DESBLOQUEIO COM MOTIVO PÚBLICO E NOTA INTERNA */}
+        {blockModalOpen && clientToBlock && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)",
+            display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "480px", padding: "28px", borderColor: clientToBlock.status === "suspended" ? "#00db8c" : "#f43f5e"}}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px"}}>
+                {clientToBlock.status === "suspended" ? (
+                  <RotateCcw size={22} color="#00db8c"/>
+                ) : (
+                  <Ban size={22} color="#f43f5e"/>
+                )}
+                <h3 style={{margin: 0, fontSize: "19px", fontWeight: 800}}>
+                  {clientToBlock.status === "suspended"
+                    ? `Desbloquear Loja: ${clientToBlock.name}`
+                    : `Suspender Administrativamente: ${clientToBlock.name}`}
+                </h3>
+              </div>
+
+              <p style={{fontSize: "13px", color: "#c2bed4", marginTop: 0}}>
+                {clientToBlock.status === "suspended"
+                  ? "Ao confirmar o desbloqueio, os recursos do plano contratado e o atendimento da IA voltarão a operar imediatamente."
+                  : "A suspensão administrativa pausa o atendimento automático da IA e exibe o motivo público no painel do cliente. O histórico e os dados permanecem 100% preservados."}
+              </p>
+
+              {clientToBlock.status !== "suspended" && (
+                <div style={{display: "flex", flexDirection: "column", gap: "12px", marginBottom: "18px"}}>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#fda4af", fontWeight: 700, display: "block", marginBottom: "4px"}}>
+                      Motivo Público (exibido ao cliente no painel)
+                    </label>
+                    <input
+                      type="text"
+                      value={blockPublicReason}
+                      onChange={e => setBlockPublicReason(e.target.value)}
+                      placeholder="Ex: Mensalidade em aberto. Entre em contato com o financeiro NovaesWeb."
+                      style={{width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid rgba(244, 63, 94, 0.45)", background: "#121222", color: "white", fontSize: "13px"}}
+                    />
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#fbbf24", fontWeight: 700, display: "block", marginBottom: "4px"}}>
+                      Observação Interna Master (visível somente para a NovaesWeb)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={blockInternalNote}
+                      onChange={e => setBlockInternalNote(e.target.value)}
+                      placeholder="Ex: Aguardando compensação de boleto / combinado retorno na segunda-feira."
+                      style={{width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "13px"}}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{display: "flex", gap: "10px", justifyContent: "flex-end"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => {
+                    setBlockModalOpen(false);
+                    setClientToBlock(null);
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="op-primary"
+                  disabled={togglingBlock}
+                  onClick={handleConfirmToggleBlock}
+                  style={{
+                    background: clientToBlock.status === "suspended" ? "#00db8c" : "#f43f5e",
+                    color: clientToBlock.status === "suspended" ? "#052e16" : "#fff",
+                    fontWeight: 800
+                  }}
+                >
+                  {togglingBlock
+                    ? "Processando..."
+                    : clientToBlock.status === "suspended"
+                      ? "Confirmar Desbloqueio"
+                      : "Confirmar Suspensão"}
+                </button>
+              </div>
             </div>
           </div>
         )}

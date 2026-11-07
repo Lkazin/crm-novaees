@@ -3,14 +3,17 @@ import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import {
   CrmPlan,
+  DEFAULT_PLANS,
   TECHNICAL_FEATURES,
   getMasterPlans,
   getMasterPlansWithDrafts,
   discardPlanDraft,
   saveMasterPlan,
   syncTenantUsageLimits,
-  getRedis
+  invalidateEffectivePlanCache,
+  recordPlanAudit
 } from "@/lib/crm/plans";
+import { syncWhatsappChannelsForPlanLimit } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +36,6 @@ export async function GET(request: NextRequest) {
     const { url, serviceKey } = getAdminConfig();
     const plans = await getMasterPlansWithDrafts();
 
-    // Calculate how many stores are enrolled in each plan
     const counts: Record<string, number> = {};
     const enrolledStores: Record<string, Array<{ id: string; name: string; hasOverride: boolean }>> = {};
 
@@ -70,7 +72,6 @@ export async function GET(request: NextRequest) {
                 const hasOverride = parsed?.plan?.customQuotaOverride !== undefined && parsed?.plan?.customQuotaOverride !== null;
                 const tObj = tenantMap.get(s.tenant_id);
 
-                // Match by plan ID or plan Name
                 const matchedPlan = plans.find(p => p.id === pId || p.name.toLowerCase() === pName.toLowerCase());
                 if (matchedPlan) {
                   counts[matchedPlan.id] = (counts[matchedPlan.id] || 0) + 1;
@@ -112,7 +113,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const action = body.action || "save_and_apply";
 
-    // 1. Action: Discard draft
     if (action === "discard_draft") {
       const planId = typeof body.planId === "string" ? body.planId : "";
       if (!planId) return privateJson({ error: "missing_plan_id" }, 400);
@@ -120,7 +120,6 @@ export async function POST(request: NextRequest) {
       return privateJson({ discarded: true, planId });
     }
 
-    // 2. Action: Duplicate an existing plan
     if (action === "duplicate") {
       const sourcePlanId = typeof body.sourcePlanId === "string" ? body.sourcePlanId : "";
       const currentPlans = await getMasterPlans();
@@ -142,7 +141,6 @@ export async function POST(request: NextRequest) {
       return privateJson({ duplicated: true, plan: result.plan });
     }
 
-    // 3. Action: Toggle Active / Inactive
     if (action === "toggle_status") {
       const planId = typeof body.planId === "string" ? body.planId : "";
       const currentPlans = await getMasterPlans();
@@ -154,7 +152,6 @@ export async function POST(request: NextRequest) {
       return privateJson({ updated: true, plan: result.plan });
     }
 
-    // 4. Action: Set Individual Store Contractual Exception
     if (action === "set_client_exception") {
       const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
       const customQuota = typeof body.customQuota === "number" ? body.customQuota : undefined;
@@ -180,7 +177,6 @@ export async function POST(request: NextRequest) {
         planObj.customQuotaOverride = customQuota;
         planObj.exceptionReason = exceptionReason;
       } else {
-        // Clear exception override
         delete planObj.customQuotaOverride;
         delete planObj.exceptionReason;
       }
@@ -197,17 +193,10 @@ export async function POST(request: NextRequest) {
         await syncTenantUsageLimits(tenantId, customQuota, url, serviceKey);
       }
 
-      // Clear cache
-      const redis = getRedis();
-      try {
-        await redis.del(`crm:tenant:effective_plan:${tenantId}`);
-        redis.disconnect();
-      } catch {}
-
+      await invalidateEffectivePlanCache(tenantId);
       return privateJson({ exceptionSaved: true, tenantId, customQuota });
     }
 
-    // 5. Action: Save Draft or Save & Apply
     const planInput = body.plan;
     if (!planInput || !planInput.id || !planInput.name) {
       return privateJson({ error: "invalid_plan_payload" }, 400);
@@ -233,7 +222,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH: Assign a plan to a specific store tenant
+// PATCH: Assign a plan to a specific store tenant (synchronizing contractedPlan + WhatsApp slot limits)
 export async function PATCH(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
@@ -248,12 +237,21 @@ export async function PATCH(request: NextRequest) {
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     const planId = typeof body.planId === "string" ? body.planId : "";
     const planName = typeof body.planName === "string" ? body.planName : "";
-    const planPrice = typeof body.planPrice === "string" ? body.planPrice : "";
-    const quotaLimit = typeof body.quotaLimit === "number" ? body.quotaLimit : 500;
     const customQuotaOverride = typeof body.customQuotaOverride === "number" ? body.customQuotaOverride : null;
     const exceptionReason = typeof body.exceptionReason === "string" ? body.exceptionReason : null;
 
     if (!tenantId || (!planId && !planName)) return privateJson({ error: "missing_required_fields" }, 400);
+
+    const masterPlans = await getMasterPlans();
+    const matchedPlan = masterPlans.find(
+      p => (planId && p.id === planId) || (planName && p.name.toLowerCase() === planName.toLowerCase())
+    ) || masterPlans[0] || DEFAULT_PLANS[0];
+
+    const suppliedPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "";
+    const resolvedPrice = (suppliedPrice && suppliedPrice !== "149,00") ? suppliedPrice : matchedPlan.price;
+    const quotaLimit = typeof body.quotaLimit === "number" && body.quotaLimit !== 500
+      ? body.quotaLimit
+      : matchedPlan.quotaLimit;
 
     const { url, serviceKey } = getAdminConfig();
     const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
@@ -271,13 +269,25 @@ export async function PATCH(request: NextRequest) {
     } catch {}
 
     const planObj = (dataObj.plan as Record<string, unknown>) ?? {};
-    planObj.planId = planId || planObj.planId || "crm-start";
-    planObj.name = planName || planObj.name || "CRM Start";
-    if (planPrice) planObj.price = planPrice;
+    planObj.planId = matchedPlan.id;
+    planObj.name = matchedPlan.name;
+    planObj.price = resolvedPrice;
     planObj.quotaLimit = quotaLimit;
+    planObj.maxOperators = matchedPlan.maxOperators;
+    planObj.maxWhatsappConnections = matchedPlan.maxWhatsappConnections;
     planObj.isTrial = false;
     planObj.status = "paid";
     planObj.trialConvertedAt = new Date().toISOString();
+    planObj.contractedPlan = {
+      quotaLimit,
+      features: matchedPlan.features,
+      price: resolvedPrice,
+      maxOperators: matchedPlan.maxOperators,
+      maxWhatsappConnections: matchedPlan.maxWhatsappConnections,
+      version: matchedPlan.version,
+      contractedAt: new Date().toISOString()
+    };
+    delete planObj.pendingPlanUpdate;
 
     if (customQuotaOverride !== null) {
       planObj.customQuotaOverride = customQuotaOverride;
@@ -296,7 +306,6 @@ export async function PATCH(request: NextRequest) {
     });
     if (!rPatch.ok) throw new Error(`Supabase PATCH tenant assignment failed: HTTP ${rPatch.status}`);
 
-    // Re-activate tenant in crm_tenants if it was suspended (e.g. from trial expiration)
     try {
       await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
         method: "PATCH",
@@ -307,15 +316,29 @@ export async function PATCH(request: NextRequest) {
 
     const effectiveLimit = customQuotaOverride !== null ? customQuotaOverride : quotaLimit;
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
+    const channelSync = await syncWhatsappChannelsForPlanLimit(tenantId, matchedPlan.maxWhatsappConnections, url, serviceKey);
+    await invalidateEffectivePlanCache(tenantId);
 
-    // Clear Redis cache
-    const redis = getRedis();
-    try {
-      await redis.del(`crm:tenant:effective_plan:${tenantId}`);
-      redis.disconnect();
-    } catch {}
+    await recordPlanAudit({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      actor: auth.actor || "master_admin",
+      planId: matchedPlan.id,
+      planName: matchedPlan.name,
+      action: "update",
+      vigencia: "immediate",
+      newValues: {
+        price: resolvedPrice,
+        quotaLimit: effectiveLimit,
+        maxOperators: matchedPlan.maxOperators,
+        maxWhatsappConnections: matchedPlan.maxWhatsappConnections,
+        features: matchedPlan.features
+      },
+      affectedTenantsCount: 1,
+      affectedTenants: [tenantId],
+      timestamp: new Date().toISOString()
+    });
 
-    return privateJson({ updated: true, tenantId, plan: planObj });
+    return privateJson({ updated: true, tenantId, plan: planObj, channelSync });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "assign_plan_failed" }, 503);
   }

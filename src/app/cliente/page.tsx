@@ -6,12 +6,38 @@ import {
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus
 } from "lucide-react";
+import {
+  WhatsappFiveSlotsGrid,
+  QuickRepliesSection,
+  TeamOperatorsSection,
+  ReportsAndIndicatorsSection,
+  FeatureGovernanceMatrix,
+  UpgradeRequestModal,
+  type WhatsappSlotItem,
+  type QuickReplyItem,
+  type TeamOperatorItem,
+  type FeatureStateItem,
+  type ReportsPayload
+} from "@/components/crm/ClientPlanModules";
 
 type Tenant = { id: string; name: string; status: string };
 type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
-type Conversation = { id: string; contact_id: string; status: string; mode: string; last_message_at: string | null; assigned_to: string | null };
+type Conversation = {
+  id: string;
+  contact_id: string;
+  channel_id?: string | null;
+  status: string;
+  mode: string;
+  last_message_at: string | null;
+  assigned_to: string | null;
+  priority?: "low" | "normal" | "high" | "urgent";
+  priorityRank?: number;
+  tag?: string | null;
+  channelSlot?: number;
+  satisfaction?: { rating: number; comment: string; createdAt: string } | null;
+};
 type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string };
 type EscalationItem = { category: string; reason: string; text?: string; timestamp?: string };
 type TagItem = { id: string; name: string; color: string };
@@ -22,6 +48,7 @@ type Data = {
   selectedTenant: string | null;
   isSuspended?: boolean;
   suspensionReason?: string;
+  publicSuspensionReason?: string;
   plan?: {
     planId?: string;
     name: string;
@@ -34,6 +61,8 @@ type Data = {
     maxOperators?: number;
     maxWhatsappConnections?: number;
     allowedFeatures?: string[];
+    featureStates?: Record<string, FeatureStateItem>;
+    publicSuspensionReason?: string;
     isTrial?: boolean;
     trialDaysLeft?: number;
     trialStartedAt?: string;
@@ -41,6 +70,7 @@ type Data = {
     trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted";
   };
   allowedFeatures?: string[];
+  featureStates?: Record<string, FeatureStateItem>;
   contacts: Contact[];
   conversations: Conversation[];
   messages: Message[];
@@ -50,7 +80,7 @@ type Data = {
   note?: string;
 };
 
-type Tab = "whatsapp" | "conhecimento" | "simulador" | "horarios" | "atendimentos" | "contatos" | "plano";
+type Tab = "whatsapp" | "conhecimento" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
 
 function dateTime(s: string | null) {
   if (!s) return "—";
@@ -285,18 +315,41 @@ export default function OperatorPage() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
 
-  // Plan Allowed Features
+  // Plan Allowed Features & 4-State Governance
   const [allowedFeatures, setAllowedFeatures] = useState<string[]>([
     "ai_chat",
     "human_handoff",
-    "business_hours",
-    "commercial_tags",
-    "handoff_summary",
-    "sound_notifications",
-    "simulator",
-    "model_fallback",
-    "advanced_reports"
+    "business_hours_basic",
+    "quick_replies",
+    "basic_indicators",
+    "simulator"
   ]);
+  const [featureStates, setFeatureStates] = useState<Record<string, FeatureStateItem>>({});
+
+  // 5 WhatsApp Slots state (Etapa 5)
+  const [whatsappSlots, setWhatsappSlots] = useState<WhatsappSlotItem[]>([]);
+  const [selectedWhatsappSlot, setSelectedWhatsappSlot] = useState<number>(1);
+
+  // Quick Replies, Team Operators & Reports state (Etapa 7)
+  const [quickReplies, setQuickReplies] = useState<QuickReplyItem[]>([]);
+  const [teamOperators, setTeamOperators] = useState<TeamOperatorItem[]>([]);
+  const [reportsData, setReportsData] = useState<ReportsPayload | null>(null);
+  const [loadingReports, setLoadingReports] = useState(false);
+
+  // Priority, Satisfaction & Upgrade Request Modal state
+  const [priorityFilter, setPriorityFilter] = useState<"all" | "urgent" | "high" | "normal" | "low">("all");
+  const [upgradeModal, setUpgradeModal] = useState<{ open: boolean; targetPlan: string; reason: string }>({
+    open: false,
+    targetPlan: "CRM Business",
+    reason: ""
+  });
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyRating, setSurveyRating] = useState(5);
+  const [surveyComment, setSurveyComment] = useState("");
+  const [savingSurvey, setSavingSurvey] = useState(false);
+  const [newTagOpen, setNewTagOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState("purple");
 
   // Guided Setup Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -313,10 +366,30 @@ export default function OperatorPage() {
 
   const currentTenantObj = useMemo(() => data?.tenants?.find(t => t.id === tenant) ?? null, [data, tenant]);
   const instanceName = useMemo(() => {
+    const slotItem = whatsappSlots.find(s => s.slot === selectedWhatsappSlot);
+    if (slotItem?.instanceName) return slotItem.instanceName;
     if (!currentTenantObj) return "novaesweb-ia-teste";
     const slug = currentTenantObj.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 24);
-    return slug.startsWith("novaesweb") ? "novaesweb-ia-teste" : `loja_${slug}`;
-  }, [currentTenantObj]);
+    const base = slug.startsWith("novaesweb") ? "novaesweb-ia-teste" : `loja_${slug}`;
+    return selectedWhatsappSlot <= 1 ? base : `${base}_${selectedWhatsappSlot}`;
+  }, [currentTenantObj, whatsappSlots, selectedWhatsappSlot]);
+
+  const fetchReports = useCallback(async (tenantId: string) => {
+    if (!tenantId) return;
+    setLoadingReports(true);
+    try {
+      const res = await fetch(`/api/crm/operator/features?tenant=${encodeURIComponent(tenantId)}`, { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.quickReplies)) setQuickReplies(json.quickReplies);
+        if (Array.isArray(json.teamOperators)) setTeamOperators(json.teamOperators);
+        if (json.featureStates) setFeatureStates(json.featureStates);
+        setReportsData(json as ReportsPayload);
+      }
+    } catch {} finally {
+      setLoadingReports(false);
+    }
+  }, []);
 
   const fetchAiSettings = useCallback(async (tenantId: string, force = false) => {
     if (!tenantId) return;
@@ -360,16 +433,29 @@ export default function OperatorPage() {
         }
         if (json.plan) {
           setQuotaData({
-            quotaLimit: json.plan.quotaLimit || 500,
+            quotaLimit: json.plan.quotaLimit || 200,
             quotaUsed: json.plan.quotaUsed || 0
           });
         }
         if (Array.isArray(json.allowedFeatures)) {
           setAllowedFeatures(json.allowedFeatures);
         }
+        if (json.featureStates) {
+          setFeatureStates(json.featureStates);
+        }
+        if (Array.isArray(json.whatsappSlots)) {
+          setWhatsappSlots(json.whatsappSlots);
+        }
+        if (Array.isArray(json.quickReplies)) {
+          setQuickReplies(json.quickReplies);
+        }
+        if (Array.isArray(json.teamOperators)) {
+          setTeamOperators(json.teamOperators);
+        }
       }
+      void fetchReports(tenantId);
     } catch {}
-  }, []);
+  }, [fetchReports]);
 
   // Audio beep notification via Web Audio API
   const playNotificationSound = useCallback(() => {
@@ -423,9 +509,12 @@ export default function OperatorPage() {
       if (Array.isArray(json.allowedFeatures)) {
         setAllowedFeatures(json.allowedFeatures);
       }
+      if (json.featureStates) {
+        setFeatureStates(json.featureStates);
+      }
       if (json.plan) {
         setQuotaData({
-          quotaLimit: json.plan.quotaLimit || 500,
+          quotaLimit: json.plan.quotaLimit || 200,
           quotaUsed: json.plan.quotaUsed || 0
         });
       }
@@ -456,13 +545,16 @@ export default function OperatorPage() {
     return () => clearInterval(interval);
   }, [authenticated, tenant, fetchData]);
 
-  // Check connection state for this tenant
+  // Check connection state for this tenant & active slot
   const checkStatus = useCallback(async () => {
     if (!instanceName) return;
     try {
-      const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`, { cache: "no-store" });
+      const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}&slot=${selectedWhatsappSlot}`, { cache: "no-store" });
       if (res.ok) {
         const s = await res.json();
+        if (Array.isArray(s.whatsappSlots)) {
+          setWhatsappSlots(s.whatsappSlots);
+        }
         if (s.connected || s.state === "open") {
           setQrState("open");
           setQrCode(null);
@@ -480,7 +572,7 @@ export default function OperatorPage() {
         }
       }
     } catch {}
-  }, [instanceName, tenant]);
+  }, [instanceName, tenant, selectedWhatsappSlot]);
 
   useEffect(() => {
     let active = true;
@@ -553,6 +645,7 @@ export default function OperatorPage() {
   async function changeTenant(nextTenant: string) {
     setTenant(nextTenant);
     setSelected("");
+    setSelectedWhatsappSlot(1);
     setQrCode(null);
     loadedTenantAiRef.current = nextTenant;
     isAiDirtyRef.current = false;
@@ -560,14 +653,14 @@ export default function OperatorPage() {
     await fetchData(nextTenant);
   }
 
-  // Connect WhatsApp: generate QR Code
+  // Connect WhatsApp: generate QR Code for selected slot (1..5)
   async function handleConnectWhatsApp() {
     if (!instanceName) return;
     setQrLoading(true);
     setQrError(false);
     setQrScanned(false);
     setQrValidating(false);
-    setQrNotice("Etapa 1: Preparando conexão e inicializando instância...");
+    setQrNotice(`Etapa 1: Preparando conexão do Espaço #${selectedWhatsappSlot} (${instanceName})...`);
     try {
       const res = await fetch("/api/crm/whatsapp/connect", {
         method: "POST",
@@ -575,6 +668,7 @@ export default function OperatorPage() {
         body: JSON.stringify({
           instance: instanceName,
           instanceName: instanceName,
+          slot: selectedWhatsappSlot,
           tenantId: tenant,
           tenantName: currentTenantObj?.name
         })
@@ -619,11 +713,11 @@ export default function OperatorPage() {
   // Delete instance / Disconnect WhatsApp
   async function handleDeleteInstance() {
     if (!instanceName) return;
-    if (!window.confirm(`Deseja realmente apagar a instância e desconectar o WhatsApp da loja "${currentTenantObj?.name || ""}"? O QR Code será cancelado e o número desconectado.`)) return;
+    if (!window.confirm(`Deseja realmente apagar a instância "${instanceName}" (Espaço #${selectedWhatsappSlot}) e desconectar o WhatsApp da loja "${currentTenantObj?.name || ""}"? O QR Code será cancelado e o número desconectado.`)) return;
     setDeletingQr(true);
     setQrNotice("Apagando instância e desconectando WhatsApp...");
     try {
-      const res = await fetch(`/api/crm/whatsapp/connect?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`, {
+      const res = await fetch(`/api/crm/whatsapp/connect?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}&slot=${selectedWhatsappSlot}`, {
         method: "DELETE"
       });
       const data = await res.json().catch(() => ({}));
@@ -637,6 +731,7 @@ export default function OperatorPage() {
         setConnectedProfile(null);
         setQrExpiresIn(0);
         setQrNotice(data.message || "Instância apagada com sucesso! O WhatsApp foi desconectado.");
+        void checkStatus();
         if (tenant) void fetchData(tenant, true);
       } else {
         setQrError(true);
@@ -672,11 +767,14 @@ export default function OperatorPage() {
     const interval = setInterval(async () => {
       try {
         const res = await fetch(
-          `/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}`,
+          `/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}&slot=${selectedWhatsappSlot}`,
           { cache: "no-store" }
         );
         if (res.ok) {
           const s = await res.json();
+          if (Array.isArray(s.whatsappSlots)) {
+            setWhatsappSlots(s.whatsappSlots);
+          }
           if (s.qrScanned) {
             setQrScanned(true);
           }
@@ -931,10 +1029,177 @@ export default function OperatorPage() {
     }
   }
 
+  function openUpgradeRequest(targetPlan = "CRM Business", reason = "") {
+    setUpgradeModal({ open: true, targetPlan, reason });
+  }
+
+  async function handleSubmitUpgradeRequest(requestedPlan: string, notes: string) {
+    try {
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "request_upgrade", requestedPlan, notes })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: json.message || "Falha ao registrar solicitação." };
+      return { ok: true, message: json.message };
+    } catch {
+      return { ok: false, message: "Erro de comunicação ao solicitar upgrade." };
+    }
+  }
+
+  async function handleSaveQuickReply(shortcut: string, title: string, body: string) {
+    const res = await fetch("/api/crm/operator/features", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: tenant, action: "save_quick_reply", shortcut, title, body })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(json.quickReplies)) {
+      setQuickReplies(json.quickReplies);
+    } else if (!res.ok) {
+      alert(json.message || "Não foi possível salvar a resposta rápida.");
+    }
+  }
+
+  async function handleDeleteQuickReply(id: string) {
+    const res = await fetch("/api/crm/operator/features", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: tenant, action: "delete_quick_reply", id })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(json.quickReplies)) {
+      setQuickReplies(json.quickReplies);
+    }
+  }
+
+  async function handleSetConversationPriority(conversationId: string, priority: "low" | "normal" | "high" | "urgent") {
+    if (!allowedFeatures.includes("conversation_priority")) {
+      openUpgradeRequest("CRM Business", "Ativar Prioridade de Atendimentos (Baixa, Normal, Alta e Urgente)");
+      return;
+    }
+    try {
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "set_priority", conversationId, priority })
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.message || "Falha ao alterar prioridade.");
+        return;
+      }
+      await fetchData(tenant, true);
+    } catch {
+      alert("Erro ao atualizar prioridade da conversa.");
+    }
+  }
+
+  async function handleSubmitSatisfactionSurvey(e: React.FormEvent) {
+    e.preventDefault();
+    if (!current || !tenant) return;
+    if (!allowedFeatures.includes("satisfaction_survey")) {
+      openUpgradeRequest("CRM Business", "Ativar Pesquisa de Satisfação (1 a 5 estrelas)");
+      return;
+    }
+    setSavingSurvey(true);
+    try {
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: tenant,
+          action: "submit_satisfaction",
+          conversationId: current.id,
+          contactId: current.contact_id,
+          rating: surveyRating,
+          comment: surveyComment
+        })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(json.message || "Não foi possível registrar a avaliação.");
+        return;
+      }
+      setSurveyOpen(false);
+      setSurveyComment("");
+      await fetchData(tenant, true);
+      void fetchReports(tenant);
+    } finally {
+      setSavingSurvey(false);
+    }
+  }
+
+  async function handleCreateCustomTag(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newTagName.trim() || !tenant) return;
+    if (!allowedFeatures.includes("commercial_tags")) {
+      openUpgradeRequest("CRM Business", "Criar e gerenciar Etiquetas Comerciais");
+      return;
+    }
+    try {
+      const res = await fetch("/api/crm/operator/tags", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "create", name: newTagName.trim(), color: newTagColor })
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.message || "Erro ao criar etiqueta.");
+        return;
+      }
+      setNewTagName("");
+      setNewTagOpen(false);
+      await fetchData(tenant, true);
+    } catch {
+      alert("Erro ao criar etiqueta comercial.");
+    }
+  }
+
+  async function handleAddOperator(name: string, email: string, role: string) {
+    try {
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "add_operator", name, email, role })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: json.message || "Falha ao adicionar operador." };
+      if (Array.isArray(json.teamOperators)) setTeamOperators(json.teamOperators);
+      void fetchReports(tenant);
+      return { ok: true };
+    } catch {
+      return { ok: false, message: "Erro ao adicionar operador." };
+    }
+  }
+
+  async function handleRevokeOperator(operatorId: string) {
+    if (!window.confirm("Deseja realmente revogar o acesso deste operador ao CRM da loja?")) return;
+    const res = await fetch("/api/crm/operator/features", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: tenant, action: "revoke_operator", operatorId })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(json.teamOperators)) {
+      setTeamOperators(json.teamOperators);
+      void fetchReports(tenant);
+    }
+  }
+
   // Set Commercial Tag on Contact
   async function handleSetCommercialTag(contactId: string, tagId: string) {
     if (!allowedFeatures.includes("commercial_tags")) {
-      alert("Etiquetas comerciais estão disponíveis a partir do plano CRM Business.");
+      openUpgradeRequest("CRM Business", "Utilizar Etiquetas Comerciais nas conversas");
       return;
     }
     try {
@@ -1087,7 +1352,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   const urgentCount = funnelCounts.waiting_human;
 
-  // Filtered conversations by search, funnel stage, and commercial tag
+  // Filtered conversations by search, funnel stage, commercial tag, and priority
   const filtered = useMemo(() => conversations.filter(c => {
     const contact = byContact.get(c.contact_id);
     const matchesSearch = (contact?.phone + " " + (contact?.display_name ?? "")).toLowerCase().includes(search.toLowerCase());
@@ -1098,8 +1363,11 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
     const matchesTag = tagFilter === "all" || contactTagId === tagFilter;
 
-    return matchesSearch && matchesFunnel && matchesTag;
-  }), [conversations, byContact, search, funnelFilter, tagFilter, contactTagMap, getEffectiveStage]);
+    const prio = c.priority || (stage === "waiting_human" ? "urgent" : "normal");
+    const matchesPriority = priorityFilter === "all" || prio === priorityFilter;
+
+    return matchesSearch && matchesFunnel && matchesTag && matchesPriority;
+  }), [conversations, byContact, search, funnelFilter, tagFilter, priorityFilter, contactTagMap, getEffectiveStage]);
 
   // List of pending human requests for the Bell Notification Dropdown
   const pendingHumanList = useMemo(() => {
@@ -1110,7 +1378,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
   const thread = current ? messages.filter(m => m.conversation_id === current.id).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) : [];
 
   // Quota percentage
-  const quotaPercent = Math.min(100, Math.round(((quotaData.quotaUsed || 0) / (quotaData.quotaLimit || 500)) * 100));
+  const quotaPercent = Math.min(100, Math.round(((quotaData.quotaUsed || 0) / (quotaData.quotaLimit || 200)) * 100));
 
   return (
     <div className="nw-layout-shell">
@@ -1233,9 +1501,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               >
                 <Smartphone size={19}/>
                 <span>Conectar WhatsApp</span>
-                {qrState === "open" && (
-                  <span style={{marginLeft: "auto", width: "8px", height: "8px", borderRadius: "50%", background: "#00db8c"}}/>
-                )}
+                <span style={{marginLeft: "auto", fontSize: "10px", fontWeight: 800, background: "rgba(255,255,255,0.12)", padding: "2px 6px", borderRadius: "8px"}}>
+                  {data?.plan?.maxWhatsappConnections ?? 1}/5
+                </span>
               </button>
 
               <button
@@ -1280,6 +1548,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     {conversations.length}
                   </span>
                 )}
+              </button>
+
+              <button
+                type="button"
+                className={`nw-nav-button ${activeTab === "equipe" ? "active" : ""}`}
+                onClick={() => setActiveTab("equipe")}
+              >
+                <UserPlus size={19}/>
+                <span>Equipe & Operadores</span>
+                <span style={{marginLeft: "auto", background: "rgba(139,92,246,0.22)", color: "#d8b4fe", padding: "2px 7px", borderRadius: "8px", fontSize: "10px", fontWeight: 800}}>
+                  {teamOperators.filter(o => o.status === "active").length}/{data?.plan?.maxOperators ?? 1}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`nw-nav-button ${activeTab === "relatorios" ? "active" : ""}`}
+                onClick={() => {
+                  setActiveTab("relatorios");
+                  if (tenant) void fetchReports(tenant);
+                }}
+              >
+                <BarChart3 size={19}/>
+                <span>Indicadores & Relatórios</span>
               </button>
 
               <button
@@ -1563,30 +1855,47 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             </div>
 
-            {/* ALERTA DE BLOQUEIO / SUSPENSÃO POR MENSALIDADE */}
+            {/* ALERTA DE BLOQUEIO / SUSPENSÃO POR MENSALIDADE OU ADMINISTRATIVO */}
             {isSuspended && (
               <section className="op-card" style={{
                 background: "linear-gradient(135deg, rgba(80, 16, 28, 0.95), rgba(40, 10, 18, 0.95))",
                 border: "2px solid #f43f5e",
                 padding: "24px",
                 marginBottom: "24px",
-                boxShadow: "0 10px 40px rgba(244, 63, 94, 0.3)"
+                boxShadow: "0 10px 40px rgba(244, 63, 94, 0.3)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "16px"
               }}>
-                <div style={{display: "flex", alignItems: "center", gap: "14px", marginBottom: "12px"}}>
+                <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
                   <ShieldAlert size={36} color="#f43f5e"/>
                   <div>
                     <h2 style={{margin: 0, color: "#fff", fontSize: "20px", fontWeight: 800}}>
                       {suspensionReason === "payment_overdue"
                         ? "Mensalidade do Plano Pendente — Respostas Automáticas em Pausa"
+                        : suspensionReason === "trial_expired" || suspensionReason === "trial_quota_exhausted"
+                        ? "Período de Teste Grátis Encerrado — Dados 100% Preservados"
                         : "Acesso Administrativo Temporariamente Pausado"}
                     </h2>
                     <p style={{margin: "4px 0 0", color: "#ffccd5", fontSize: "14px"}}>
-                      {suspensionReason === "payment_overdue"
-                        ? "A data de vencimento da mensalidade expirou. Regularize seu pagamento para que a IA continue respondendo no WhatsApp."
-                        : "Entre em contato com o suporte NovaesWeb para liberação da sua conta."}
+                      {data?.publicSuspensionReason || data?.plan?.publicSuspensionReason || (
+                        suspensionReason === "payment_overdue"
+                          ? "A data de vencimento da mensalidade expirou. Regularize seu pagamento para que a IA continue respondendo no WhatsApp."
+                          : "Entre em contato com o suporte NovaesWeb ou solicite um plano comercial para reativação imediata."
+                      )}
                     </p>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => openUpgradeRequest("CRM Business", "Reativar conta / Contratar plano comercial")}
+                  className="op-primary"
+                  style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px"}}
+                >
+                  Solicitar Liberação / Upgrade
+                </button>
               </section>
             )}
 
@@ -1741,9 +2050,27 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </section>
             )}
 
-            {/* SEÇÃO 1: CONECTAR WHATSAPP */}
+            {/* SEÇÃO 1: CONECTAR WHATSAPP (5 ESPAÇOS) */}
             {activeTab === "whatsapp" && (
-              <section style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "22px"}}>
+              <>
+                {whatsappSlots.length > 0 && (
+                  <WhatsappFiveSlotsGrid
+                    slots={whatsappSlots}
+                    selectedSlot={selectedWhatsappSlot}
+                    maxConnections={data?.plan?.maxWhatsappConnections ?? 1}
+                    onSelectSlot={slotItem => {
+                      setSelectedWhatsappSlot(slotItem.slot);
+                      setQrCode(null);
+                      setQrError(false);
+                      setQrNotice("");
+                      setQrState(slotItem.connected ? "open" : "disconnected");
+                      setConnectedPhone(slotItem.phoneNumber);
+                      setConnectedProfile(slotItem.profileName);
+                    }}
+                    onRequestUpgrade={(targetPlan, reason) => openUpgradeRequest(targetPlan, reason)}
+                  />
+                )}
+                <section style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "22px"}}>
                 <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
                   <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px", flexWrap: "wrap", gap: "10px"}}>
                     <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
@@ -1751,8 +2078,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         <Smartphone size={24} color="#fff"/>
                       </div>
                       <div>
-                        <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>Conexão Oficial com o WhatsApp</h2>
-                        <small style={{color: "#aba8bf"}}>Instância da Loja: <code>{instanceName}</code></small>
+                        <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>
+                          Conexão Oficial — Espaço #{selectedWhatsappSlot}
+                        </h2>
+                        <small style={{color: "#aba8bf"}}>Instância selecionada: <code>{instanceName}</code></small>
                       </div>
                     </div>
                     <span style={{
@@ -2026,6 +2355,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   })()}
                 </div>
               </section>
+              </>
             )}
 
             {/* SEÇÃO 2: CONFIGURAR MINHA IA */}
@@ -2794,31 +3124,52 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               </div>
 
                               <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                                <label style={{display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#c2bed4", cursor: "pointer"}}>
-                                  <input
-                                    type="checkbox"
-                                    checked={Boolean(dayCfg.hasBreak)}
-                                    onChange={e => updateDay({ hasBreak: e.target.checked })}
-                                    style={{accentColor: "#8b5cf6"}}
-                                  />
-                                  Intervalo / Pausa
-                                </label>
-                                {dayCfg.hasBreak && (
-                                  <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
-                                    <input
-                                      type="time"
-                                      value={dayCfg.breakStart || "12:00"}
-                                      onChange={e => updateDay({ breakStart: e.target.value })}
-                                      style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
-                                    />
-                                    <small style={{color: "#aba8bf"}}>-</small>
-                                    <input
-                                      type="time"
-                                      value={dayCfg.breakEnd || "13:00"}
-                                      onChange={e => updateDay({ breakEnd: e.target.value })}
-                                      style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
-                                    />
-                                  </div>
+                                {allowedFeatures.includes("business_hours") ? (
+                                  <>
+                                    <label style={{display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#c2bed4", cursor: "pointer"}}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(dayCfg.hasBreak)}
+                                        onChange={e => updateDay({ hasBreak: e.target.checked })}
+                                        style={{accentColor: "#8b5cf6"}}
+                                      />
+                                      Intervalo / Pausa
+                                    </label>
+                                    {dayCfg.hasBreak && (
+                                      <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                                        <input
+                                          type="time"
+                                          value={dayCfg.breakStart || "12:00"}
+                                          onChange={e => updateDay({ breakStart: e.target.value })}
+                                          style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
+                                        />
+                                        <small style={{color: "#aba8bf"}}>-</small>
+                                        <input
+                                          type="time"
+                                          value={dayCfg.breakEnd || "13:00"}
+                                          onChange={e => updateDay({ breakEnd: e.target.value })}
+                                          style={{padding: "5px 8px", borderRadius: "8px", background: "#161325", border: "1px solid #8b5cf6", color: "white", fontSize: "12px"}}
+                                        />
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUpgradeRequest("CRM Business", "Ativar Horários Avançados e Intervalos de Almoço/Pausa")}
+                                    style={{
+                                      padding: "4px 10px",
+                                      borderRadius: "8px",
+                                      background: "rgba(245, 158, 11, 0.14)",
+                                      border: "1px dashed rgba(245, 158, 11, 0.45)",
+                                      color: "#fcd34d",
+                                      fontSize: "11px",
+                                      fontWeight: 700,
+                                      cursor: "pointer"
+                                    }}
+                                  >
+                                    🔒 Intervalo / Pausa (CRM Business)
+                                  </button>
                                 )}
                               </div>
                             </div>
@@ -2942,32 +3293,127 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       })}
                     </div>
 
-                    {/* Filtro por Etiqueta Comercial */}
-                    {allowedFeatures.includes("commercial_tags") && (
-                      <div style={{display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
-                        <Tag size={13} color="#aba8bf"/>
-                        <select
-                          value={tagFilter}
-                          onChange={e => setTagFilter(e.target.value)}
+                    {/* Filtro por Etiqueta Comercial e Prioridade */}
+                    <div style={{display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px"}}>
+                      {allowedFeatures.includes("commercial_tags") ? (
+                        <div style={{display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
+                          <Tag size={13} color="#aba8bf"/>
+                          <select
+                            value={tagFilter}
+                            onChange={e => setTagFilter(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: "transparent",
+                              border: "none",
+                              color: "#fff",
+                              fontSize: "12px",
+                              outline: "none",
+                              cursor: "pointer"
+                            }}
+                          >
+                            <option value="all" style={{background: "#181427"}}>Todas as Etiquetas Comerciais</option>
+                            {data?.tags?.map(t => (
+                              <option key={t.id} value={t.id} style={{background: "#181427"}}>
+                                🏷️ {t.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => setNewTagOpen(v => !v)}
+                            style={{background: "none", border: "none", color: "#ec4899", fontSize: "11px", fontWeight: 800, cursor: "pointer"}}
+                          >
+                            {newTagOpen ? "Fechar" : "+ Etiqueta"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openUpgradeRequest("CRM Business", "Desbloquear Etiquetas Comerciais")}
                           style={{
-                            flex: 1,
-                            background: "transparent",
-                            border: "none",
-                            color: "#fff",
-                            fontSize: "12px",
-                            outline: "none",
-                            cursor: "pointer"
+                            padding: "7px 10px",
+                            borderRadius: "8px",
+                            background: "rgba(245, 158, 11, 0.1)",
+                            border: "1px dashed rgba(245, 158, 11, 0.45)",
+                            color: "#fcd34d",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            textAlign: "left"
                           }}
                         >
-                          <option value="all" style={{background: "#181427"}}>Todas as Etiquetas Comerciais</option>
-                          {data?.tags?.map(t => (
-                            <option key={t.id} value={t.id} style={{background: "#181427"}}>
-                              🏷️ {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                          🔒 Etiquetas Comerciais (Disponível no CRM Business)
+                        </button>
+                      )}
+
+                      {newTagOpen && allowedFeatures.includes("commercial_tags") && (
+                        <form onSubmit={e => void handleCreateCustomTag(e)} style={{display: "flex", gap: "6px", background: "#141022", padding: "8px", borderRadius: "8px", border: "1px solid #443c5e"}}>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Nome da etiqueta..."
+                            value={newTagName}
+                            onChange={e => setNewTagName(e.target.value)}
+                            style={{flex: 1, padding: "5px 8px", borderRadius: "6px", background: "#12101e", border: "1px solid #3d345c", color: "#fff", fontSize: "12px"}}
+                          />
+                          <select
+                            value={newTagColor}
+                            onChange={e => setNewTagColor(e.target.value)}
+                            style={{padding: "5px 6px", borderRadius: "6px", background: "#12101e", border: "1px solid #3d345c", color: "#fff", fontSize: "11px"}}
+                          >
+                            <option value="purple">Roxo</option>
+                            <option value="blue">Azul</option>
+                            <option value="green">Verde</option>
+                            <option value="amber">Âmbar</option>
+                            <option value="red">Vermelho</option>
+                          </select>
+                          <button type="submit" className="op-primary" style={{padding: "5px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700}}>Criar</button>
+                        </form>
+                      )}
+
+                      {allowedFeatures.includes("conversation_priority") ? (
+                        <div style={{display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: "8px", border: "1px solid #372f4d"}}>
+                          <Filter size={13} color="#aba8bf"/>
+                          <select
+                            value={priorityFilter}
+                            onChange={e => setPriorityFilter(e.target.value as any)}
+                            style={{
+                              flex: 1,
+                              background: "transparent",
+                              border: "none",
+                              color: "#fff",
+                              fontSize: "12px",
+                              outline: "none",
+                              cursor: "pointer"
+                            }}
+                          >
+                            <option value="all" style={{background: "#181427"}}>Todas as Prioridades (Fila Ordenada)</option>
+                            <option value="urgent" style={{background: "#181427"}}>🚨 Prioridade Urgente</option>
+                            <option value="high" style={{background: "#181427"}}>🔥 Prioridade Alta</option>
+                            <option value="normal" style={{background: "#181427"}}>⚡ Prioridade Normal</option>
+                            <option value="low" style={{background: "#181427"}}>🟢 Prioridade Baixa</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openUpgradeRequest("CRM Business", "Desbloquear Prioridade de Atendimentos")}
+                          style={{
+                            padding: "7px 10px",
+                            borderRadius: "8px",
+                            background: "rgba(245, 158, 11, 0.1)",
+                            border: "1px dashed rgba(245, 158, 11, 0.45)",
+                            color: "#fcd34d",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            textAlign: "left"
+                          }}
+                        >
+                          🔒 Prioridade dos Atendimentos (Disponível no CRM Business)
+                        </button>
+                      )}
+                    </div>
 
                     <div className="op-list" style={{flex: 1, overflowY: "auto"}}>
                       {filtered.length ? filtered.map(c => {
@@ -3088,15 +3534,37 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               </div>
 
                               <div style={{display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", flexWrap: "wrap"}}>
+                                {c.channelSlot && c.channelSlot > 1 && (
+                                  <span style={{fontSize: "10px", padding: "1px 6px", borderRadius: "6px", fontWeight: 700, background: "rgba(236,72,153,0.16)", color: "#f472b6"}}>
+                                    📱 WA #{c.channelSlot}
+                                  </span>
+                                )}
+                                {c.priority && c.priority !== "normal" && (
+                                  <span style={{
+                                    fontSize: "10px",
+                                    padding: "1px 6px",
+                                    borderRadius: "6px",
+                                    fontWeight: 800,
+                                    background: c.priority === "urgent" ? "rgba(239,68,68,0.22)" : c.priority === "high" ? "rgba(245,158,11,0.2)" : "rgba(16,185,129,0.15)",
+                                    color: c.priority === "urgent" ? "#fca5a5" : c.priority === "high" ? "#fcd34d" : "#6ee7b7"
+                                  }}>
+                                    {c.priority === "urgent" ? "🚨 Urgente" : c.priority === "high" ? "🔥 Alta" : "🟢 Baixa"}
+                                  </span>
+                                )}
+                                {c.satisfaction && (
+                                  <span style={{fontSize: "10px", padding: "1px 6px", borderRadius: "6px", fontWeight: 700, background: "rgba(251,191,36,0.18)", color: "#fbbf24"}}>
+                                    ★ {c.satisfaction.rating}/5
+                                  </span>
+                                )}
                                 {contactTag && (
                                   <span style={{
                                     fontSize: "10px",
                                     padding: "1px 6px",
                                     borderRadius: "6px",
                                     fontWeight: 700,
-                                    background: `${contactTag.color}25`,
-                                    color: contactTag.color,
-                                    border: `1px solid ${contactTag.color}60`
+                                    background: "rgba(139,92,246,0.2)",
+                                    color: "#d8b4fe",
+                                    border: "1px solid rgba(139,92,246,0.45)"
                                   }}>
                                     🏷️ {contactTag.name}
                                   </span>
@@ -3302,7 +3770,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             </div>
                           </div>
 
-                          {/* Linha Inferior: Seletor de Estado e Etiqueta Comercial */}
+                          {/* Linha Inferior: Seletor de Estado, Prioridade, Etiqueta Comercial e Pesquisa de Satisfação */}
                           <div style={{display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", paddingTop: "6px"}}>
                             <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
                               <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Estado:</span>
@@ -3335,7 +3803,42 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               </select>
                             </div>
 
-                            {allowedFeatures.includes("commercial_tags") && (
+                            {/* Seletor de Prioridade (Business+) */}
+                            {allowedFeatures.includes("conversation_priority") ? (
+                              <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
+                                <span style={{fontSize: "11px", color: "#aba8bf", fontWeight: 700, textTransform: "uppercase"}}>Prioridade:</span>
+                                <select
+                                  value={current.priority || "normal"}
+                                  onChange={e => void handleSetConversationPriority(current.id, e.target.value as any)}
+                                  style={{
+                                    padding: "5px 10px",
+                                    borderRadius: "8px",
+                                    background: "#161325",
+                                    border: "1px solid #3d345c",
+                                    color: "#fff",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  <option value="low">🟢 Baixa</option>
+                                  <option value="normal">⚡ Normal</option>
+                                  <option value="high">🔥 Alta</option>
+                                  <option value="urgent">🚨 Urgente</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openUpgradeRequest("CRM Business", "Definir Prioridade nos Atendimentos")}
+                                style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
+                              >
+                                🔒 Prioridade (Business)
+                              </button>
+                            )}
+
+                            {/* Seletor de Etiqueta Comercial (Business+) */}
+                            {allowedFeatures.includes("commercial_tags") ? (
                               <div style={{display: "flex", alignItems: "center", gap: "6px"}}>
                                 <Tag size={13} color="#aba8bf"/>
                                 <select
@@ -3358,8 +3861,79 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   ))}
                                 </select>
                               </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openUpgradeRequest("CRM Business", "Classificar clientes com Etiquetas Comerciais")}
+                                style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
+                              >
+                                🔒 Etiquetas (Business)
+                              </button>
+                            )}
+
+                            {/* Pesquisa de Satisfação (Business+) */}
+                            {allowedFeatures.includes("satisfaction_survey") ? (
+                              current.satisfaction ? (
+                                <span style={{fontSize: "11px", padding: "4px 10px", borderRadius: "8px", background: "rgba(251,191,36,0.16)", border: "1px solid #fbbf24", color: "#fde68a", fontWeight: 800}}>
+                                  ★ Satisfação: {current.satisfaction.rating}/5 {current.satisfaction.comment ? `("${current.satisfaction.comment}")` : ""}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setSurveyOpen(v => !v)}
+                                  style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(251,191,36,0.16)", border: "1px solid #fbbf24", color: "#fde68a", fontSize: "11px", fontWeight: 800, cursor: "pointer"}}
+                                >
+                                  ⭐ Avaliar Satisfação (1-5)
+                                </button>
+                              )
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openUpgradeRequest("CRM Business", "Registrar Pesquisa de Satisfação (1 a 5 estrelas)")}
+                                style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
+                              >
+                                🔒 Satisfação (Business)
+                              </button>
                             )}
                           </div>
+
+                          {/* Formulário Inline de Pesquisa de Satisfação */}
+                          {surveyOpen && !current.satisfaction && (
+                            <form onSubmit={e => void handleSubmitSatisfactionSurvey(e)} style={{marginTop: "10px", padding: "12px", borderRadius: "10px", background: "#141022", border: "1px solid #fbbf24", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}}>
+                              <strong style={{fontSize: "12px", color: "#fde68a"}}>Nota de Satisfação (1 a 5):</strong>
+                              <div style={{display: "flex", gap: "4px"}}>
+                                {[1, 2, 3, 4, 5].map(n => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => setSurveyRating(n)}
+                                    style={{
+                                      padding: "4px 8px",
+                                      borderRadius: "6px",
+                                      border: "1px solid #fbbf24",
+                                      background: surveyRating >= n ? "#fbbf24" : "transparent",
+                                      color: surveyRating >= n ? "#111" : "#fde68a",
+                                      fontWeight: 800,
+                                      fontSize: "12px",
+                                      cursor: "pointer"
+                                    }}
+                                  >
+                                    {n} ★
+                                  </button>
+                                ))}
+                              </div>
+                              <input
+                                type="text"
+                                placeholder="Comentário opcional do atendimento..."
+                                value={surveyComment}
+                                onChange={e => setSurveyComment(e.target.value)}
+                                style={{flex: 1, minWidth: "180px", padding: "6px 10px", borderRadius: "8px", background: "#12101e", border: "1px solid #443c5e", color: "#fff", fontSize: "12px"}}
+                              />
+                              <button type="submit" disabled={savingSurvey} className="op-primary" style={{padding: "6px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 700}}>
+                                {savingSurvey ? "Salvando..." : "Registrar Nota"}
+                              </button>
+                            </form>
+                          )}
                         </div>
 
                         {/* ALERTA DE TRANSFERÊNCIA PARA HUMANO / AGUARDANDO ATENDENTE */}
@@ -3461,7 +4035,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           )}
                         </div>
 
-                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO */}
+                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + RESPOSTAS RÁPIDAS */}
                         <form
                           onSubmit={e => {
                             e.preventDefault();
@@ -3476,6 +4050,14 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             gap: "8px"
                           }}
                         >
+                          <QuickRepliesSection
+                            quickReplies={quickReplies}
+                            allowed={allowedFeatures.includes("quick_replies")}
+                            onSelectReply={bodyText => setHumanInput(bodyText)}
+                            onSaveReply={handleSaveQuickReply}
+                            onDeleteReply={handleDeleteQuickReply}
+                            onRequestUpgrade={() => openUpgradeRequest("CRM Start", "Ativar Respostas Rápidas")}
+                          />
                           {current.mode === "ai" && (
                             <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#aba8bf", background: "rgba(0, 219, 140, 0.06)", border: "1px solid rgba(0, 219, 140, 0.2)", padding: "6px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
                               <span>🤖 A IA está ativa nesta conversa. Ao enviar uma resposta abaixo ou clicar em <strong>Assumir Atendimento</strong>, a IA será pausada automaticamente.</span>
@@ -3529,6 +4111,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </article>
                 </section>
               </>
+            )}
+
+            {/* SEÇÃO EQUIPE & OPERADORES (ETAPA 7) */}
+            {activeTab === "equipe" && (
+              <TeamOperatorsSection
+                operators={teamOperators}
+                maxOperators={data?.plan?.maxOperators ?? 1}
+                planName={data?.plan?.name || "CRM Start"}
+                isSuspended={isSuspended}
+                onAddOperator={handleAddOperator}
+                onRevokeOperator={handleRevokeOperator}
+                onRequestUpgrade={(targetPlan, reason) => openUpgradeRequest(targetPlan, reason)}
+              />
+            )}
+
+            {/* SEÇÃO INDICADORES & RELATÓRIOS (ETAPA 7) */}
+            {activeTab === "relatorios" && (
+              <ReportsAndIndicatorsSection
+                reports={reportsData}
+                loadingReports={loadingReports}
+                onRefresh={() => { if (tenant) void fetchReports(tenant); }}
+                onRequestUpgrade={(targetPlan, reason) => openUpgradeRequest(targetPlan, reason)}
+              />
             )}
 
             {/* SEÇÃO 4: CONTATOS */}
@@ -3644,26 +4249,26 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
                   </div>
 
-                  <a
-                    href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da empresa ${currentTenantObj?.name || "minha loja"} e gostaria de solicitar upgrade no plano do NovaesWeb CRM IA.`)}`}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => openUpgradeRequest("CRM Business", "Solicitação de Upgrade pela aba Meu Plano")}
                     style={{
                       padding: "10px 20px",
                       borderRadius: "10px",
                       background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
                       color: "#fff",
-                      textDecoration: "none",
+                      border: "none",
                       fontWeight: 700,
                       fontSize: "14px",
                       display: "flex",
                       alignItems: "center",
                       gap: "8px",
+                      cursor: "pointer",
                       boxShadow: "0 4px 18px rgba(236, 72, 153, 0.4)"
                     }}
                   >
-                    <Sparkles size={16}/> Falar com Consultor & Upgrade
-                  </a>
+                    <Sparkles size={16}/> Solicitar Upgrade de Plano
+                  </button>
                 </div>
 
                 {/* Card de Resumo do Plano Atual + Barra de Consumo */}
@@ -3756,7 +4361,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
 
                     <p style={{fontSize: "12px", color: "#8e87a2", margin: 0, lineHeight: 1.5}}>
-                      Cada atendimento é contabilizado por sessão de 24 horas por cliente no WhatsApp. Mensagens ilimitadas trocadas na mesma janela de 24h não consomem franquia adicional.
+                      Cada atendimento é contabilizado por sessão de 24 horas por cliente no WhatsApp após a 1ª resposta automática da IA enviada com sucesso. Atendimento apenas humano não consome franquia.
                     </p>
                   </div>
                 </div>
@@ -3770,7 +4375,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <div>
                       <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>WhatsApps Permitidos</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>
-                        {data?.plan?.maxWhatsappConnections ?? 1} número(s)
+                        {data?.plan?.maxWhatsappConnections ?? 1} de 5 espaços
                       </strong>
                     </div>
                   </div>
@@ -3808,6 +4413,12 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </div>
                 </div>
 
+                {/* Matriz Completa de Recursos do CRM (4 Estados) */}
+                <FeatureGovernanceMatrix
+                  featureStates={featureStates}
+                  onRequestUpgrade={(p, r) => openUpgradeRequest(p, r)}
+                />
+
                 {/* Comparativo dos Três Planos Comerciais */}
                 <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "20px"}}>
                   <div>
@@ -3815,7 +4426,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       Conheça os Planos Comerciais NovaesWeb CRM IA
                     </h3>
                     <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
-                      Escale seu atendimento com automação inteligente, múltiplos atendentes e números WhatsApp.
+                      Escale seu atendimento com automação inteligente, múltiplos atendentes e até 5 números WhatsApp.
                     </p>
                   </div>
 
@@ -3849,32 +4460,31 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>200 atendimentos</strong> com IA/mês
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp (1/5 espaços)
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 operador</strong> humano
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> NovaesWeb IA p/ dúvidas
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> IA personalizada + Base de conhecimento
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Base de conhecimento própria
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Assistente de configuração + Simulador
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Central de conversas ao vivo
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Atendimento humano + Transbordo IA → humano
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Transbordo humano integrado
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários básicos + Respostas rápidas
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Simulador de atendimento
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Contatos, histórico e Indicadores básicos
                         </li>
                       </ul>
 
-                      <a
-                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de contratar o plano CRM Start (R$ 59,90/mês).`)}`}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => openUpgradeRequest("CRM Start", "Interesse no plano CRM Start (R$ 59,90/mês)")}
                         style={{
                           marginTop: "auto",
                           padding: "10px",
@@ -3883,13 +4493,13 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           border: "1px solid rgba(255, 255, 255, 0.15)",
                           color: "#fff",
                           textAlign: "center",
-                          textDecoration: "none",
+                          cursor: "pointer",
                           fontWeight: 700,
                           fontSize: "13px"
                         }}
                       >
                         Solicitar Start
-                      </a>
+                      </button>
                     </div>
 
                     {/* Plano 2: Business (DESTAQUE MAIS RECOMENDADO) */}
@@ -3940,50 +4550,47 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>600 atendimentos</strong> com IA/mês
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>3 números</strong> WhatsApp (3/5 espaços)
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>3 operadores</strong> humanos
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários de funcionamento e folgas
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários avançados e intervalos de almoço
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Funil comercial e etiquetas
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Etiquetas comerciais e Prioridade da fila
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Notificações sonoras e visuais
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Resumo inteligente de 3 linhas
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Resumos inteligentes + Alertas sonoros
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Modelo reserva de IA (zero quedas)
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Suporte prioritário NovaesWeb
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Pesquisa de satisfação + Indicadores comerciais
                         </li>
                       </ul>
 
-                      <a
-                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de ativar o plano CRM Business (R$ 99,90/mês).`)}`}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => openUpgradeRequest("CRM Business", "Upgrade para o plano CRM Business (R$ 99,90/mês)")}
                         style={{
                           marginTop: "auto",
                           padding: "11px",
                           borderRadius: "10px",
                           background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
                           color: "#fff",
+                          border: "none",
                           textAlign: "center",
-                          textDecoration: "none",
+                          cursor: "pointer",
                           fontWeight: 800,
                           fontSize: "13px",
                           boxShadow: "0 4px 14px rgba(236, 72, 153, 0.4)"
                         }}
                       >
                         Fazer Upgrade p/ Business
-                      </a>
+                      </button>
                     </div>
 
                     {/* Plano 3: Premium */}
@@ -4015,7 +4622,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1.500 atendimentos</strong> com IA/mês
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>Até 2 números</strong> WhatsApp
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>5 números</strong> WhatsApp (5/5 espaços)
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>5 operadores</strong> humanos
@@ -4024,23 +4631,22 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Tudo do plano Business incluído
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Central multi-números
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Relatórios avançados de funil e conversão
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Relatórios avançados de funil
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Análise de satisfação e NPS detalhada
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Desempenho dos operadores
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Indicadores de produtividade por atendente
                         </li>
                         <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Suporte VIP prioritário
+                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Filtros e análises comerciais avançadas
                         </li>
                       </ul>
 
-                      <a
-                        href={`https://wa.me/5511999999999?text=${encodeURIComponent(`Olá! Sou da loja ${currentTenantObj?.name || "minha empresa"} e gostaria de solicitar o plano CRM Premium (R$ 159,90/mês).`)}`}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => openUpgradeRequest("CRM Premium", "Upgrade para o plano CRM Premium (R$ 159,90/mês)")}
                         style={{
                           marginTop: "auto",
                           padding: "10px",
@@ -4049,18 +4655,27 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           border: "1px solid rgba(255, 255, 255, 0.15)",
                           color: "#fff",
                           textAlign: "center",
-                          textDecoration: "none",
+                          cursor: "pointer",
                           fontWeight: 700,
                           fontSize: "13px"
                         }}
                       >
                         Solicitar Premium
-                      </a>
+                      </button>
                     </div>
                   </div>
                 </div>
               </section>
             )}
+
+            <UpgradeRequestModal
+              open={upgradeModal.open}
+              initialPlan={upgradeModal.targetPlan}
+              initialNotes={upgradeModal.reason}
+              currentPlanName={data?.plan?.name || "CRM Start"}
+              onClose={() => setUpgradeModal(prev => ({ ...prev, open: false }))}
+              onSubmitUpgrade={handleSubmitUpgradeRequest}
+            />
           </main>
         </>
       )}

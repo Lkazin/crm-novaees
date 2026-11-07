@@ -1,36 +1,53 @@
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
-import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { requireTenantFeature } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// DB check constraint on crm_tags.color allows: 'neutral','purple','blue','green','amber','red'
 const DEFAULT_TAGS = [
-  { name: "Interessado", color: "#3b82f6" },
-  { name: "Orçamento enviado", color: "#a855f7" },
-  { name: "Venda confirmada", color: "#10b981" },
-  { name: "Cliente perdido", color: "#6b7280" }
+  { name: "Interessado", color: "blue" },
+  { name: "Orçamento enviado", color: "purple" },
+  { name: "Venda confirmada", color: "green" },
+  { name: "Cliente perdido", color: "neutral" }
 ];
+
+async function verifyTenantAccess(request: NextRequest, tenantId: string): Promise<boolean> {
+  const [masterAuth, operator] = await Promise.all([
+    verifyMasterRequest(request),
+    verifyOperator()
+  ]);
+  if (masterAuth.authorized) return true;
+  if (!operator) return false;
+  const member = await supabaseRows<Array<{ role: string }>>(
+    "crm_tenant_memberships?select=role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
+    operator.token
+  );
+  return member.length > 0;
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const operator = await verifyOperator();
-    if (!operator) return privateJson({ error: "unauthorized" }, 401);
-
     const tenantId = request.nextUrl.searchParams.get("tenant");
     if (!tenantId || !UUID.test(tenantId)) return privateJson({ error: "invalid_tenant" }, 400);
 
-    const member = await supabaseRows<Array<{ role: string }>>(
-      "crm_tenant_memberships?select=role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-      operator.token
-    );
-    if (!member.length) return privateJson({ error: "not_authorized" }, 403);
+    const authorized = await verifyTenantAccess(request, tenantId);
+    if (!authorized) return privateJson({ error: "not_authorized" }, 403);
 
-    const effectivePlan = await getEffectiveTenantPlan(tenantId);
-    if (!effectivePlan.allowedFeatures.includes("commercial_tags")) {
-      return privateJson({ tags: [], contactTags: [], featureLocked: true });
+    const guard = await requireTenantFeature(tenantId, "commercial_tags");
+    if (!guard.allowed) {
+      return privateJson({
+        tags: [],
+        contactTags: [],
+        conversationTags: {},
+        featureLocked: true,
+        state: guard.state,
+        message: guard.message
+      });
     }
 
     const { url } = supabaseSettings();
@@ -42,7 +59,7 @@ export async function GET(request: NextRequest) {
       headers: { apikey: secret, Authorization: "Bearer " + secret },
       cache: "no-store"
     });
-    let tags = (await rTags.json()) as Array<{ id: string; name: string; color: string }>;
+    let tags = rTags.ok ? ((await rTags.json()) as Array<{ id: string; name: string; color: string }>) : [];
 
     // Seed default tags if none exist
     if (!tags.length) {
@@ -51,24 +68,46 @@ export async function GET(request: NextRequest) {
           method: "POST",
           headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
           body: JSON.stringify({ tenant_id: tenantId, name: dt.name, color: dt.color })
-        });
+        }).catch(() => {});
       }
       const rNewTags = await fetch(url + `/rest/v1/crm_tags?tenant_id=eq.${tenantId}&select=id,name,color`, {
         headers: { apikey: secret, Authorization: "Bearer " + secret },
         cache: "no-store"
       });
-      tags = (await rNewTags.json()) as Array<{ id: string; name: string; color: string }>;
+      tags = rNewTags.ok ? ((await rNewTags.json()) as Array<{ id: string; name: string; color: string }>) : [];
     }
 
-    // 2. Fetch all contact tags for this tenant
-    const rContactTags = await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&select=contact_id,tag_id`, {
-      headers: { apikey: secret, Authorization: "Bearer " + secret },
-      cache: "no-store"
-    });
-    const contactTags = (await rContactTags.json()) as Array<{ contact_id: string; tag_id: string }>;
+    // 2. Fetch all contact tags for this tenant + conversationTags map from settings
+    const [rContactTags, rSettings] = await Promise.all([
+      fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&select=contact_id,tag_id`, {
+        headers: { apikey: secret, Authorization: "Bearer " + secret },
+        cache: "no-store"
+      }),
+      fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
+        headers: { apikey: secret, Authorization: "Bearer " + secret },
+        cache: "no-store"
+      })
+    ]);
+    const contactTags = rContactTags.ok ? ((await rContactTags.json()) as Array<{ contact_id: string; tag_id: string }>) : [];
+    let conversationTags: Record<string, string> = {};
+    let tagHistory: Array<Record<string, any>> = [];
+    if (rSettings.ok) {
+      const sRows = (await rSettings.json()) as Array<{ business_description: string }>;
+      if (sRows[0]?.business_description?.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(sRows[0].business_description);
+          if (parsed.conversationTags && typeof parsed.conversationTags === "object") {
+            conversationTags = parsed.conversationTags;
+          }
+          if (Array.isArray(parsed.tagHistory)) {
+            tagHistory = parsed.tagHistory;
+          }
+        } catch {}
+      }
+    }
 
-    return privateJson({ tags, contactTags });
-  } catch (err) {
+    return privateJson({ tags, contactTags, conversationTags, tagHistory });
+  } catch {
     return privateJson({ error: "tags_unavailable" }, 500);
   }
 }
@@ -82,57 +121,108 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const operator = await verifyOperator();
-    if (!operator) return privateJson({ error: "unauthorized" }, 401);
-
     const body = await request.json();
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     const contactId = typeof body.contactId === "string" ? body.contactId : "";
+    const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
     const tagId = typeof body.tagId === "string" ? body.tagId : "";
+    const tagName = typeof body.tagName === "string" ? body.tagName.trim() : "";
     const action = body.action === "remove" ? "remove" : "set";
 
-    if (!UUID.test(tenantId) || !UUID.test(contactId) || !UUID.test(tagId)) {
+    if (!UUID.test(tenantId)) {
       return privateJson({ error: "invalid_params" }, 400);
     }
 
-    const member = await supabaseRows<Array<{ role: string }>>(
-      "crm_tenant_memberships?select=role&tenant_id=eq." + tenantId + "&user_id=eq." + operator.id + "&limit=1",
-      operator.token
-    );
-    if (!member.length) return privateJson({ error: "not_authorized" }, 403);
+    const authorized = await verifyTenantAccess(request, tenantId);
+    if (!authorized) return privateJson({ error: "not_authorized" }, 403);
 
-    const effectivePlan = await getEffectiveTenantPlan(tenantId);
-    if (!effectivePlan.allowedFeatures.includes("commercial_tags")) {
-      return privateJson({ error: "feature_not_included_in_plan", message: "Etiquetas comerciais requerem o plano CRM Business ou Premium." }, 403);
+    const guard = await requireTenantFeature(tenantId, "commercial_tags");
+    if (!guard.allowed) {
+      return privateJson({
+        error: guard.errorCode || "feature_not_included_in_plan",
+        state: guard.state,
+        message: guard.message || "Etiquetas comerciais requerem o plano CRM Business ou CRM Premium."
+      }, guard.statusHttp);
     }
 
     const { url } = supabaseSettings();
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
     if (secret.length < 30) return privateJson({ error: "service_not_configured" }, 503);
 
-    if (action === "remove") {
-      await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&contact_id=eq.${contactId}&tag_id=eq.${tagId}`, {
-        method: "DELETE",
-        headers: { apikey: secret, Authorization: "Bearer " + secret }
-      });
-      return privateJson({ success: true, action: "removed" });
-    } else {
-      // Remove any existing commercial tag on this contact to ensure clean single-stage commercial state
-      await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&contact_id=eq.${contactId}`, {
-        method: "DELETE",
-        headers: { apikey: secret, Authorization: "Bearer " + secret }
-      });
-
-      // Insert new tag
-      await fetch(url + "/rest/v1/crm_contact_tags", {
-        method: "POST",
-        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ tenant_id: tenantId, contact_id: contactId, tag_id: tagId })
-      });
-      return privateJson({ success: true, action: "set", tagId });
+    // 1. Update crm_contact_tags if contactId and tagId are UUIDs
+    if (UUID.test(contactId) && UUID.test(tagId)) {
+      if (action === "remove") {
+        await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&contact_id=eq.${contactId}&tag_id=eq.${tagId}`, {
+          method: "DELETE",
+          headers: { apikey: secret, Authorization: "Bearer " + secret }
+        });
+      } else {
+        await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}&contact_id=eq.${contactId}`, {
+          method: "DELETE",
+          headers: { apikey: secret, Authorization: "Bearer " + secret }
+        });
+        await fetch(url + "/rest/v1/crm_contact_tags", {
+          method: "POST",
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify({ tenant_id: tenantId, contact_id: contactId, tag_id: tagId })
+        });
+      }
     }
-  } catch (err) {
+
+    // 2. Also persist in crm_tenant_settings.business_description -> conversationTags & tagHistory
+    const targetKey = conversationId || contactId;
+    if (targetKey) {
+      const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
+        headers: { apikey: secret, Authorization: "Bearer " + secret },
+        cache: "no-store"
+      });
+      if (rGet.ok) {
+        const sRows = (await rGet.json()) as Array<{ business_description: string }>;
+        let parsed: Record<string, any> = {};
+        if (sRows[0]?.business_description?.startsWith("{")) {
+          try { parsed = JSON.parse(sRows[0].business_description); } catch {}
+        }
+        const convTags: Record<string, string> = parsed.conversationTags && typeof parsed.conversationTags === "object"
+          ? parsed.conversationTags
+          : {};
+        const tagHistory: Array<Record<string, any>> = Array.isArray(parsed.tagHistory)
+          ? parsed.tagHistory
+          : [];
+
+        const resolvedLabel = tagName || tagId;
+        if (action === "remove" || !resolvedLabel) {
+          delete convTags[targetKey];
+          if (contactId) delete convTags[contactId];
+        } else {
+          convTags[targetKey] = resolvedLabel;
+          if (contactId) convTags[contactId] = resolvedLabel;
+          tagHistory.unshift({
+            id: `th_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            conversationId: conversationId || null,
+            contactId: contactId || null,
+            tag: resolvedLabel,
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        parsed.conversationTags = convTags;
+        parsed.tagHistory = tagHistory.slice(0, 200);
+
+        await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
+          method: "PATCH",
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify({ business_description: JSON.stringify(parsed), updated_at: new Date().toISOString() })
+        });
+      }
+    }
+
+    return privateJson({
+      success: true,
+      action,
+      tagId,
+      tagName: tagName || tagId
+    });
+  } catch {
     return privateJson({ error: "failed_to_update_tags" }, 500);
   }
 }
-
