@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
@@ -184,6 +184,11 @@ export default function OperatorPage() {
   const [savingAi, setSavingAi] = useState(false);
   const [aiNotice, setAiNotice] = useState("");
 
+  // Keep track of unsaved local AI edits and prevent background fetch from wiping out user typing
+  const isAiDirtyRef = useRef(false);
+  const loadedTenantAiRef = useRef("");
+  const prevDataRef = useRef<Data | null>(null);
+
   // Operating Hours state
   const [operatingHours, setOperatingHours] = useState<{
     enabled: boolean;
@@ -281,16 +286,19 @@ export default function OperatorPage() {
     return slug.startsWith("novaesweb") ? "novaesweb-ia-teste" : `loja_${slug}`;
   }, [currentTenantObj]);
 
-  const fetchAiSettings = useCallback(async (tenantId: string) => {
+  const fetchAiSettings = useCallback(async (tenantId: string, force = false) => {
     if (!tenantId) return;
     try {
       const res = await fetch(`/api/crm/operator/ai-settings?tenant=${encodeURIComponent(tenantId)}`, { cache: "no-store" });
       if (res.ok) {
         const json = await res.json();
-        setAgentLabel(json.agentLabel || "Assistente Virtual");
-        setInstructions(json.instructions || "");
-        setStoreInfo(json.storeInfo || "");
-        setAiEnabled(json.enabled !== false);
+        if (force || !isAiDirtyRef.current) {
+          setAgentLabel(json.agentLabel ?? "Assistente Virtual");
+          setInstructions(json.instructions ?? "");
+          setStoreInfo(json.storeInfo ?? "");
+          setAiEnabled(json.enabled !== false);
+          isAiDirtyRef.current = false;
+        }
         if (json.operatingHours) {
           setOperatingHours(prev => ({ ...prev, ...json.operatingHours }));
         }
@@ -344,13 +352,14 @@ export default function OperatorPage() {
 
       // Check if new urgent handoffs arrived
       if (silent && soundEnabled) {
-        const prevUrgent = data?.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
+        const prevUrgent = prevDataRef.current?.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         const newUrgent = json.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         if (newUrgent > prevUrgent) {
           playNotificationSound();
         }
       }
 
+      prevDataRef.current = json;
       setData(json);
       setIsSuspended(json.isSuspended === true);
       setSuspensionReason(json.suspensionReason || "");
@@ -369,15 +378,16 @@ export default function OperatorPage() {
       if (!tenantId && activeTenant) {
         setTenant(activeTenant);
       }
-      if (activeTenant && !silent) {
-        void fetchAiSettings(activeTenant);
+      if (activeTenant && loadedTenantAiRef.current !== activeTenant) {
+        loadedTenantAiRef.current = activeTenant;
+        void fetchAiSettings(activeTenant, true);
       }
     } catch (e) {
       if (!silent) setError(e instanceof Error ? e.message : "Falha ao carregar atendimentos.");
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [data, fetchAiSettings, soundEnabled, playNotificationSound]);
+  }, [fetchAiSettings, soundEnabled, playNotificationSound]);
 
   // Silent auto-refresh polling every 8 seconds
   useEffect(() => {
@@ -430,7 +440,8 @@ export default function OperatorPage() {
       }
     })();
     return () => { active = false; };
-  }, [fetchData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (authenticated && instanceName) {
@@ -478,6 +489,9 @@ export default function OperatorPage() {
     setTenant(nextTenant);
     setSelected("");
     setQrCode(null);
+    loadedTenantAiRef.current = nextTenant;
+    isAiDirtyRef.current = false;
+    void fetchAiSettings(nextTenant, true);
     await fetchData(nextTenant);
   }
 
@@ -577,19 +591,22 @@ export default function OperatorPage() {
     setSavingAi(true);
     setAiNotice("");
     try {
+      const finalLabel = agentLabel.trim() || "Assistente Virtual";
       const res = await fetch("/api/crm/operator/ai-settings", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: tenant,
-          agentLabel,
+          agentLabel: finalLabel,
           instructions,
           storeInfo,
           enabled: aiEnabled
         })
       });
       if (!res.ok) throw new Error();
+      setAgentLabel(finalLabel);
+      isAiDirtyRef.current = false;
       setAiNotice("Configurações salvas com sucesso! Sua IA já está respondendo no WhatsApp com os novos dados.");
     } catch {
       setAiNotice("Falha ao salvar configurações da IA.");
@@ -688,6 +705,7 @@ export default function OperatorPage() {
   };
 
   const applyPreset = (preset: typeof INDUSTRY_PRESETS[0]) => {
+    isAiDirtyRef.current = true;
     setAgentLabel(preset.agentName);
     setInstructions(preset.instructions);
     setStoreInfo(preset.storeInfo);
@@ -845,6 +863,7 @@ ${wizardData.hoursDelivery.trim() || "Horário de atendimento comercial padrão.
 ### DÚVIDAS FREQUENTES (FAQ)
 ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
+    isAiDirtyRef.current = true;
     setAgentLabel(`Assistente Virtual - ${sName}`);
     setInstructions(customPrompt);
     setStoreInfo(storeInfoCompiled);
@@ -1917,14 +1936,13 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px"}}>
                     <div>
                       <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                        Nome do seu Assistente Virtual
+                        Nome da sua Assistente Virtual
                       </label>
                       <input
                         style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "14px"}}
                         value={agentLabel}
-                        onChange={e => setAgentLabel(e.target.value)}
+                        onChange={e => { isAiDirtyRef.current = true; setAgentLabel(e.target.value); }}
                         placeholder="Ex.: Bia - Atendente da Bella Pizza"
-                        required
                       />
                     </div>
 
@@ -1948,7 +1966,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <textarea
                       style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "95px", fontSize: "14px", lineHeight: "1.5"}}
                       value={instructions}
-                      onChange={e => setInstructions(e.target.value)}
+                      onChange={e => { isAiDirtyRef.current = true; setInstructions(e.target.value); }}
                       placeholder="Ex.: Você é a atendente virtual da Bella Pizza no WhatsApp. Responda com simpatia, use emojis leves, ajude o cliente a escolher a pizza e incentive o pedido. Seja rápida e clara."
                     />
                   </div>
@@ -1960,7 +1978,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <textarea
                       style={{width: "100%", padding: "14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "220px", fontSize: "14px", lineHeight: "1.6", fontFamily: "monospace"}}
                       value={storeInfo}
-                      onChange={e => setStoreInfo(e.target.value)}
+                      onChange={e => { isAiDirtyRef.current = true; setStoreInfo(e.target.value); }}
                       placeholder="Ex.: 
 🍕 CARDÁPIO:
 - Pizza Calabresa: R$ 49,90

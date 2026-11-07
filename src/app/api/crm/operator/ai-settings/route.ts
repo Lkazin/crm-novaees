@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
 
     return privateJson({
       agentId: agent.id,
-      agentLabel: agent.label,
+      agentLabel: agent.label || "Assistente Virtual",
       instructions: agent.instructions,
       enabled: agent.enabled,
       storeInfo,
@@ -149,7 +149,8 @@ export async function POST(request: NextRequest) {
     if (!members.length) return privateJson({ error: "tenant_forbidden" }, 403);
 
     const { url, serviceKey } = getServiceConfig();
-    const label = typeof body.agentLabel === "string" ? body.agentLabel.trim() : "Assistente Virtual";
+    const rawLabel = typeof body.agentLabel === "string" ? body.agentLabel.trim() : "";
+    const label = rawLabel || "Assistente Virtual";
     const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
     const storeInfo = typeof body.storeInfo === "string" ? body.storeInfo.trim() : "";
     const enabled = body.enabled !== false;
