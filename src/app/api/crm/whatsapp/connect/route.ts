@@ -68,12 +68,13 @@ async function syncChannelStatus(instanceName: string, tenantId: string | undefi
   }
 }
 
-async function configureEvolutionWebhook(url: string, key: string, secret: string, instanceName: string, reqOrigin?: string, isVercel?: boolean) {
-  if (!secret) return;
+async function configureEvolutionWebhook(url: string, key: string, secret: string, instanceName: string, _reqOrigin?: string, _isVercel?: boolean) {
   try {
-    const isPublicOrigin = reqOrigin && /^https:\/\//.test(reqOrigin) && !reqOrigin.includes("localhost") && !reqOrigin.includes("127.0.0.1");
-    const webhookAppUrl = process.env.NEXT_PUBLIC_APP_URL || (isPublicOrigin ? reqOrigin : isVercel ? "https://crm-novaees.vercel.app" : "http://host.docker.internal:3040");
-    const targetWebhookUrl = `${webhookAppUrl.replace(/\/$/, "")}/api/evolution/webhook`;
+    // Evolution API runs in Docker alongside the local CRM processor (port 3040) which has access to Omniroute AI (:20128), Redis, and Supabase.
+    const webhookBase = process.env.EVOLUTION_WEBHOOK_TARGET_URL || "http://host.docker.internal:3040/api/evolution/webhook";
+    const targetWebhookUrl = secret
+      ? `${webhookBase.replace(/\/$/, "")}?secret=${encodeURIComponent(secret)}`
+      : webhookBase.replace(/\/$/, "");
     const events = ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"];
 
     const res = await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {

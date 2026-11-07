@@ -1,7 +1,12 @@
 import type { AiConfig } from "./config";
 
 function approvedModels(primary: string, fallback?: string): string[] {
-  const additional = (process.env.AI_FALLBACK_MODELS ?? "").split(",").map(v => v.trim()).filter(Boolean);
+  const rawEnv = process.env.AI_FALLBACK_MODELS;
+  const additional = rawEnv !== undefined
+    ? rawEnv.split(",").map(v => v.trim()).filter(Boolean)
+    : primary.startsWith("auto")
+      ? ["auto/best-chat", "auto/fast", "auto/chat"]
+      : [];
   const candidateList = [primary, fallback, ...additional].filter(Boolean) as string[];
   const models = candidateList.filter(m => /^[a-zA-Z0-9_.:/-]{1,140}$/.test(m));
   return [...new Set(models)].slice(0, 4);
@@ -148,7 +153,7 @@ export async function generateAnswer(
         body: JSON.stringify({
           model: currentModel,
           temperature: 0.3,
-          max_tokens: 350,
+          max_tokens: 700,
           messages,
         }),
         signal: controller.signal,
@@ -166,7 +171,13 @@ export async function generateAnswer(
       }
       const data: unknown = await response.json();
       const answer = (data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
-      if (typeof answer !== "string" || !answer.trim()) throw new Error("IA retornou resposta vazia");
+      if (typeof answer !== "string" || !answer.trim()) {
+        if (index + 1 < models.length && Date.now() < deadline) {
+          console.warn(`[ai-fallback] Model ${currentModel} returned empty content. Switching to fallback: ${models[index + 1]}`);
+          continue;
+        }
+        throw new Error("IA retornou resposta vazia");
+      }
       return answer.trim().slice(0, 1400);
     } catch (error) {
       if ((error as { nonRetryable?: boolean })?.nonRetryable) throw error;

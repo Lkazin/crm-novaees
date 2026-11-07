@@ -143,6 +143,41 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
 
+      // Auto-heal webhook on Evolution API if connected and webhook is missing
+      if (isConnected) {
+        try {
+          const whCheck = await fetch(`${url}/webhook/find/${encodeURIComponent(instanceName)}`, {
+            headers: { apikey: key },
+            cache: "no-store",
+            signal: AbortSignal.timeout(2500)
+          });
+          const whData = whCheck.ok ? await whCheck.json() : null;
+          if (!whData || !whData.enabled || !whData.url) {
+            const secret = process.env.EVOLUTION_WEBHOOK_SECRET || process.env.CRM_WEBHOOK_SECRET || "";
+            const webhookBase = process.env.EVOLUTION_WEBHOOK_TARGET_URL || "http://host.docker.internal:3040/api/evolution/webhook";
+            const targetWebhookUrl = secret
+              ? `${webhookBase.replace(/\/$/, "")}?secret=${encodeURIComponent(secret)}`
+              : webhookBase.replace(/\/$/, "");
+            await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: key },
+              body: JSON.stringify({
+                webhook: {
+                  enabled: true,
+                  url: targetWebhookUrl,
+                  byEvents: false,
+                  base64: false,
+                  events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+                  headers: secret ? { "x-crm-webhook-secret": secret } : {}
+                }
+              }),
+              cache: "no-store",
+              signal: AbortSignal.timeout(3000)
+            }).catch(() => {});
+          }
+        } catch {}
+      }
+
       return NextResponse.json({
         instanceName,
         state,

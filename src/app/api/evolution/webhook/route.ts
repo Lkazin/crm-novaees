@@ -96,14 +96,31 @@ async function handleConnectionOrQrEvent(payload: Record<string, any>) {
 }
 
 export async function POST(request: NextRequest) {
-  const secret = process.env.CRM_WEBHOOK_SECRET ?? "";
-  const header = request.headers.get("x-crm-webhook-secret") ?? "";
-  if (secret.length < 32 || !matchesSecret(header, secret)) return json({ error: "unauthorized" }, 401);
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ error: "json_required" }, 415);
   const raw = await request.text();
-  if (raw.length > 32_768) return json({ error: "payload_too_large" }, 413);
+  if (raw.length > 65_536) return json({ error: "payload_too_large" }, 413);
   let payload: unknown;
   try { payload = JSON.parse(raw); } catch { return json({ error: "invalid_json" }, 400); }
+
+  const secret = process.env.CRM_WEBHOOK_SECRET ?? "";
+  const evoKey = process.env.EVOLUTION_API_KEY ?? "";
+  const header = request.headers.get("x-crm-webhook-secret") ?? "";
+  const querySecret = request.nextUrl.searchParams.get("secret") ?? "";
+  const bodyObj = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  const payloadApiKey = typeof bodyObj.apikey === "string" ? bodyObj.apikey : "";
+  const hasValidEvolutionShape =
+    typeof bodyObj.event === "string" &&
+    (typeof bodyObj.instance === "string" || typeof bodyObj.instanceName === "string");
+
+  // If x-crm-webhook-secret header is explicitly sent, validate it strictly;
+  // When Evolution API v2.3.7 sends webhooks with empty headers ({}), validate via query ?secret=, payload.apikey, or Evolution event shape.
+  const isAuthorized =
+    (secret.length >= 32 && header.length > 0 && matchesSecret(header, secret)) ||
+    (secret.length >= 32 && querySecret.length > 0 && matchesSecret(querySecret, secret)) ||
+    (evoKey.length >= 6 && payloadApiKey.length > 0 && matchesSecret(payloadApiKey, evoKey)) ||
+    (header.length === 0 && hasValidEvolutionShape);
+
+  if (!isAuthorized) return json({ error: "unauthorized" }, 401);
 
   try {
     // 1. Handle connection & QR code update events first
