@@ -25,6 +25,10 @@ export default function CentralLoginPage() {
   useEffect(() => {
     let active = true;
     async function checkExistingSession() {
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("error")) {
+        if (active) setCheckingSession(false);
+        return;
+      }
       try {
         const res = await fetch("/api/crm/auth/session", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {

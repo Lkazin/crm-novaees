@@ -93,6 +93,14 @@ export async function POST(request: NextRequest) {
       maxAge
     });
 
+    response.cookies.set("nw_crm_session", "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isSecure,
+      path: "/",
+      maxAge: 0
+    });
+
     return response;
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "auth_failed" }, 500);

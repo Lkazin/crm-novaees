@@ -51,6 +51,12 @@ export function middleware(request: NextRequest) {
 
   // 4. Central Login root ("/"): If already authenticated, automatically redirect to correct panel
   if (pathname === "/") {
+    // If request arrived with an error or explicit logout intent, DO NOT auto-redirect.
+    // This breaks redirect loops and allows users to see the login screen or switch accounts.
+    if (request.nextUrl.searchParams.has("error") || request.nextUrl.searchParams.has("logout")) {
+      return NextResponse.next();
+    }
+
     if (masterCookie) {
       return NextResponse.redirect(new URL("/admin", request.url));
     }
@@ -62,4 +68,3 @@ export function middleware(request: NextRequest) {
 
   return NextResponse.next();
 }
-

@@ -600,9 +600,10 @@ export default function ClientWorkspace({ embedded = false, initialTenant = "" }
         if (!result.authenticated) {
           setAuthenticated(false);
           if (!embedded && typeof window !== "undefined") {
-            window.location.href = "/";
+            try { await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" }); } catch {}
+            window.location.href = "/?error=unauthorized_client";
           }
-          setError("Sua sessão expirou. Entre novamente no painel Master.");
+          setError("Sua sessão expirou. Entre novamente.");
           return;
         }
         setAuthenticated(true);

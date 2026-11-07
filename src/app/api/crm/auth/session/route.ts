@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
         maxAge
       });
 
-      // If user also authenticated with Supabase, set operator cookie too
+      // If user also authenticated with Supabase, set operator cookie too; otherwise clear it
       if (supaAccessToken) {
         response.cookies.set(sessionCookieName(), supaAccessToken, {
           httpOnly: true,
@@ -204,6 +204,14 @@ export async function POST(request: NextRequest) {
           secure: isHttps,
           path: "/",
           maxAge: rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge
+        });
+      } else {
+        response.cookies.set(sessionCookieName(), "", {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: isHttps,
+          path: "/",
+          maxAge: 0
         });
       }
 
