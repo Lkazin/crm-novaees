@@ -172,6 +172,43 @@ const TECHNICAL_FEATURES_LIST: Array<{ id: FeatureId; name: string; category: st
 
 const DEFAULT_PLANS: PlanItem[] = [
   {
+    id: "crm-trial",
+    name: "Teste Grátis (7 Dias)",
+    price: "0,00",
+    quotaLimit: 100,
+    maxOperators: 1,
+    maxWhatsAppConnections: 1,
+    isActive: true,
+    description: "Avaliação gratuita de 7 dias com recursos do CRM Business liberados temporariamente.",
+    allowedFeatures: [
+      "ai_chat",
+      "knowledge_base",
+      "setup_wizard",
+      "human_handoff",
+      "simulator",
+      "contacts_history",
+      "basic_hours",
+      "quick_replies",
+      "basic_indicators",
+      "business_hours",
+      "commercial_tags",
+      "handoff_summary",
+      "sound_notifications",
+      "model_fallback",
+      "attendance_priority",
+      "satisfaction_survey",
+      "commercial_indicators"
+    ],
+    features: [
+      "7 dias corridos de teste grátis",
+      "Até 100 atendimentos no período",
+      "1 número WhatsApp (1/5 espaços)",
+      "1 operador humano",
+      "Recursos do CRM Business liberados temporariamente",
+      "Dados preservados ao final do período"
+    ]
+  },
+  {
     id: "crm-start",
     name: "CRM Start",
     price: "59,90",
@@ -2233,6 +2270,20 @@ export default function AdminCRM() {
                         )}
                       </div>
 
+                      {p.id === "crm-trial" && (
+                        <span style={{
+                          background: "linear-gradient(135deg, #9333ea, #c084fc)",
+                          color: "white",
+                          padding: "5px 14px",
+                          borderRadius: "20px",
+                          fontSize: "11px",
+                          fontWeight: 900,
+                          letterSpacing: "0.5px",
+                          boxShadow: "0 0 16px rgba(168, 85, 247, 0.45)"
+                        }}>
+                          🎁 TESTE 7 DIAS
+                        </span>
+                      )}
                       {p.isPopular && (
                         <span style={{
                           background: "var(--grad-primary)",
@@ -2255,9 +2306,18 @@ export default function AdminCRM() {
                     </div>
 
                     <div style={{marginBottom: "16px"}}>
-                      <span style={{fontSize: "13px", color: "#9ca3af"}}>R$</span>
-                      <strong style={{fontSize: "34px", color: "white", marginLeft: "4px"}}>{p.price}</strong>
-                      <span style={{fontSize: "13px", color: "#9ca3af"}}>/mês</span>
+                      {p.id === "crm-trial" ? (
+                        <div style={{display: "flex", alignItems: "baseline", gap: "6px"}}>
+                          <strong style={{fontSize: "30px", color: "#c084fc"}}>Gratuito</strong>
+                          <span style={{fontSize: "13px", color: "#9ca3af"}}>(7 Dias)</span>
+                        </div>
+                      ) : (
+                        <div>
+                          <span style={{fontSize: "13px", color: "#9ca3af"}}>R$</span>
+                          <strong style={{fontSize: "34px", color: "white", marginLeft: "4px"}}>{p.price}</strong>
+                          <span style={{fontSize: "13px", color: "#9ca3af"}}>/mês</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Franquia & Limites Técnicos */}
@@ -2576,7 +2636,7 @@ export default function AdminCRM() {
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
                       <option value="crm-trial">🎁 Teste Grátis (7 Dias — 100 atendimentos)</option>
-                      {plans.map(p => (
+                      {plans.filter(p => p.id !== "crm-trial").map(p => (
                         <option key={p.id} value={p.name}>
                           {p.name} — R$ {p.price}/mês ({p.quotaLimit.toLocaleString("pt-BR")} msgs)
                         </option>

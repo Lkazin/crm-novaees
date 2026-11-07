@@ -428,12 +428,17 @@ export const TRIAL_PLAN: CrmPlan & { durationDays: number } = {
   updated_at: new Date().toISOString()
 };
 
+export const ALL_DEFAULT_PLANS: CrmPlan[] = [
+  TRIAL_PLAN,
+  ...DEFAULT_PLANS
+];
+
 /**
  * Upgrade any legacy plan entry loaded from Redis (schema < 2) to the v2 commercial definition
  * without overwriting explicit v2 edits made by the Master.
  */
 export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
-  const defaultMatch = DEFAULT_PLANS.find(
+  const defaultMatch = ALL_DEFAULT_PLANS.find(
     d => d.id === raw.id || d.name.toLowerCase() === String(raw.name || "").toLowerCase()
   );
   if (!defaultMatch) {
@@ -584,9 +589,7 @@ let inMemoryPlansCatalog: CrmPlan[] | null = null;
 let inMemoryPlanDrafts: Record<string, CrmPlan> = {};
 
 async function getMasterPlansFromSupabase(): Promise<CrmPlan[]> {
-  if (inMemoryPlansCatalog && inMemoryPlansCatalog.length > 0) {
-    return inMemoryPlansCatalog;
-  }
+  let loadedPlans: CrmPlan[] = [];
   const config = getSupabaseConfig();
   if (config.url && config.serviceKey) {
     try {
@@ -603,15 +606,23 @@ async function getMasterPlansFromSupabase(): Promise<CrmPlan[]> {
         if (rows[0]?.business_description) {
           const parsed = JSON.parse(rows[0].business_description);
           if (Array.isArray(parsed?.master_plans_catalog) && parsed.master_plans_catalog.length > 0) {
-            const normalized = (parsed.master_plans_catalog as CrmPlan[]).map(normalizeCatalogPlan);
-            inMemoryPlansCatalog = normalized;
-            return normalized;
+            loadedPlans = (parsed.master_plans_catalog as CrmPlan[]).map(normalizeCatalogPlan);
           }
         }
       }
     } catch {}
   }
-  return DEFAULT_PLANS;
+
+  const map = new Map<string, CrmPlan>();
+  for (const def of ALL_DEFAULT_PLANS) {
+    map.set(def.id, def);
+  }
+  for (const p of loadedPlans) {
+    map.set(p.id, p);
+  }
+  const finalCatalog = Array.from(map.values());
+  inMemoryPlansCatalog = finalCatalog;
+  return finalCatalog;
 }
 
 async function getMasterPlanDraftsFromSupabase(): Promise<Record<string, CrmPlan>> {
@@ -729,7 +740,14 @@ export async function getMasterPlans(providedRedis?: Redis): Promise<CrmPlan[]> 
         if (hadLegacy) {
           await redis.set("crm:master:plans", JSON.stringify(normalized)).catch(() => {});
         }
-        return normalized;
+        const map = new Map<string, CrmPlan>();
+        for (const def of ALL_DEFAULT_PLANS) {
+          map.set(def.id, def);
+        }
+        for (const p of normalized) {
+          map.set(p.id, p);
+        }
+        return Array.from(map.values());
       }
       throw new Error("invalid_plan_catalog");
     }
@@ -883,7 +901,7 @@ export async function saveMasterPlan(
   const currentPublishedPlans = await getMasterPlans(providedRedis);
   const index = currentPublishedPlans.findIndex(p => p.id === planInput.id);
   const previousPlan = index >= 0 ? { ...currentPublishedPlans[index] } : undefined;
-  const fallbackDefault = DEFAULT_PLANS.find(p => p.id === planInput.id) || DEFAULT_PLANS[0];
+  const fallbackDefault = ALL_DEFAULT_PLANS.find(p => p.id === planInput.id) || DEFAULT_PLANS[0];
 
   const targetPlan: CrmPlan = {
     id: planInput.id,
