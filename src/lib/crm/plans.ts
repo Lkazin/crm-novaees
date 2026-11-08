@@ -75,7 +75,7 @@ export type PlanAuditEntry = {
   actor: string;
   planId: string;
   planName: string;
-  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard" | "upgrade_approved" | "upgrade_rejected" | "payment_marked_paid" | "suspension_updated";
+  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard" | "upgrade_approved" | "upgrade_rejected" | "payment_marked_paid" | "suspension_updated" | "delete";
   vigencia: "immediate" | "new_clients" | "next_cycle";
   previousValues?: Partial<CrmPlan>;
   newValues?: Partial<CrmPlan>;
@@ -866,6 +866,93 @@ export async function discardPlanDraft(planId: string, actor = "master_admin", p
     if (ownsConnection && !providedRedis) redis.disconnect();
   }
 }
+
+/**
+ * Permanently delete a plan from the published catalog and remove any associated drafts.
+ * Protects official base plans (crm-trial and crm-premium).
+ */
+export async function deleteMasterPlan(
+  planId: string,
+  actor = "master_admin",
+  providedRedis?: Redis
+): Promise<{ success: boolean; deletedPlanId: string; plans: CrmPlan[] }> {
+  if (!planId || typeof planId !== "string") {
+    throw new Error("ID do plano inválido.");
+  }
+
+  if (planId === "crm-trial" || planId === "crm-premium") {
+    throw new Error("Os planos oficiais base (Teste Grátis e CRM Premium) são obrigatórios do sistema e não podem ser excluídos.");
+  }
+
+  const redis = getRedis(providedRedis);
+  let ownsConnection = false;
+  let redisAvailable = false;
+  try {
+    if (redis.status !== "ready" && redis.status !== "connecting") {
+      await redis.connect();
+      ownsConnection = true;
+    }
+    redisAvailable = redis.status === "ready" || redis.status === "connecting";
+  } catch (connErr) {
+    if (providedRedis) throw connErr;
+    redisAvailable = false;
+  }
+
+  try {
+    const currentPlans = await getMasterPlans(providedRedis);
+    const targetPlan = currentPlans.find(p => p.id === planId);
+
+    if (!targetPlan) {
+      const discarded = await discardPlanDraft(planId, actor, providedRedis);
+      if (discarded) {
+        return { success: true, deletedPlanId: planId, plans: currentPlans };
+      }
+      throw new Error("Plano não encontrado no catálogo.");
+    }
+
+    const nextPublishedPlans = currentPlans.filter(p => p.id !== planId);
+
+    if (!providedRedis) {
+      await saveMasterPlansToSupabase(nextPublishedPlans, undefined, planId);
+    }
+
+    if (redisAvailable) {
+      try {
+        await redis.set("crm:master:plans", JSON.stringify(nextPublishedPlans));
+        await redis.hdel("crm:master:plans:drafts", planId);
+      } catch (err) {
+        if (providedRedis) throw err;
+      }
+    }
+
+    inMemoryPlansCatalog = nextPublishedPlans;
+    if (inMemoryPlanDrafts && inMemoryPlanDrafts[planId]) {
+      delete inMemoryPlanDrafts[planId];
+    }
+
+    await recordPlanAudit({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      actor,
+      planId,
+      planName: targetPlan.name,
+      action: "delete",
+      vigencia: "immediate",
+      newValues: { status: "inactive" },
+      affectedTenantsCount: 0,
+      affectedTenants: [],
+      timestamp: new Date().toISOString()
+    }, providedRedis);
+
+    return {
+      success: true,
+      deletedPlanId: planId,
+      plans: nextPublishedPlans
+    };
+  } finally {
+    if (ownsConnection && !providedRedis) redis.disconnect();
+  }
+}
+
 
 /**
  * Retrieve master plans enriched with draft status for the Master Admin UI.

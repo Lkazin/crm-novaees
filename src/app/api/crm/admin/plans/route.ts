@@ -8,6 +8,7 @@ import {
   selectPublishedPlan,
   getMasterPlansWithDrafts,
   discardPlanDraft,
+  deleteMasterPlan,
   saveMasterPlan,
   syncTenantUsageLimits,
   invalidateEffectivePlanCache,
@@ -115,6 +116,13 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const action = body.action || "save_and_apply";
+
+    if (action === "delete_plan" || action === "delete") {
+      const planId = typeof body.planId === "string" ? body.planId : "";
+      if (!planId) return privateJson({ error: "missing_plan_id" }, 400);
+      const result = await deleteMasterPlan(planId, auth.actor);
+      return privateJson({ success: true, deletedPlanId: result.deletedPlanId, plans: result.plans });
+    }
 
     if (action === "discard_draft") {
       const planId = typeof body.planId === "string" ? body.planId : "";
@@ -329,5 +337,35 @@ export async function PATCH(request: NextRequest) {
     return privateJson({ updated: true, tenantId, plan: planObj, channelSync });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "assign_plan_failed" }, 503);
+  }
+}
+
+// DELETE: Permanently delete a commercial plan from the catalog
+export async function DELETE(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
+  try {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
+      return privateJson({ error: "unauthorized" }, 401);
+    }
+
+    const { searchParams } = new URL(request.url);
+    let planId = searchParams.get("planId") || "";
+
+    if (!planId) {
+      const body = await request.json().catch(() => ({}));
+      planId = typeof body.planId === "string" ? body.planId : "";
+    }
+
+    if (!planId) {
+      return privateJson({ error: "missing_plan_id" }, 400);
+    }
+
+    const result = await deleteMasterPlan(planId, auth.actor);
+    return privateJson({ success: true, deletedPlanId: result.deletedPlanId, plans: result.plans });
+  } catch (e) {
+    return privateJson({ error: e instanceof Error ? e.message : "delete_plan_failed" }, 400);
   }
 }

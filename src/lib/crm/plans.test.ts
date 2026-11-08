@@ -8,6 +8,7 @@ import {
   TECHNICAL_FEATURES,
   normalizeCatalogPlan,
   selectPublishedPlan,
+  deleteMasterPlan,
 } from "./plans";
 import {
   expectedSlotInstanceName,
@@ -236,4 +237,16 @@ it("normaliza IDs de recursos antigos sem ampliar o conjunto marcado no catálog
  const premium=DEFAULT_PLANS.find(p=>p.id==="crm-premium")!;
  const normalized=normalizeCatalogPlan({...premium,features:["knowledge_base","setup_wizard","contacts_history","basic_hours","attendance_priority"] as unknown as typeof premium.features});
  assert.deepEqual(normalized.features,["ai_chat","human_handoff","business_hours_basic","conversation_priority"]);
+});
+
+
+describe("Exclusão de Planos Comerciais (deleteMasterPlan)", () => {
+  it("impede a exclusão dos planos oficiais base Teste Grátis e CRM Premium", async () => {
+    await assert.rejects(() => deleteMasterPlan("crm-trial"), /não podem ser excluídos/);
+    await assert.rejects(() => deleteMasterPlan("crm-premium"), /não podem ser excluídos/);
+  });
+
+  it("rejeita exclusão com ID de plano inválido", async () => {
+    await assert.rejects(() => deleteMasterPlan(""), /ID do plano inválido/);
+  });
 });

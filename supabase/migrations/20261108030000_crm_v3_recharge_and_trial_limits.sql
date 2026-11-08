@@ -47,3 +47,4 @@ begin
  if requested_slot<1 or requested_slot>max_slot then raise exception 'channel_not_allowed_by_tier' using errcode='42501'; end if;
  return perm;
 end $$;
+

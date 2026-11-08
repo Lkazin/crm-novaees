@@ -868,6 +868,33 @@ export default function AdminCRM() {
     }
   };
 
+  const handleDeletePlan = async (plan: PlanItem) => {
+    if (plan.id === "crm-trial" || plan.id === "crm-premium") {
+      setError("Os planos oficiais base (Teste Grátis e CRM Premium) são obrigatórios e não podem ser excluídos.");
+      return;
+    }
+    const enrolled = clientCountsMap[plan.id] ?? 0;
+    const confirmMsg = enrolled > 0
+      ? `ATENÇÃO: Existem ${enrolled} loja(s) vinculada(s) ao plano "${plan.name}". Tem certeza que deseja EXCLUIR permanentemente este plano do catálogo?`
+      : `Tem certeza que deseja excluir permanentemente o plano "${plan.name}" do catálogo? Esta ação não pode ser desfeita.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch("/api/crm/admin/plans", {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId: plan.id })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Falha ao excluir plano.");
+      setNotice(`Plano "${plan.name}" excluído com sucesso do catálogo.`);
+      await fetchPlans();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao excluir plano.");
+    }
+  };
+
   const handleViewEnrolledStores = (plan: PlanItem) => {
     setSelectedPlanForStores(plan);
     setEnrolledModalOpen(true);
@@ -2424,6 +2451,31 @@ export default function AdminCRM() {
                         {isActive ? "Desativar Plano" : "Ativar Plano"}
                       </button>
 
+                      {p.id !== "crm-trial" && p.id !== "crm-premium" && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePlan(p)}
+                          style={{
+                            width: "100%",
+                            marginTop: "6px",
+                            padding: "6px",
+                            background: "rgba(244, 63, 94, 0.08)",
+                            border: "1px solid rgba(244, 63, 94, 0.25)",
+                            borderRadius: "8px",
+                            color: "#f43f5e",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "5px"
+                          }}
+                        >
+                          <Trash2 size={13} /> Excluir Plano
+                        </button>
+                      )}
+
                       {p.hasDraft && (
                         <button
                           type="button"
@@ -3270,13 +3322,39 @@ export default function AdminCRM() {
               </div>
 
               <div style={{display: "flex", gap: "10px", justifyContent: "space-between", marginTop: "24px"}}>
-                <button
-                  type="button"
-                  className="op-refresh"
-                  onClick={() => setEditPlanModalOpen(false)}
-                >
-                  Cancelar
-                </button>
+                <div style={{display: "flex", gap: "8px", alignItems: "center"}}>
+                  <button
+                    type="button"
+                    className="op-refresh"
+                    onClick={() => setEditPlanModalOpen(false)}
+                  >
+                    Cancelar
+                  </button>
+                  {!isCreatingNewPlan && editingPlan.id !== "crm-trial" && editingPlan.id !== "crm-premium" && (
+                    <button
+                      type="button"
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: "8px",
+                        background: "rgba(244, 63, 94, 0.12)",
+                        border: "1px solid rgba(244, 63, 94, 0.4)",
+                        color: "#f43f5e",
+                        fontWeight: 700,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px"
+                      }}
+                      onClick={async () => {
+                        setEditPlanModalOpen(false);
+                        await handleDeletePlan(editingPlan);
+                      }}
+                    >
+                      <Trash2 size={14} /> Excluir Plano
+                    </button>
+                  )}
+                </div>
                 <div style={{display: "flex", gap: "10px"}}>
                   <button
                     type="button"
