@@ -70,9 +70,7 @@ export function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (masterCookie) {
-      return NextResponse.redirect(new URL("/admin", request.url));
-    }
+    // Never auto-redirect to /admin from root (client login)
     if (operatorCookie) {
       return NextResponse.redirect(new URL("/cliente", request.url));
     }

@@ -29,10 +29,10 @@ export default function ClientPortalLoginPage() {
         return;
       }
       try {
-        const res = await fetch("/api/crm/auth/session", { credentials: "same-origin", cache: "no-store" });
+        const res = await fetch("/api/crm/auth/session?scope=client", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
-          if (data.authenticated && data.redirectTo) {
+          if (data.authenticated && data.role === "client" && data.redirectTo) {
             window.location.href = data.redirectTo;
             return;
           }
@@ -63,7 +63,8 @@ export default function ClientPortalLoginPage() {
         body: JSON.stringify({
           email: email.trim(),
           password,
-          rememberMe
+          rememberMe,
+          scope: "client"
         })
       });
 

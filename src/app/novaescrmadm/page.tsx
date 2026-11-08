@@ -24,7 +24,7 @@ export default function MasterSecretLoginPage() {
         return;
       }
       try {
-        const res = await fetch("/api/crm/auth/session", { credentials: "same-origin", cache: "no-store" });
+        const res = await fetch("/api/crm/auth/session?scope=master", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
           if (data.authenticated && data.role === "master") {
@@ -55,7 +55,8 @@ export default function MasterSecretLoginPage() {
         body: JSON.stringify({
           email: email.trim(),
           password,
-          rememberMe
+          rememberMe,
+          scope: "master"
         })
       });
 

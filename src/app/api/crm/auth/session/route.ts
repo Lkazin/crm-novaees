@@ -25,37 +25,55 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export async function GET(request: NextRequest) {
   try {
-    // 1. Check if authenticated as Master Admin
-    const masterAuth = await verifyMasterRequest(request);
-    if (masterAuth.authorized) {
-      return privateJson({
-        authenticated: true,
-        role: "master",
-        actor: masterAuth.actor,
-        redirectTo: "/admin"
-      });
+    const scope = request.nextUrl.searchParams.get("scope") || "";
+
+    // If caller explicitly asked for client verification only:
+    if (scope === "client") {
+      const operator = await verifyOperator();
+      if (operator) {
+        try {
+          const memberships = await supabaseRows<Membership[]>(
+            `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(operator.id)}`,
+            operator.token
+          );
+          const tenantIds = memberships.map(m => m.tenant_id).filter(id => UUID.test(id));
+          if (tenantIds.length > 0) {
+            const tenants = await supabaseRows<Tenant[]>(
+              `crm_tenants?select=id,name,status&id=in.(${tenantIds.join(",")})&status=eq.active`,
+              operator.token
+            );
+            if (tenants.length > 0) {
+              return privateJson({
+                authenticated: true,
+                role: "client",
+                actor: operator.email || operator.id,
+                tenants,
+                redirectTo: "/cliente"
+              });
+            }
+          }
+        } catch {}
+      }
+      return privateJson({ authenticated: false });
     }
 
-    // 2. Check if authenticated as Store Client / Operator via Supabase
+    // If caller explicitly asked for master verification only:
+    if (scope === "master") {
+      const masterAuth = await verifyMasterRequest(request);
+      if (masterAuth.authorized) {
+        return privateJson({
+          authenticated: true,
+          role: "master",
+          actor: masterAuth.actor,
+          redirectTo: "/admin"
+        });
+      }
+      return privateJson({ authenticated: false });
+    }
+
+    // Default: Check client session first to prioritize store operators
     const operator = await verifyOperator();
     if (operator) {
-      // Check if user is also in platform_staff
-      try {
-        const staff = await supabaseRows<Staff[]>(
-          `platform_staff?select=role,enabled&user_id=eq.${encodeURIComponent(operator.id)}&limit=2`,
-          operator.token
-        );
-        if (staff.length === 1 && staff[0].enabled && ["MASTER", "ADMINISTRADOR", "platform_admin"].includes(staff[0].role)) {
-          return privateJson({
-            authenticated: true,
-            role: "master",
-            actor: operator.email || operator.id,
-            redirectTo: "/admin"
-          });
-        }
-      } catch {}
-
-      // Check tenant memberships
       try {
         const memberships = await supabaseRows<Membership[]>(
           `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(operator.id)}`,
@@ -78,12 +96,15 @@ export async function GET(request: NextRequest) {
           }
         }
       } catch {}
+    }
 
-      // Authenticated with Supabase but has no active store association
+    const masterAuth = await verifyMasterRequest(request);
+    if (masterAuth.authorized) {
       return privateJson({
-        authenticated: false,
-        error: "no_active_tenant",
-        message: "Usuário autenticado, mas não possui lojas ativas vinculadas."
+        authenticated: true,
+        role: "master",
+        actor: masterAuth.actor,
+        redirectTo: "/admin"
       });
     }
 
@@ -126,6 +147,7 @@ export async function POST(request: NextRequest) {
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
     const rememberMe = Boolean(body.rememberMe);
+    const scope = typeof body.scope === "string" ? body.scope.trim().toLowerCase() : "client";
 
     if (!password) {
       return privateJson({ error: "missing_credentials", message: "Informe a senha para continuar." }, 400);
@@ -182,80 +204,46 @@ export async function POST(request: NextRequest) {
       try { await redis.del(rateLimitKey); } catch {}
     }
 
-    // CASE A: Master Admin via direct password match
-    if (isMasterPasswordMatch || isAdminTokenMatch) {
-      const masterToken = signMasterToken("master_admin", rememberMe);
-      const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : MASTER_SESSION_TTL_SEC;
-
-      const response = NextResponse.json({
-        success: true,
-        role: "master",
-        redirectTo: "/admin",
-        actor: email || "master_admin"
-      });
-
-      response.cookies.set({
-        name: MASTER_COOKIE_NAME,
-        value: masterToken,
-        httpOnly: true,
-        secure: isHttps,
-        sameSite: "lax",
-        path: "/",
-        maxAge
-      });
-
-      // If user also authenticated with Supabase, set operator cookie too; otherwise clear it
-      if (supaAccessToken) {
-        response.cookies.set(sessionCookieName(), supaAccessToken, {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: isHttps,
-          path: "/",
-          maxAge: rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge
-        });
-      } else {
-        response.cookies.set(sessionCookieName(), "", {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: isHttps,
-          path: "/",
-          maxAge: 0
-        });
+    // =========================================================================
+    // FLOW 1: EXCLUSIVE MASTER LOGIN (Strictly via /novaescrmadm with scope="master")
+    // =========================================================================
+    if (scope === "master") {
+      let isStaffMaster = false;
+      if (supaAccessToken && supaUserId) {
+        try {
+          const staff = await supabaseRows<Staff[]>(
+            `platform_staff?select=role,enabled&user_id=eq.${encodeURIComponent(supaUserId)}&limit=2`,
+            supaAccessToken
+          );
+          if (staff.length === 1 && staff[0].enabled && ["MASTER", "ADMINISTRADOR", "platform_admin"].includes(staff[0].role)) {
+            isStaffMaster = true;
+          }
+        } catch {}
       }
 
-      return response;
-    }
+      if (isMasterPasswordMatch || isAdminTokenMatch || isStaffMaster) {
+        const actorName = supaUserEmail || (email ? email : "master_admin");
+        const masterToken = signMasterToken(isStaffMaster ? `master_${supaUserId}` : "master_admin", rememberMe);
+        const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : MASTER_SESSION_TTL_SEC;
 
-    // CASE B: Supabase Auth User
-    if (supaAccessToken && supaUserId) {
-      // B.1 Check if this Supabase user has a Master / Admin role in platform_staff
-      try {
-        const staff = await supabaseRows<Staff[]>(
-          `platform_staff?select=role,enabled&user_id=eq.${encodeURIComponent(supaUserId)}&limit=2`,
-          supaAccessToken
-        );
+        const response = NextResponse.json({
+          success: true,
+          role: "master",
+          redirectTo: "/admin",
+          actor: actorName
+        });
 
-        if (staff.length === 1 && staff[0].enabled && ["MASTER", "ADMINISTRADOR", "platform_admin"].includes(staff[0].role)) {
-          const masterToken = signMasterToken(`master_${supaUserId}`, rememberMe);
-          const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : MASTER_SESSION_TTL_SEC;
+        response.cookies.set({
+          name: MASTER_COOKIE_NAME,
+          value: masterToken,
+          httpOnly: true,
+          secure: isHttps,
+          sameSite: "lax",
+          path: "/",
+          maxAge
+        });
 
-          const response = NextResponse.json({
-            success: true,
-            role: "master",
-            redirectTo: "/admin",
-            actor: supaUserEmail || supaUserId
-          });
-
-          response.cookies.set({
-            name: MASTER_COOKIE_NAME,
-            value: masterToken,
-            httpOnly: true,
-            secure: isHttps,
-            sameSite: "lax",
-            path: "/",
-            maxAge
-          });
-
+        if (supaAccessToken) {
           response.cookies.set(sessionCookieName(), supaAccessToken, {
             httpOnly: true,
             sameSite: "lax",
@@ -263,12 +251,22 @@ export async function POST(request: NextRequest) {
             path: "/",
             maxAge: rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge
           });
-
-          return response;
         }
-      } catch {}
 
-      // B.2 Check Store Client Memberships in crm_tenant_memberships
+        return response;
+      }
+
+      return privateJson({
+        error: "invalid_master_credentials",
+        message: "Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb."
+      }, 401);
+    }
+
+    // =========================================================================
+    // FLOW 2: EXCLUSIVE CLIENT LOGIN (Portal da Loja no "/" ou "/cliente")
+    // Never allows Master login; always burns any leftover master cookie!
+    // =========================================================================
+    if (supaAccessToken && supaUserId) {
       try {
         const memberships = await supabaseRows<Membership[]>(
           `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(supaUserId)}`,
@@ -279,7 +277,7 @@ export async function POST(request: NextRequest) {
         if (!tenantIds.length) {
           return privateJson({
             error: "no_membership",
-            message: "Sua conta de usuário não possui vínculo com nenhuma loja ativa no CRM. Contate o suporte da NovaesWeb."
+            message: "Sua conta de usuário não possui vínculo com nenhuma loja ativa no CRM. Solicite um convite ao administrador da sua loja."
           }, 403);
         }
 
@@ -292,11 +290,10 @@ export async function POST(request: NextRequest) {
         if (!activeTenants.length) {
           return privateJson({
             error: "store_suspended",
-            message: "A loja vinculada à sua conta está temporariamente suspensa ou inativa. Verifique o plano comercial com o suporte."
+            message: "A loja vinculada à sua conta está temporariamente inativa ou suspensa. Verifique com o suporte."
           }, 403);
         }
 
-        // Store Client valid! Set operator cookie and clear any old master session
         const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge;
         const response = NextResponse.json({
           success: true,
@@ -306,6 +303,7 @@ export async function POST(request: NextRequest) {
           actor: supaUserEmail || supaUserId
         });
 
+        // Set Client/Operator session cookie
         response.cookies.set(sessionCookieName(), supaAccessToken, {
           httpOnly: true,
           sameSite: "lax",
@@ -314,7 +312,7 @@ export async function POST(request: NextRequest) {
           maxAge
         });
 
-        // Invalidate master cookie on client login
+        // CRITICAL: Always completely delete and burn any previous master cookie
         response.cookies.set({
           name: MASTER_COOKIE_NAME,
           value: "",
