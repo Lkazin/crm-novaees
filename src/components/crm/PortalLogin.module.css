@@ -1,11 +1,13 @@
-/* Base Scene Layout */
+/* Base Scene Layout - 100% FIXO SEM BARRA DE ROLAGEM */
 .scene {
-  min-height: 100svh;
+  height: 100svh;
+  max-height: 100svh;
+  overflow: hidden;
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
   position: relative;
-  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* ========================================================================= */
@@ -13,10 +15,10 @@
 /* ========================================================================= */
 .client {
   --ink: #f8f6fc;
-  --muted: #a79cb7;
-  --bg-base: #0b0714;
-  --card-bg: rgba(20, 13, 32, 0.76);
-  --card-border: rgba(189, 114, 237, 0.22);
+  --muted: #a396b5;
+  --bg-base: #0a0612;
+  --card-bg: rgba(18, 12, 28, 0.82);
+  --card-border: rgba(189, 114, 237, 0.2);
   --user-gradient: linear-gradient(110deg, #6B03CC 0%, #9806BF 30%, #CD3493 65%, #EC4084 100%);
   background-color: var(--bg-base);
   color: var(--ink);
@@ -27,43 +29,49 @@
   position: absolute;
   top: -10%;
   left: -5%;
-  width: 55vw;
-  height: 55vw;
-  max-width: 650px;
-  max-height: 650px;
+  width: 50vw;
+  height: 50vw;
+  max-width: 600px;
+  max-height: 600px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(107, 3, 204, 0.28) 0%, rgba(152, 6, 191, 0.12) 45%, transparent 70%);
-  filter: blur(80px);
+  background: radial-gradient(circle, rgba(107, 3, 204, 0.28) 0%, rgba(152, 6, 191, 0.1) 45%, transparent 70%);
+  filter: blur(85px);
   pointer-events: none;
   z-index: 0;
 }
 
 .ambientGlowSecondary {
   position: absolute;
-  bottom: -15%;
+  bottom: -10%;
   right: -5%;
-  width: 60vw;
-  height: 60vw;
-  max-width: 700px;
-  max-height: 700px;
+  width: 50vw;
+  height: 50vw;
+  max-width: 600px;
+  max-height: 600px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(236, 64, 132, 0.22) 0%, rgba(205, 52, 147, 0.1) 45%, transparent 70%);
+  background: radial-gradient(circle, rgba(236, 64, 132, 0.2) 0%, rgba(205, 52, 147, 0.08) 45%, transparent 70%);
   filter: blur(95px);
   pointer-events: none;
   z-index: 0;
 }
 
-/* Story Panel (Lado Esquerdo) */
+/* Story Panel (Lado Esquerdo - Fixo) */
 .story {
   position: relative;
   isolation: isolate;
   overflow: hidden;
   min-width: 0;
-  padding: clamp(32px, 5vw, 68px);
+  height: 100svh;
+  max-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(16px, 2.8vh, 32px) clamp(24px, 4vw, 48px);
+  box-sizing: border-box;
 }
 
 .client .story {
-  background: linear-gradient(135deg, rgba(20, 12, 34, 0.7) 0%, rgba(12, 8, 20, 0.9) 100%);
+  background: linear-gradient(135deg, rgba(18, 11, 30, 0.82) 0%, rgba(10, 6, 16, 0.95) 100%);
   border-right: 1px solid rgba(189, 114, 237, 0.12);
   backdrop-filter: blur(20px);
 }
@@ -73,62 +81,56 @@
   z-index: 2;
   display: flex;
   flex-direction: column;
-  min-height: calc(100svh - 136px);
-  max-width: 560px;
-  margin: auto;
+  justify-content: space-between;
+  height: 100%;
+  max-height: calc(100svh - clamp(32px, 5.6vh, 64px));
+  max-width: 520px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
-/* Marca / Logo */
-.brand {
+/* Logo Oficial da Novaes CRM IA */
+.brandLogoContainer {
   display: flex;
   align-items: center;
-  gap: 13px;
-  color: inherit;
   text-decoration: none;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
+  flex-shrink: 0;
 }
 
-.brand small {
-  display: block;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 2.5px;
-  margin-top: 3px;
-  opacity: 0.85;
+.brandHeroLogo {
+  height: clamp(52px, 7.5vh, 76px);
+  width: auto;
+  max-width: 280px;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 25px rgba(205, 52, 147, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.client .brandMark {
-  display: grid;
-  place-items: center;
-  background: var(--user-gradient);
-  color: white;
-  border-radius: 13px;
-  width: 44px;
-  height: 44px;
-  font-size: 28px;
-  font-weight: 900;
-  box-shadow: 0 4px 20px rgba(205, 52, 147, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+.mobileLogoWrap {
+  display: none;
 }
 
-/* Badge do escopo */
+/* Header Textos Compactos */
+.storyHeaderCompact {
+  margin: clamp(4px, 1.2vh, 12px) 0;
+  flex-shrink: 0;
+}
+
 .client .scopeBadge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  font-size: 11px;
+  gap: 7px;
+  font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 1.5px;
   border: 1px solid rgba(205, 52, 147, 0.35);
   border-radius: 99px;
-  padding: 8px 14px;
-  margin-top: 40px;
+  padding: 5px 12px;
+  margin-bottom: 8px;
   background: rgba(107, 3, 204, 0.18);
   color: #f0abfc;
-  box-shadow: 0 2px 14px rgba(107, 3, 204, 0.25);
+  box-shadow: 0 2px 12px rgba(107, 3, 204, 0.2);
 }
 
 .badgeSparkle {
@@ -141,12 +143,11 @@
   50% { transform: scale(1.2); opacity: 1; }
 }
 
-/* Título e Texto */
 .story h1 {
-  font-size: clamp(32px, 3.6vw, 50px);
+  font-size: clamp(24px, 2.7vw, 38px);
   line-height: 1.15;
-  letter-spacing: -1.5px;
-  margin: 22px 0 16px;
+  letter-spacing: -1.2px;
+  margin: 0 0 8px;
   font-weight: 800;
 }
 
@@ -158,31 +159,31 @@
 }
 
 .story p {
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: clamp(12.5px, 1.4vh, 14px);
+  line-height: 1.55;
   color: var(--muted);
   max-width: 480px;
   margin: 0;
 }
 
-/* Vitrine de Atendimento WhatsApp ao Vivo */
+/* Vitrine de Atendimento WhatsApp ao Vivo Compacta */
 .chatArt {
-  background: rgba(22, 14, 38, 0.82);
-  border: 1px solid rgba(189, 114, 237, 0.25);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 35px rgba(107, 3, 204, 0.18);
-  border-radius: 20px;
-  padding: 20px;
-  margin-top: 30px;
+  background: rgba(20, 13, 34, 0.85);
+  border: 1px solid rgba(189, 114, 237, 0.22);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.55), 0 0 30px rgba(107, 3, 204, 0.15);
+  border-radius: 18px;
+  padding: clamp(12px, 1.8vh, 16px);
   max-width: 440px;
   backdrop-filter: blur(16px);
+  flex-shrink: 0;
 }
 
 .chatHeader {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  padding-bottom: 14px;
-  border-bottom: 1px solid rgba(189, 114, 237, 0.15);
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(189, 114, 237, 0.14);
 }
 
 .avatarWrap {
@@ -192,10 +193,10 @@
 .avatar {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(107, 3, 204, 0.6), rgba(205, 52, 147, 0.6));
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(107, 3, 204, 0.7), rgba(205, 52, 147, 0.7));
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -204,11 +205,11 @@
   position: absolute;
   bottom: -2px;
   right: -2px;
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #10b981;
-  border: 2px solid #0e0918;
+  border: 2px solid #0a0612;
   box-shadow: 0 0 8px #10b981;
 }
 
@@ -220,8 +221,8 @@
 .chatHeaderTitle {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12.5px;
   font-weight: 700;
   color: #fdf4ff;
 }
@@ -231,80 +232,66 @@
   color: #34d399;
   border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 99px;
-  padding: 2px 7px;
-  font-size: 9px;
+  padding: 1px 6px;
+  font-size: 8.5px;
   font-weight: 800;
-  letter-spacing: 0.5px;
 }
 
 .chatHeaderSub {
   display: block;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .onlinePill {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #34d399;
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.25);
   border-radius: 99px;
-  padding: 3px 9px;
+  padding: 2px 7px;
 }
 
 /* Balões de conversa */
 .bubble {
   position: relative;
-  font-size: 12.5px;
-  line-height: 1.55;
-  background: rgba(38, 25, 58, 0.75);
+  font-size: 12px;
+  line-height: 1.5;
+  background: rgba(35, 22, 54, 0.8);
   color: #ede9fe;
-  border-radius: 4px 14px 14px 14px;
-  padding: 12px 14px 22px;
-  margin-top: 14px;
+  border-radius: 4px 12px 12px 12px;
+  padding: 8px 12px 20px;
+  margin-top: 10px;
   max-width: 86%;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.bubbleSender {
-  display: block;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  color: #d8b4fe;
-  margin-bottom: 4px;
-}
-
 .bubbleTime {
   position: absolute;
-  bottom: 5px;
-  right: 9px;
-  font-size: 9.5px;
+  bottom: 4px;
+  right: 8px;
+  font-size: 9px;
   color: #a78bfa;
 }
 
 .reply {
   background: var(--user-gradient);
   color: #ffffff;
-  border-radius: 14px 4px 14px 14px;
+  border-radius: 12px 4px 12px 12px;
   margin-left: auto;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 8px 24px rgba(205, 52, 147, 0.32);
-}
-
-.reply .bubbleSender {
-  color: #fde047;
+  box-shadow: 0 6px 20px rgba(205, 52, 147, 0.3);
 }
 
 .replyFooter {
   position: absolute;
-  bottom: 5px;
-  right: 9px;
+  bottom: 4px;
+  right: 8px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 }
 
 .replyFooter .bubbleTime {
@@ -320,158 +307,120 @@
 .chatMetaChips {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 14px;
-  padding-top: 12px;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid rgba(189, 114, 237, 0.12);
 }
 
 .metaChip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
+  gap: 4px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #e9d5ff;
   background: rgba(107, 3, 204, 0.2);
   border: 1px solid rgba(205, 52, 147, 0.25);
   border-radius: 99px;
-  padding: 4px 9px;
-}
-
-/* Pilares do CRM */
-.storyPillars {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 24px;
-  max-width: 440px;
-}
-
-.pillarItem {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: rgba(22, 14, 38, 0.55);
-  border: 1px solid rgba(189, 114, 237, 0.15);
-  border-radius: 12px;
-  padding: 10px 14px;
-  backdrop-filter: blur(8px);
-}
-
-.pillarIcon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: rgba(107, 3, 204, 0.3);
-  color: #f472b6;
-  flex-shrink: 0;
-  border: 1px solid rgba(205, 52, 147, 0.25);
-}
-
-.pillarText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.pillarText strong {
-  font-size: 11.5px;
-  color: #fdf4ff;
-}
-
-.pillarText span {
-  font-size: 10.5px;
-  color: var(--muted);
+  padding: 3px 8px;
 }
 
 .storyFooter {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 7px;
+  font-size: 11px;
   color: var(--muted);
-  margin-top: auto;
-  padding-top: 30px;
+  flex-shrink: 0;
+  padding-top: 8px;
 }
 
 /* ========================================================================= */
-/* PAINEL DE ACESSO / FORMULÁRIO (LADO DIREITO)                              */
+/* PAINEL DE ACESSO / FORMULÁRIO (LADO DIREITO - FIXO)                       */
 /* ========================================================================= */
 .access {
-  display: grid;
+  height: 100svh;
+  max-height: 100svh;
+  overflow: hidden;
+  display: flex;
   align-items: center;
-  padding: 40px clamp(24px, 5vw, 75px);
+  justify-content: center;
+  padding: clamp(16px, 2.5vh, 32px) clamp(20px, 4vw, 48px);
   min-width: 0;
   position: relative;
   z-index: 2;
+  box-sizing: border-box;
 }
 
 .client .formWrap {
   width: 100%;
-  max-width: 440px;
-  margin: auto;
+  max-width: 420px;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65), 0 0 30px rgba(107, 3, 204, 0.15);
-  border-radius: 24px;
-  padding: 38px clamp(22px, 4vw, 36px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 30px rgba(107, 3, 204, 0.16);
+  border-radius: 22px;
+  padding: clamp(20px, 3vh, 30px) clamp(20px, 3vw, 30px);
   box-sizing: border-box;
   backdrop-filter: blur(24px);
+}
+
+.formHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
 }
 
 .client .formIcon {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
   background: var(--user-gradient);
   color: #ffffff;
-  margin-bottom: 24px;
-  box-shadow: 0 6px 22px rgba(205, 52, 147, 0.4);
+  box-shadow: 0 4px 18px rgba(205, 52, 147, 0.38);
   border: 1px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
 }
 
 .eyebrow {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.4px;
   color: #d946ef;
-  margin: 0 0 10px;
+  margin: 0 0 4px;
   text-transform: uppercase;
 }
 
 .formWrap h2 {
-  font-size: clamp(24px, 2.3vw, 32px);
-  letter-spacing: -0.8px;
+  font-size: clamp(21px, 2.1vw, 27px);
+  letter-spacing: -0.6px;
   line-height: 1.2;
-  margin: 0 0 10px;
+  margin: 0;
   font-weight: 800;
   color: #ffffff;
 }
 
 .intro {
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--muted);
-  margin: 0 0 26px;
+  margin: 0 0 18px;
 }
 
-/* Formulário e Inputs com Ícones */
+/* Formulário e Inputs */
 .form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .form > label {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   color: #ede9fe;
-  margin-top: 4px;
 }
 
 .inputWrapper {
@@ -483,7 +432,7 @@
 
 .inputFieldIcon {
   position: absolute;
-  left: 14px;
+  left: 13px;
   color: #9385a8;
   pointer-events: none;
   z-index: 2;
@@ -494,13 +443,13 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  background: rgba(13, 8, 22, 0.75);
-  border: 1px solid rgba(189, 114, 237, 0.25);
-  border-radius: 12px;
-  height: 50px;
-  padding: 0 14px 0 44px;
+  background: rgba(11, 7, 18, 0.78);
+  border: 1px solid rgba(189, 114, 237, 0.22);
+  border-radius: 11px;
+  height: 46px;
+  padding: 0 14px 0 42px;
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
   color: #ffffff;
   transition: all 0.2s ease;
 }
@@ -511,8 +460,8 @@
 
 .client .form input:not([type="checkbox"]):focus {
   border-color: #cd3493;
-  background: rgba(18, 11, 30, 0.95);
-  box-shadow: 0 0 0 3px rgba(205, 52, 147, 0.25), 0 0 18px rgba(152, 6, 191, 0.22);
+  background: rgba(16, 10, 26, 0.95);
+  box-shadow: 0 0 0 3px rgba(205, 52, 147, 0.22), 0 0 16px rgba(152, 6, 191, 0.2);
   outline: none;
 }
 
@@ -522,10 +471,10 @@
 
 .toggleVisibilityBtn {
   position: absolute;
-  right: 6px;
-  top: 5px;
-  width: 40px;
-  height: 40px;
+  right: 5px;
+  top: 4px;
+  width: 38px;
+  height: 38px;
   border: 0;
   border-radius: 8px;
   display: grid;
@@ -545,16 +494,16 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
-  margin: 6px 0 12px;
+  font-size: 11.5px;
+  margin: 4px 0 8px;
 }
 
 .rememberOption {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   color: #cbd5e1;
   cursor: pointer;
   user-select: none;
@@ -562,8 +511,8 @@
 
 .rememberOption input[type="checkbox"] {
   accent-color: #cd3493;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   cursor: pointer;
 }
 
@@ -574,10 +523,10 @@
   color: #f472b6;
   text-decoration: underline;
   text-underline-offset: 3px;
-  padding: 4px 0;
+  padding: 3px 0;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   transition: color 0.2s ease;
 }
@@ -587,33 +536,31 @@
   color: #fbcfe8;
 }
 
-/* Botão Submit com Gradiente */
+/* Botão Submit com Gradiente Oficial */
 .client .submit {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 52px;
-  border-radius: 12px;
+  min-height: 48px;
+  border-radius: 11px;
   border: 0;
   background: var(--user-gradient);
   color: #ffffff;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 700;
   letter-spacing: 0.3px;
-  padding: 13px 20px;
+  padding: 12px 18px;
   cursor: pointer;
-  box-shadow: 0 8px 26px rgba(205, 52, 147, 0.38);
-  transition: all 0.25s ease;
-  position: relative;
-  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(205, 52, 147, 0.35);
+  transition: all 0.22s ease;
 }
 
 .client .submit:hover:not(:disabled) {
   filter: brightness(1.12);
   transform: translateY(-1px);
-  box-shadow: 0 12px 34px rgba(205, 52, 147, 0.5);
+  box-shadow: 0 10px 30px rgba(205, 52, 147, 0.48);
 }
 
 .client .submit:active:not(:disabled) {
@@ -627,31 +574,31 @@
 
 /* Rodapé de Segurança */
 .security {
-  border-top: 1px solid rgba(189, 114, 237, 0.15);
+  border-top: 1px solid rgba(189, 114, 237, 0.12);
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-start;
-  font-size: 11.5px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--muted);
-  margin: 24px 0 0;
-  padding-top: 18px;
+  margin: 18px 0 0;
+  padding-top: 14px;
 }
 
 .security svg {
   flex-shrink: 0;
   color: #a855f7;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 /* Alertas de Erro e Sucesso */
 .error,
 .success {
-  font-size: 12.5px;
-  line-height: 1.55;
-  padding: 12px 14px;
-  border-radius: 10px;
-  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 9px;
+  margin: 3px 0 6px;
 }
 
 .client .error {
@@ -670,19 +617,19 @@
 .checkingState {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   background: rgba(107, 3, 204, 0.15);
   border: 1px solid rgba(205, 52, 147, 0.25);
-  border-radius: 12px;
+  border-radius: 11px;
   color: #e9d5ff;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .spinner {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border: 2px solid rgba(205, 52, 147, 0.3);
   border-top-color: #ec4084;
   border-radius: 50%;
@@ -690,8 +637,8 @@
 }
 
 .spinnerSm {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: #ffffff;
   border-radius: 50%;
@@ -710,6 +657,25 @@
   --muted: #afa4c1;
   background: #100d19;
   grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.brand small {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  margin-top: 3px;
 }
 
 .master .story {
@@ -733,19 +699,12 @@
   font-weight: 800;
   letter-spacing: 1.5px;
   border-radius: 99px;
-  padding: 9px 13px;
-  margin-top: 65px;
+  padding: 8px 12px;
+  margin-top: 25px;
+  margin-bottom: 8px;
   color: #e9c7a0;
   border: 1px solid #aa78944d;
   background: #37203880;
-}
-
-.master .story h1 {
-  margin-top: 28px;
-}
-
-.master .story p {
-  color: #c5b8d4;
 }
 
 .master .brandMark {
@@ -765,11 +724,10 @@
 
 .master .formWrap {
   width: 100%;
-  max-width: 430px;
-  margin: auto;
+  max-width: 420px;
   border: 1px solid #3f304d;
-  border-radius: 22px;
-  padding: 34px;
+  border-radius: 20px;
+  padding: 30px;
   box-sizing: border-box;
   background: #191320;
 }
@@ -777,13 +735,13 @@
 .master .formIcon {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
+  width: 50px;
+  height: 50px;
+  border-radius: 14px;
   background: #39203e;
   color: #e7b47d;
   border: 1px solid #68475a;
-  margin-bottom: 29px;
+  flex-shrink: 0;
 }
 
 .master .eyebrow {
@@ -798,10 +756,10 @@
   color: #fff;
   border: 1px solid #4b3b58;
   border-radius: 10px;
-  height: 51px;
-  padding: 0 14px 0 44px;
+  height: 48px;
+  padding: 0 14px 0 42px;
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
 }
 
 .master .form input::placeholder {
@@ -817,16 +775,16 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
-  min-height: 51px;
+  min-height: 48px;
   border-radius: 10px;
   border: 0;
   background: linear-gradient(110deg, #ae399b, #7735bc);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
-  padding: 13px;
+  padding: 12px;
   cursor: pointer;
 }
 
@@ -859,21 +817,21 @@
 .controlArt {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 40px;
-  max-width: 430px;
+  gap: 8px;
+  margin-top: 20px;
+  max-width: 420px;
 }
 
 .controlArt span,
 .controlArt strong {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   background: #38233a99;
   border: 1px solid #79516f55;
-  padding: 17px;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 14px;
+  border-radius: 11px;
+  font-size: 11.5px;
   color: #d6bbdb;
 }
 
@@ -890,68 +848,46 @@
 /* ========================================================================= */
 /* RESPONSIVIDADE (TABLETS E CELULARES)                                       */
 /* ========================================================================= */
-@media (max-width: 1050px) {
-  .story {
-    padding: 36px 28px;
-  }
-  .storyContent {
-    min-height: calc(100svh - 80px);
-  }
-  .access {
-    padding: 36px 24px;
-  }
-  .story h1 {
-    font-size: 34px;
-  }
-  .chatArt {
-    max-width: 100%;
-  }
-  .storyPillars {
-    max-width: 100%;
-  }
-}
-
 @media (max-width: 820px) {
   .scene,
   .master {
     grid-template-columns: 1fr;
-  }
-  .ambientGlowPrimary {
-    width: 90vw;
-    height: 90vw;
-  }
-  .ambientGlowSecondary {
-    width: 90vw;
-    height: 90vw;
+    height: auto;
+    min-height: 100svh;
+    max-height: none;
+    overflow-y: auto;
   }
   .story {
-    padding: 30px 20px 24px;
+    height: auto;
+    max-height: none;
+    padding: 24px 20px 16px;
   }
   .storyContent {
-    min-height: auto;
-    max-width: 520px;
+    max-height: none;
+    gap: 14px;
   }
-  .brand {
-    font-size: 21px;
+  .brandLogoContainer {
+    justify-content: center;
   }
-  .client .scopeBadge {
-    margin-top: 24px;
+  .brandHeroLogo {
+    height: 60px;
+  }
+  .mobileLogoWrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+  }
+  .mobileHeroLogo {
+    height: 52px;
+    width: auto;
+    object-fit: contain;
+    border-radius: 10px;
   }
   .story h1 {
-    font-size: 30px;
-    letter-spacing: -1px;
-    margin: 16px 0 10px;
-  }
-  .story p {
-    font-size: 13.5px;
-    max-width: 100%;
+    font-size: 24px;
   }
   .chatArt {
-    margin-top: 22px;
-    padding: 16px;
-  }
-  .storyPillars {
-    display: none; /* Em celular encurta para focar no chat e form */
+    display: none; /* Em smartphone foca 100% no formulário com a logo */
   }
   .storyFooter {
     display: none;
@@ -960,24 +896,13 @@
     display: none;
   }
   .access {
-    padding: 24px 20px 48px;
+    height: auto;
+    max-height: none;
+    padding: 16px 20px 36px;
   }
   .client .formWrap,
   .master .formWrap {
-    max-width: 520px;
-    padding: 28px 20px;
-  }
-  .client .formIcon,
-  .master .formIcon {
-    width: 44px;
-    height: 44px;
-    margin-bottom: 18px;
-  }
-  .formWrap h2 {
-    font-size: 24px;
-  }
-  .intro {
-    font-size: 13px;
-    margin-bottom: 20px;
+    max-width: 100%;
+    padding: 24px 18px;
   }
 }

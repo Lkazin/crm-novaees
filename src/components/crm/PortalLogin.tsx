@@ -111,7 +111,7 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
         </>
       )}
 
-      {/* PAINEL LATERAL ESQUERDO: APRESENTAÇÃO E STORY */}
+      {/* PAINEL LATERAL ESQUERDO: APRESENTAÇÃO E LOGO */}
       <section className={styles.story} aria-label={master ? "Administração da plataforma" : "Atendimento da sua empresa"}>
         {master && (
           <svg className={styles.networkArt} viewBox="0 0 700 900" fill="none" aria-hidden="true">
@@ -125,39 +125,52 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
         )}
 
         <div className={styles.storyContent}>
-          <Link href={master ? "/novaescrmadm" : "/"} className={styles.brand} aria-label="NovaesWeb CRM IA">
-            <span className={styles.brandMark}>N</span>
-            <span>
-              NovaesWeb <small>CRM IA</small>
+          {/* Logo da Novaes CRM IA no topo */}
+          {!master ? (
+            <Link href="/" className={styles.brandLogoContainer} aria-label="Novaes CRM IA">
+              <img
+                src="/novaes-crm-ia-logo.jpg"
+                alt="Novaes CRM IA - CRM Inteligente da NovaesWeb"
+                className={styles.brandHeroLogo}
+              />
+            </Link>
+          ) : (
+            <Link href="/novaescrmadm" className={styles.brand} aria-label="NovaesWeb CRM IA">
+              <span className={styles.brandMark}>N</span>
+              <span>
+                NovaesWeb <small>CRM IA</small>
+              </span>
+            </Link>
+          )}
+
+          <div className={styles.storyHeaderCompact}>
+            <span className={styles.scopeBadge}>
+              {master ? <Crown size={14} /> : <Sparkles size={13} className={styles.badgeSparkle} />}
+              {master ? "PAINEL MASTER" : "PORTAL DO CLIENTE"}
             </span>
-          </Link>
 
-          <span className={styles.scopeBadge}>
-            {master ? <Crown size={15} /> : <Sparkles size={14} className={styles.badgeSparkle} />}
-            {master ? "PAINEL MASTER" : "PORTAL DO CLIENTE"}
-          </span>
+            <h1>
+              {master ? (
+                <>
+                  Toda a operação.
+                  <br />
+                  Uma central de gestão.
+                </>
+              ) : (
+                <>
+                  Boas conversas.
+                  <br />
+                  <span className={styles.gradientText}>Seu negócio mais perto.</span>
+                </>
+              )}
+            </h1>
 
-          <h1>
-            {master ? (
-              <>
-                Toda a operação.
-                <br />
-                Uma central de gestão.
-              </>
-            ) : (
-              <>
-                Boas conversas.
-                <br />
-                <span className={styles.gradientText}>Seu negócio mais perto.</span>
-              </>
-            )}
-          </h1>
-
-          <p>
-            {master
-              ? "Clientes, planos, franquias e provedores de IA sob o controle da NovaesWeb."
-              : "Atendimento inteligente no WhatsApp com IA personalizada, transbordo para equipe humana e controle de vendas em tempo real."}
-          </p>
+            <p>
+              {master
+                ? "Clientes, planos, franquias e provedores de IA sob o controle da NovaesWeb."
+                : "Atendimento inteligente no WhatsApp com IA personalizada, transbordo para equipe e controle de vendas em tempo real."}
+            </p>
+          </div>
 
           {master && (
             <div className={styles.controlArt} role="img" aria-label="Ilustração da central Master com empresas, planos e IA">
@@ -169,67 +182,44 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
           )}
 
           {!master && (
-            <>
-              {/* Vitrine Interativa de WhatsApp com IA em tempo real */}
-              <div className={styles.chatArt} role="img" aria-label="Demonstração do atendimento inteligente por WhatsApp">
-                <div className={styles.chatHeader}>
-                  <div className={styles.avatarWrap}>
-                    <span className={styles.avatar}><Bot size={20} /></span>
-                    <span className={styles.statusPulse} aria-hidden="true" />
-                  </div>
-                  <div className={styles.chatHeaderInfo}>
-                    <span className={styles.chatHeaderTitle}>
-                      Atendimento Inteligente <small className={styles.liveBadge}>WhatsApp Oficial</small>
-                    </span>
-                    <span className={styles.chatHeaderSub}>IA Ativa • Resposta Instantânea</span>
-                  </div>
-                  <span className={styles.onlinePill}>Online</span>
+            <div className={styles.chatArt} role="img" aria-label="Demonstração do atendimento inteligente por WhatsApp">
+              <div className={styles.chatHeader}>
+                <div className={styles.avatarWrap}>
+                  <span className={styles.avatar}><Bot size={18} /></span>
+                  <span className={styles.statusPulse} aria-hidden="true" />
                 </div>
-
-                <div className={styles.bubble}>
-                  <span className={styles.bubbleSender}>Cliente</span>
-                  Olá! Gostaria de saber os horários e se vocês entregam hoje? 😊
-                  <span className={styles.bubbleTime}>14:32</span>
-                </div>
-
-                <div className={`${styles.bubble} ${styles.reply}`}>
-                  <span className={styles.bubbleSender}>NovaesWeb IA</span>
-                  Opa! Com certeza! 🛵 Atendemos hoje até as 23h e nossa entrega leva cerca de 35 minutos. Quer que eu te envie as opções ou prefere falar com a equipe?
-                  <span className={styles.replyFooter}>
-                    <span className={styles.bubbleTime}>14:32</span>
-                    <CheckCheck size={15} />
+                <div className={styles.chatHeaderInfo}>
+                  <span className={styles.chatHeaderTitle}>
+                    WhatsApp Conectado <small className={styles.liveBadge}>IA Ativa</small>
                   </span>
+                  <span className={styles.chatHeaderSub}>Resposta instantânea 24h</span>
                 </div>
-
-                <div className={styles.chatMetaChips}>
-                  <span className={styles.metaChip}><Sparkles size={12} /> Lead Qualificado</span>
-                  <span className={styles.metaChip}><Zap size={12} /> Resposta em 1.1s</span>
-                  <span className={styles.metaChip}><Users size={12} /> Equipe ao Vivo</span>
-                </div>
+                <span className={styles.onlinePill}>Online</span>
               </div>
 
-              {/* Pilares do CRM IA */}
-              <div className={styles.storyPillars}>
-                <div className={styles.pillarItem}>
-                  <div className={styles.pillarIcon}><Zap size={16} /></div>
-                  <div className={styles.pillarText}>
-                    <strong>IA com o Tom da Sua Marca</strong>
-                    <span>Cardápio, preços e dúvidas respondidas 24 horas</span>
-                  </div>
-                </div>
-                <div className={styles.pillarItem}>
-                  <div className={styles.pillarIcon}><Users size={16} /></div>
-                  <div className={styles.pillarText}>
-                    <strong>Transbordo Humano com 1 Clique</strong>
-                    <span>Sua equipe assume qualquer conversa na fila com facilidade</span>
-                  </div>
-                </div>
+              <div className={styles.bubble}>
+                Olá! Gostaria de saber os horários e se entregam hoje? 😊
+                <span className={styles.bubbleTime}>14:32</span>
               </div>
-            </>
+
+              <div className={`${styles.bubble} ${styles.reply}`}>
+                Opa! Com certeza! 🛵 Atendemos até as 23h com entrega rápida. Quer ver o cardápio ou falar com a equipe?
+                <span className={styles.replyFooter}>
+                  <span className={styles.bubbleTime}>14:32</span>
+                  <CheckCheck size={14} />
+                </span>
+              </div>
+
+              <div className={styles.chatMetaChips}>
+                <span className={styles.metaChip}><Sparkles size={11} /> Lead Qualificado</span>
+                <span className={styles.metaChip}><Zap size={11} /> Resposta em 1.1s</span>
+                <span className={styles.metaChip}><Users size={11} /> Equipe ao Vivo</span>
+              </div>
+            </div>
           )}
 
           <div className={styles.storyFooter}>
-            <ShieldCheck size={16} />
+            <ShieldCheck size={15} />
             {master ? "Ambiente administrativo exclusivo NovaesWeb" : "Ambiente seguro e exclusivo para a sua empresa"}
           </div>
         </div>
@@ -238,24 +228,37 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
       {/* PAINEL DIREITO: FORMULÁRIO DE ACESSO */}
       <section className={styles.access} aria-labelledby="portal-login-title">
         <div className={styles.formWrap}>
-          <div className={styles.formIcon}>
-            {master ? <Crown size={26} /> : <LockKeyhole size={24} />}
+          {/* Logo exibida no topo do form em telas mobile */}
+          {!master && (
+            <div className={styles.mobileLogoWrap}>
+              <img
+                src="/novaes-crm-ia-logo.jpg"
+                alt="Novaes CRM IA"
+                className={styles.mobileHeroLogo}
+              />
+            </div>
+          )}
+
+          <div className={styles.formHeaderRow}>
+            <div className={styles.formIcon}>
+              {master ? <Crown size={24} /> : <LockKeyhole size={22} />}
+            </div>
+            <div>
+              <p className={styles.eyebrow}>
+                {master ? "ADMINISTRAÇÃO NOVAESWEB" : "ACESSO EMPRESARIAL"}
+              </p>
+              <h2 id="portal-login-title">
+                {recover ? "Recuperar acesso" : master ? "Acesso ao Painel Master" : "Acesse seu Painel"}
+              </h2>
+            </div>
           </div>
-
-          <p className={styles.eyebrow}>
-            {master ? "ADMINISTRAÇÃO NOVAESWEB" : "PORTAL DO CLIENTE • NOVAESWEB CRM IA"}
-          </p>
-
-          <h2 id="portal-login-title">
-            {recover ? "Recuperar acesso" : master ? "Acesso ao Painel Master" : "Acesse seu Painel"}
-          </h2>
 
           <p className={styles.intro}>
             {recover
-              ? "Informe o e-mail cadastrado da sua empresa para receber as instruções de recuperação."
+              ? "Informe o e-mail cadastrado da sua empresa para redefinir sua senha."
               : master
                 ? "Entre com as credenciais da administração da plataforma."
-                : "Entre com o e-mail e a senha fornecidos para gerenciar o WhatsApp e os atendimentos da sua empresa."}
+                : "Entre com o e-mail e a senha fornecidos para gerenciar o WhatsApp da sua empresa."}
           </p>
 
           {checking ? (
@@ -267,7 +270,7 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
             <form onSubmit={event => void submit(event)} className={styles.form}>
               <label htmlFor={emailId}>E-mail{master ? " do administrador" : " da sua empresa"}</label>
               <div className={styles.inputWrapper}>
-                <Mail size={18} className={styles.inputFieldIcon} />
+                <Mail size={17} className={styles.inputFieldIcon} />
                 <input
                   id={emailId}
                   name="email"
@@ -285,7 +288,7 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
                 <>
                   <label htmlFor={passwordId}>Senha de acesso</label>
                   <div className={styles.inputWrapper}>
-                    <LockKeyhole size={18} className={styles.inputFieldIcon} />
+                    <LockKeyhole size={17} className={styles.inputFieldIcon} />
                     <input
                       id={passwordId}
                       name="password"
@@ -304,7 +307,7 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
                       aria-label={visible ? "Ocultar senha" : "Exibir senha"}
                       aria-pressed={visible}
                     >
-                      {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+                      {visible ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
 
@@ -344,17 +347,17 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
                 ) : recover ? (
                   <>
                     <span>Enviar instruções</span>
-                    <ArrowRight size={18} />
+                    <ArrowRight size={17} />
                   </>
                 ) : master ? (
                   <>
                     <span>Entrar no Painel Master</span>
-                    <ArrowRight size={18} />
+                    <ArrowRight size={17} />
                   </>
                 ) : (
                   <>
                     <span>Entrar na minha empresa</span>
-                    <ArrowRight size={18} />
+                    <ArrowRight size={17} />
                   </>
                 )}
               </button>
@@ -376,11 +379,11 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
           )}
 
           <div className={styles.security}>
-            <ShieldCheck size={16} />
+            <ShieldCheck size={15} />
             <span>
               {master
                 ? "Este painel administra a plataforma. O acesso dos clientes acontece em um portal separado."
-                : "Ambiente protegido por criptografia de ponta a ponta. Seu atendimento e sua equipe 100% seguros."}
+                : "Ambiente protegido por criptografia de ponta a ponta. Sua equipe 100% segura."}
             </span>
           </div>
         </div>
