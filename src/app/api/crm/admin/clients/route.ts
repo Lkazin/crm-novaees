@@ -304,7 +304,7 @@ export async function POST(request: NextRequest) {
           price: "0,00",
           quotaLimit: TRIAL_PLAN.quotaLimit || 100,
           maxOperators: TRIAL_PLAN.maxOperators || 2,
-          maxWhatsappConnections: TRIAL_PLAN.maxWhatsappConnections || 3,
+          maxWhatsappConnections: TRIAL_PLAN.maxWhatsappConnections || 2,
           trialStartedAt,
           trialExpiresAt,
           dueDate: trialExpiresAt.slice(0, 10),
@@ -793,7 +793,8 @@ export async function DELETE(request: NextRequest) {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
       });
       const channels = (await rCh.json()) as Array<{ instance_name: string }>;
-      const evoUrl = (process.env.EVOLUTION_API_URL ?? "http://host.docker.internal:8080").replace(/\/$/, "");
+      let evoUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
+      if (evoUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) { evoUrl = evoUrl.replace("host.docker.internal", "127.0.0.1"); }
       const evoKey = process.env.EVOLUTION_API_KEY ?? "";
       for (const ch of channels) {
         if (ch.instance_name && evoKey) {

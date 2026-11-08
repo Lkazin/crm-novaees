@@ -10,7 +10,10 @@ function getAdminConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
   const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
-  const omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://host.docker.internal:20128/v1";
+  let omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://127.0.0.1:20128/v1";
+  if (omniUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+    omniUrl = omniUrl.replace("host.docker.internal", "127.0.0.1");
+  }
   const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, redisUrl, omniUrl, omniKey };
 }

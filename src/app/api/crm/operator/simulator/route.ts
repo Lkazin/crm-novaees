@@ -14,7 +14,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function getServiceConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
-  const omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://host.docker.internal:20128/v1";
+  let omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://127.0.0.1:20128/v1";
+  if (omniUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+    omniUrl = omniUrl.replace("host.docker.internal", "127.0.0.1");
+  }
   const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, omniUrl, omniKey };
 }

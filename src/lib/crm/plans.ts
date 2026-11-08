@@ -395,13 +395,13 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     price: "89,90",
     quotaLimit: 1200, // 1.200 mensagens da IA por mês
     maxOperators: 3, // Até 3 acessos (1 titular + 2 operadores de equipe)
-    maxWhatsappConnections: 5, // Até 5 WhatsApps conectados (5 espaços completos)
+    maxWhatsappConnections: 3, // Até 3 WhatsApps conectados simultâneos
     isPopular: true,
     description: "Plano definitivo com inteligência artificial completa, múltiplos WhatsApps e recarga de mensagens.",
     features: [...PREMIUM_FEATURES],
     featureBullets: [
       "1.200 mensagens da IA por mês",
-      "Até 5 WhatsApps conectados (5 espaços completos)",
+      "Até 3 WhatsApps conectados simultâneos",
       "Até 2 operadores humanos na equipe (+ 1 titular)",
       "Todas as funcionalidades liberadas",
       "Recargas adicionais: R$ 20,00 = 100 mensagens",
@@ -459,13 +459,13 @@ export const TRIAL_PLAN: CrmPlan & { durationDays: number } = {
   quotaLimit: 50, // 50 mensagens da IA no período de teste
   durationDays: 7,
   maxOperators: 3, // Até 3 acessos (1 titular + 2 operadores de equipe)
-    maxWhatsappConnections: 3, // Até 3 WhatsApps conectados
+    maxWhatsappConnections: 2, // Até 2 WhatsApps conectados simultâneos
   description: "Avaliação gratuita de 7 dias com todas as funcionalidades Premium liberadas.",
   features: [...PREMIUM_FEATURES],
   featureBullets: [
     "7 dias corridos de teste grátis",
     "50 mensagens da IA incluídas",
-    "Até 3 WhatsApps conectados (de 5 espaços)",
+    "Até 2 WhatsApps conectados simultâneos",
     "Até 2 operadores humanos na equipe (+ 1 titular)",
     "Todas as funcionalidades Premium liberadas",
     "Dados 100% preservados ao final do período"
@@ -1728,7 +1728,7 @@ export async function getEffectiveTenantPlan(
     price: isTrial ? "0,00" : basePrice,
     quotaLimit: isTrial ? (matchedPlan.quotaLimit || 100) : finalQuota,
     maxOperators: isTrial ? (matchedPlan.maxOperators || 2) : baseMaxOperators,
-    maxWhatsappConnections: isTrial ? (matchedPlan.maxWhatsappConnections || 3) : baseMaxWhatsapp,
+    maxWhatsappConnections: isTrial ? (matchedPlan.maxWhatsappConnections || 2) : baseMaxWhatsapp,
     rechargeCreditsBalance,
     rechargesHistory: rawRecharges as unknown as MessageRechargeItem[],
     allowedFeatures: finalFeatures.filter(feature => featureStates[feature]?.state === "allowed"),

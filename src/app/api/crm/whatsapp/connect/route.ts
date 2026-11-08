@@ -9,7 +9,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function getEvolutionConfig() {
-  const url = (process.env.EVOLUTION_API_URL ?? "http://host.docker.internal:8080").replace(/\/$/, "");
+  let url = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
+  if (url.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+    url = url.replace("host.docker.internal", "127.0.0.1");
+  }
   const key = process.env.EVOLUTION_API_KEY ?? "";
   const secret = process.env.CRM_WEBHOOK_SECRET ?? "";
   return { url, key, secret };
