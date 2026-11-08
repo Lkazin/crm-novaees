@@ -48,7 +48,7 @@ export type TechnicalFeature = {
   isCore?: boolean;
 };
 
-export const CATALOG_SCHEMA_VERSION = 2;
+export const CATALOG_SCHEMA_VERSION = 3;
 
 export type CrmPlan = {
   id: string; // Stable ID: 'crm-start', 'crm-business', 'crm-premium'
@@ -494,40 +494,34 @@ export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
 
   const isLegacySchema = !raw.catalogSchemaVersion || raw.catalogSchemaVersion < CATALOG_SCHEMA_VERSION;
   if (!isLegacySchema) {
-    // Stable commercial IDs retain their public names and tier ceilings, even
-    // when an older published record was named Plus or had excessive limits.
     return {
       ...raw,
       name: defaultMatch.name,
+      status: defaultMatch.status,
       maxOperators: Math.min(raw.maxOperators, defaultMatch.maxOperators),
       maxWhatsappConnections: Math.min(raw.maxWhatsappConnections, defaultMatch.maxWhatsappConnections),
-      ...(defaultMatch.id === "crm-trial" ? { price: "0,00", quotaLimit: 100 } : {})
+      ...(defaultMatch.id === "crm-trial" ? { price: "0,00", quotaLimit: 100 } : {}),
+      ...(defaultMatch.id === "crm-premium" ? { price: "89,90", quotaLimit: 1200 } : {})
     };
   }
 
-  // Migrate legacy schema v1 -> v2: ensure new features and updated WhatsApp/operator limits are applied
-  const mergedFeatures = Array.from(new Set([...(raw.features || []), ...defaultMatch.features])) as FeatureId[];
-  // Ensure Start does not accidentally receive Business/Premium features during migration
-  const cleanFeatures = raw.id === "crm-start"
-    ? mergedFeatures.filter(f => START_FEATURES.includes(f))
-    : raw.id === "crm-business"
-      ? mergedFeatures.filter(f => BUSINESS_FEATURES.includes(f))
-      : mergedFeatures;
-
-  const isLegacyDefaultPrice = raw.price === "149,00" || raw.price === "249,00" || raw.price === "399,00" || !raw.price;
-  const isLegacyDefaultQuota = raw.quotaLimit === 500 || !raw.quotaLimit;
-
+  // Schema upgrade to v3: Definitive Novaes CRM plans (Teste 7d R$ 0 e Premium R$ 89,90)
   return {
     ...defaultMatch,
-    ...raw,
+    id: defaultMatch.id,
     name: defaultMatch.name,
-    price: defaultMatch.id === "crm-trial" ? "0,00" : isLegacyDefaultPrice ? defaultMatch.price : raw.price,
-    quotaLimit: defaultMatch.id === "crm-trial" ? 100 : isLegacyDefaultQuota ? defaultMatch.quotaLimit : raw.quotaLimit,
+    price: defaultMatch.price,
+    quotaLimit: defaultMatch.quotaLimit,
     maxOperators: defaultMatch.maxOperators,
     maxWhatsappConnections: defaultMatch.maxWhatsappConnections,
-    features: cleanFeatures,
+    status: defaultMatch.status, // "active" for trial and premium; "inactive" for start and business
+    features: defaultMatch.features,
     featureBullets: defaultMatch.featureBullets,
-    catalogSchemaVersion: CATALOG_SCHEMA_VERSION
+    description: defaultMatch.description,
+    isPopular: defaultMatch.isPopular,
+    version: raw.version || 1,
+    catalogSchemaVersion: CATALOG_SCHEMA_VERSION,
+    updated_at: new Date().toISOString()
   };
 }
 
@@ -676,6 +670,10 @@ async function getMasterPlansFromSupabase(): Promise<CrmPlan[]> {
   const loadedPlans: CrmPlan[] = stored ? stored.map(normalizeCatalogPlan) : [];
   loadedPlans.forEach(validateCommercialPlan);
   if (new Set(loadedPlans.map(p => p.id)).size !== loadedPlans.length) throw new Error("duplicate_catalog_plan");
+  const hadLegacy = stored && stored.some((p: CrmPlan) => !p.catalogSchemaVersion || p.catalogSchemaVersion < CATALOG_SCHEMA_VERSION);
+  if (hadLegacy) {
+    await saveMasterPlansToSupabase(loadedPlans).catch(() => {});
+  }
   const map = new Map(ALL_DEFAULT_PLANS.map(p => [p.id, p]));
   for (const plan of loadedPlans) map.set(plan.id, plan);
   return Array.from(map.values());
