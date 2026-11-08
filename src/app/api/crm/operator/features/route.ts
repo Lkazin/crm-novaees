@@ -3,8 +3,7 @@ import { NextRequest } from "next/server";
 import { authorizeCrmTenant, ownsCrmResource, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans } from "@/lib/crm/plans";
-import { DEFAULT_QUICK_REPLIES } from "@/app/api/crm/operator/ai-settings/route";
+import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans, RECHARGE_PACKAGES, DEFAULT_QUICK_REPLIES, type MessageRechargeItem } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 
 export const runtime = "nodejs";
@@ -286,7 +285,24 @@ export async function GET(request: NextRequest) {
         premiumAnalytics
       },
       slotLabels: (dataObj.slotLabels && typeof dataObj.slotLabels === 'object') ? dataObj.slotLabels : {},
-      featureStates: effectivePlan.featureStates
+      featureStates: effectivePlan.featureStates,
+      planInfo: {
+        planId: effectivePlan.planId,
+        planName: effectivePlan.planName,
+        price: effectivePlan.price,
+        quotaLimit: effectivePlan.quotaLimit,
+        quotaUsed,
+        quotaRemaining: Math.max(0, effectivePlan.quotaLimit - quotaUsed),
+        rechargeCreditsBalance: effectivePlan.rechargeCreditsBalance || 0,
+        rechargesHistory: effectivePlan.rechargesHistory || [],
+        rechargePackages: RECHARGE_PACKAGES,
+        maxWhatsappConnections: effectivePlan.maxWhatsappConnections,
+        maxOperators: effectivePlan.maxOperators,
+        dueDate: effectivePlan.dueDate,
+        isTrial: Boolean(effectivePlan.isTrial),
+        trialDaysLeft: effectivePlan.trialDaysLeft,
+        trialStatus: effectivePlan.trialStatus
+      }
     });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "features_unavailable" }, 503);
@@ -325,6 +341,52 @@ export async function POST(request: NextRequest) {
 
     const dataObj = await loadTenantSettingsJson(url, serviceKey, tenantId);
 
+    // 0. ACTION: Buy Recharge Credits (Always allowed for active / trial tenants)
+    if (action === "buy_recharge") {
+      const packagesCount = Number(body.packagesCount) || 1;
+      const matchedPkg = RECHARGE_PACKAGES.find(p => p.packagesCount === packagesCount);
+      if (!matchedPkg) {
+        return privateJson({ error: "invalid_package", message: "Pacote de recarga inválido." }, 400);
+      }
+
+      const txId = typeof body.txId === "string" && body.txId.trim() ? body.txId.trim() : `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const existingRecharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+
+      // Idempotency: prevent double credit if txId already processed
+      if (existingRecharges.some(r => r.txId === txId || r.id === txId)) {
+        return privateJson({
+          alreadyProcessed: true,
+          recharges: existingRecharges,
+          message: "Esta transação já foi processada anteriormente."
+        });
+      }
+
+      const newRecharge: MessageRechargeItem = {
+        id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        packagesCount: matchedPkg.packagesCount,
+        messagesAdded: matchedPkg.messages,
+        pricePaid: matchedPkg.priceValue,
+        purchasedAt: new Date().toISOString(),
+        status: "paid",
+        paymentMethod: typeof body.paymentMethod === "string" ? body.paymentMethod : "pix",
+        txId
+      };
+
+      existingRecharges.unshift(newRecharge);
+      dataObj.recharges = existingRecharges;
+      await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "recharges");
+
+      const effectivePlanUpdated = await getEffectiveTenantPlan(tenantId);
+
+      return privateJson({
+        success: true,
+        recharge: newRecharge,
+        recharges: existingRecharges,
+        rechargeCreditsBalance: effectivePlanUpdated.rechargeCreditsBalance,
+        message: `Recarga de ${matchedPkg.messages} mensagens adicionadas com sucesso ao seu saldo!`
+      });
+    }
+
     // 1. ACTION: Request Plan Upgrade (Always allowed, even when account is suspended or locked!)
     if (action === "request_upgrade") {
       const requestedPlan = typeof body.targetPlanId === "string" ? body.targetPlanId : typeof body.requestedPlan === "string" ? body.requestedPlan : "";
@@ -333,11 +395,14 @@ export async function POST(request: NextRequest) {
 
       const effectivePlan = await getEffectiveTenantPlan(tenantId);
       const targetPlan = (await getMasterPlans()).find(p => p.status === "active" && (p.id === requestedPlan || p.name.toLowerCase() === requestedPlan.toLowerCase()));
-      if (!targetPlan) return privateJson({ error: "invalid_upgrade_plan" }, 400);
+      if (!targetPlan || targetPlan.id === "crm-trial" || targetPlan.id === effectivePlan.planId) return privateJson({ error: "invalid_upgrade_plan" }, 400);
 
       const upgradeRequests: Array<Record<string, unknown>> = Array.isArray(dataObj.upgradeRequests)
         ? dataObj.upgradeRequests
         : [];
+
+      const pending = upgradeRequests.find(r => r.status === "pending" && r.targetPlanId === targetPlan.id);
+      if (pending) return privateJson({ requested: true, alreadyPending: true, upgradeRequest: pending, upgradeRequests });
 
       const newReq = {
         id: `upg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -611,7 +676,7 @@ export async function POST(request: NextRequest) {
     if (action === "set_slot_label") {
       const slot = Number(body.slot);
       const label = typeof body.label === "string" ? body.label.trim().slice(0, 50) : "";
-      if (slot >= 1 && slot <= 5) {
+      if (Number.isInteger(slot) && slot >= 1 && slot <= 5) {
         const slotLabels: Record<string, string> = (typeof dataObj.slotLabels === "object" && dataObj.slotLabels !== null)
           ? { ...(dataObj.slotLabels as Record<string, string>) }
           : {};

@@ -13,7 +13,7 @@ type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios"
 type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
-  plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de atendimento." },
+  plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de mensagens da IA." },
   kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
   providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
   crm: { title: "CRM NovaesWeb", description: "Atendimento, WhatsApp e inteligência artificial da própria NovaesWeb." },
@@ -94,12 +94,9 @@ type UpgradeRequestItem = {
 
 type FeatureId =
   | "ai_chat"
-  | "knowledge_base"
-  | "setup_wizard"
   | "human_handoff"
   | "simulator"
-  | "contacts_history"
-  | "basic_hours"
+  | "business_hours_basic"
   | "quick_replies"
   | "basic_indicators"
   | "business_hours"
@@ -107,7 +104,7 @@ type FeatureId =
   | "handoff_summary"
   | "sound_notifications"
   | "model_fallback"
-  | "attendance_priority"
+  | "conversation_priority"
   | "satisfaction_survey"
   | "commercial_indicators"
   | "advanced_reports"
@@ -146,22 +143,47 @@ type AuditEntry = {
   changes?: Record<string, { from: unknown; to: unknown }>;
 };
 
+type PublishedPlan = Omit<PlanItem,"draftPlan"> & {
+  featureBullets?: string[]; maxWhatsappConnections?: number;
+  status?: "active" | "inactive"; draftPlan?: PublishedPlan;
+};
+
+function fromPublishedPlan(plan: PublishedPlan): PlanItem {
+  const technicalIds = plan.allowedFeatures ?? plan.features.filter((id): id is FeatureId => TECHNICAL_FEATURES_LIST.some(feature => feature.id === id));
+  return {
+    ...plan,
+    features: plan.featureBullets ?? plan.features.map(value => TECHNICAL_FEATURES_LIST.find(feature => feature.id === value)?.name ?? value),
+    allowedFeatures: technicalIds,
+    maxWhatsAppConnections: plan.maxWhatsappConnections ?? plan.maxWhatsAppConnections,
+    isActive: plan.status ? plan.status === "active" : plan.isActive !== false,
+    draftPlan: plan.draftPlan ? fromPublishedPlan(plan.draftPlan) : undefined
+  };
+}
+
+function toPublishedPlan(plan: PlanItem) {
+  return {
+    id: plan.id, name: plan.name, price: plan.price, quotaLimit: plan.quotaLimit,
+    description: plan.description, maxOperators: plan.maxOperators,
+    maxWhatsappConnections: plan.maxWhatsAppConnections,
+    features: [...new Set(["ai_chat","human_handoff",...(plan.allowedFeatures ?? [])])],
+    featureBullets: plan.features, status: plan.isActive === false ? "inactive" : "active",
+    isPopular: plan.isPopular
+  };
+}
+
 const TECHNICAL_FEATURES_LIST: Array<{ id: FeatureId; name: string; category: string; description: string; isCore?: boolean }> = [
-  { id: "ai_chat", name: "IA Personalizada 24h", category: "IA", description: "Respostas inteligentes automatizadas com IA no WhatsApp.", isCore: true },
-  { id: "knowledge_base", name: "Base de Conhecimento", category: "IA", description: "Treinamento com preços, produtos, serviços e FAQ da empresa.", isCore: true },
-  { id: "setup_wizard", name: "Assistente de Configuração", category: "IA", description: "Configuração guiada de perfil comercial e comportamento da IA.", isCore: true },
-  { id: "human_handoff", name: "Atendimento Humano & Transferência", category: "Atendimento", description: "Operador humano assume o chat e pausa a IA naquela conversa.", isCore: true },
-  { id: "simulator", name: "Simulador da IA", category: "IA", description: "Ambiente para o lojista simular diálogos antes de ativar o WhatsApp.", isCore: true },
-  { id: "contacts_history", name: "Contatos e Histórico", category: "Atendimento", description: "Base de clientes atendidos e histórico completo.", isCore: true },
-  { id: "basic_hours", name: "Horários Básicos", category: "Gestão", description: "Configuração simples de abertura e fechamento.", isCore: true },
-  { id: "quick_replies", name: "Respostas Rápidas", category: "Atendimento", description: "Atalhos de mensagens prontas para agilizar o operador.", isCore: true },
-  { id: "basic_indicators", name: "Indicadores Básicos", category: "Gestão", description: "Visão essencial do volume de atendimentos e consumo.", isCore: true },
+  { id: "ai_chat", isCore: true, name: "IA Personalizada 24h", category: "IA", description: "Respostas inteligentes automatizadas com IA no WhatsApp.", },
+  { id: "human_handoff", isCore: true, name: "Atendimento Humano & Transferência", category: "Atendimento", description: "Operador humano assume o chat e pausa a IA naquela conversa.", },
+  { id: "simulator", name: "Simulador da IA", category: "IA", description: "Ambiente para o lojista simular diálogos antes de ativar o WhatsApp.", },
+  { id: "business_hours_basic", name: "Horários Básicos", category: "Gestão", description: "Configuração simples de abertura e fechamento.", },
+  { id: "quick_replies", name: "Respostas Rápidas", category: "Atendimento", description: "Atalhos de mensagens prontas para agilizar o operador.", },
+  { id: "basic_indicators", name: "Indicadores Básicos", category: "Gestão", description: "Visão essencial do volume de atendimentos e consumo.", },
   { id: "business_hours", name: "Horários Avançados e Intervalos", category: "Gestão", description: "Configuração por dia da semana, intervalos de almoço e mensagem fora do expediente." },
   { id: "commercial_tags", name: "Etiquetas Comerciais", category: "Atendimento", description: "Classificação por etapas: Novo Lead, Orçamento, Vendido, Perdido." },
   { id: "handoff_summary", name: "Resumos Inteligentes de Atendimento", category: "IA", description: "Síntese automática em 3 linhas gerada para o atendente humano." },
   { id: "sound_notifications", name: "Alertas Sonoros", category: "Atendimento", description: "Alerta em áudio quando cliente solicita atendente humano." },
-  { id: "model_fallback", name: "Modelo Reserva de IA", category: "Segurança", description: "Fallback automático de rota de IA garantindo zero indisponibilidade." },
-  { id: "attendance_priority", name: "Prioridade dos Atendimentos", category: "Atendimento", description: "Classificação e ordenação de fila por urgência (Baixa, Normal, Alta, Urgente)." },
+  { id: "model_fallback", name: "Modelo Reserva de IA", category: "Segurança", description: "Rota reserva de IA quando configurada e disponível." },
+  { id: "conversation_priority", name: "Prioridade dos Atendimentos", category: "Atendimento", description: "Classificação e ordenação de fila por urgência (Baixa, Normal, Alta, Urgente)." },
   { id: "satisfaction_survey", name: "Pesquisa de Satisfação", category: "Atendimento", description: "Coleta de nota 1 a 5 e comentário ao encerrar o atendimento." },
   { id: "commercial_indicators", name: "Indicadores Comerciais", category: "Gestão", description: "Métricas de funil comercial, etiquetas e conversão." },
   { id: "advanced_reports", name: "Relatórios Avançados", category: "Gestão", description: "Relatórios gerenciais detalhados de operação e tendências." },
@@ -182,12 +204,9 @@ const DEFAULT_PLANS: PlanItem[] = [
     description: "Avaliação gratuita de 7 dias com recursos do CRM Business liberados temporariamente.",
     allowedFeatures: [
       "ai_chat",
-      "knowledge_base",
-      "setup_wizard",
       "human_handoff",
       "simulator",
-      "contacts_history",
-      "basic_hours",
+      "business_hours_basic",
       "quick_replies",
       "basic_indicators",
       "business_hours",
@@ -195,13 +214,13 @@ const DEFAULT_PLANS: PlanItem[] = [
       "handoff_summary",
       "sound_notifications",
       "model_fallback",
-      "attendance_priority",
+      "conversation_priority",
       "satisfaction_survey",
       "commercial_indicators"
     ],
     features: [
       "7 dias corridos de teste grátis",
-      "Até 100 atendimentos no período",
+      "Até 100 mensagens da IA no período",
       "1 número WhatsApp (1/5 espaços)",
       "1 operador humano",
       "Recursos do CRM Business liberados temporariamente",
@@ -219,17 +238,14 @@ const DEFAULT_PLANS: PlanItem[] = [
     description: "Ideal para autônomos, pequenos comércios e prestadores de serviços locais.",
     allowedFeatures: [
       "ai_chat",
-      "knowledge_base",
-      "setup_wizard",
       "human_handoff",
       "simulator",
-      "contacts_history",
-      "basic_hours",
+      "business_hours_basic",
       "quick_replies",
       "basic_indicators"
     ],
     features: [
-      "200 atendimentos com IA por mês",
+      "200 mensagens da IA por mês",
       "1 número WhatsApp (1/5 espaços)",
       "1 operador humano",
       "IA personalizada + Base de conhecimento",
@@ -254,12 +270,9 @@ const DEFAULT_PLANS: PlanItem[] = [
     description: "Para empresas e lojas em crescimento que buscam escala e atendimento profissional.",
     allowedFeatures: [
       "ai_chat",
-      "knowledge_base",
-      "setup_wizard",
       "human_handoff",
       "simulator",
-      "contacts_history",
-      "basic_hours",
+      "business_hours_basic",
       "quick_replies",
       "basic_indicators",
       "business_hours",
@@ -267,12 +280,12 @@ const DEFAULT_PLANS: PlanItem[] = [
       "handoff_summary",
       "sound_notifications",
       "model_fallback",
-      "attendance_priority",
+      "conversation_priority",
       "satisfaction_survey",
       "commercial_indicators"
     ],
     features: [
-      "600 atendimentos com IA por mês",
+      "600 mensagens da IA por mês",
       "Até 3 números WhatsApp (3/5 espaços)",
       "Até 3 operadores humanos",
       "Tudo do Plano Start incluído",
@@ -297,12 +310,9 @@ const DEFAULT_PLANS: PlanItem[] = [
     description: "Para operações avançadas, redes de lojas, imobiliárias e clínicas de alta demanda.",
     allowedFeatures: [
       "ai_chat",
-      "knowledge_base",
-      "setup_wizard",
       "human_handoff",
       "simulator",
-      "contacts_history",
-      "basic_hours",
+      "business_hours_basic",
       "quick_replies",
       "basic_indicators",
       "business_hours",
@@ -310,7 +320,7 @@ const DEFAULT_PLANS: PlanItem[] = [
       "handoff_summary",
       "sound_notifications",
       "model_fallback",
-      "attendance_priority",
+      "conversation_priority",
       "satisfaction_survey",
       "commercial_indicators",
       "advanced_reports",
@@ -319,7 +329,7 @@ const DEFAULT_PLANS: PlanItem[] = [
       "advanced_commercial_filters"
     ],
     features: [
-      "1.500 atendimentos com IA por mês",
+      "1.500 mensagens da IA por mês",
       "Até 5 números WhatsApp (5/5 espaços)",
       "Até 5 operadores humanos",
       "Tudo do Plano Business incluído",
@@ -334,7 +344,7 @@ const DEFAULT_PLANS: PlanItem[] = [
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
   const [upgradeRequests, setUpgradeRequests] = useState<UpgradeRequestItem[]>([]);
-  const [plans, setPlans] = useState<PlanItem[]>(DEFAULT_PLANS);
+  const [plans, setPlans] = useState<PlanItem[]>([]);
   const [clientCountsMap, setClientCountsMap] = useState<Record<string, number>>({});
   const [enrolledStoresMap, setEnrolledStoresMap] = useState<Record<string, Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>>>({});
   const [loading, setLoading] = useState(true);
@@ -504,7 +514,7 @@ export default function AdminCRM() {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.plans)) {
-          setPlans(data.plans);
+          setPlans(data.plans.map(fromPublishedPlan));
         }
         if (data.clientCounts) {
           setClientCountsMap(data.clientCounts);
@@ -520,7 +530,7 @@ export default function AdminCRM() {
   useEffect(() => {
     async function checkMasterSession() {
       try {
-        const res = await fetch("/api/crm/auth/session", { credentials: "same-origin", cache: "no-store" });
+        const res = await fetch("/api/crm/auth/session?scope=master", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
           if (data.authenticated && data.role === "master") {
@@ -696,7 +706,7 @@ export default function AdminCRM() {
       description: "Plano comercial personalizado para lojistas.",
       allowedFeatures: ["ai_chat", "human_handoff", "simulator"],
       features: [
-        "Até 1.000 atendimentos/mês",
+        "Até 1.000 mensagens IA/mês",
         "NovaesWeb IA ativa 24h",
         "Conexão WhatsApp (1 número)",
         "Atendimento Humano Básico"
@@ -704,7 +714,7 @@ export default function AdminCRM() {
       isPopular: false,
       isActive: true
     });
-    setEditingFeaturesText("Até 1.000 atendimentos/mês\nNovaesWeb IA ativa 24h\nConexão WhatsApp (1 número)\nAtendimento Humano Básico");
+    setEditingFeaturesText("Até 1.000 mensagens IA/mês\nNovaesWeb IA ativa 24h\nConexão WhatsApp (1 número)\nAtendimento Humano Básico");
     setEditPlanModalOpen(true);
   };
 
@@ -738,6 +748,7 @@ export default function AdminCRM() {
   };
 
   const handleToggleFeatureInEditor = (featId: FeatureId) => {
+    if (featId === "ai_chat" || featId === "human_handoff") return;
     const current = editingPlan.allowedFeatures || [];
     if (current.includes(featId)) {
       setEditingPlan({ ...editingPlan, allowedFeatures: current.filter(id => id !== featId) });
@@ -754,7 +765,7 @@ export default function AdminCRM() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ action: "save_draft", plan: planPayload })
+        body: JSON.stringify({ action: "save_draft", plan: toPublishedPlan(planPayload) })
       });
       if (!res.ok) throw new Error();
       setNotice(`Plano "${editingPlan.name}" salvo como rascunho com sucesso.`);
@@ -787,7 +798,7 @@ export default function AdminCRM() {
         credentials: "same-origin",
         body: JSON.stringify({
           action: "save_and_apply",
-          plan: planToApply,
+          plan: toPublishedPlan(planToApply),
           vigencia
         })
       });
@@ -2335,11 +2346,11 @@ export default function AdminCRM() {
                           Franquia com IA:
                         </span>
                         <strong style={{fontSize: "14px", color: "#ec4899"}}>
-                          {p.quotaLimit.toLocaleString("pt-BR")} atendimentos / mês
+                          {p.quotaLimit.toLocaleString("pt-BR")} mensagens IA / mês
                         </strong>
                       </div>
                       <small style={{fontSize: "11px", color: "#9ca3af", margin: "-2px 0 2px"}}>
-                        (1 atendimento = 1 conversa ativa em 24h)
+                        (1 mensagem enviada pela IA = 1 unidade da franquia)
                       </small>
                       <div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#9ca3af"}}>
                         <span>Operadores: <strong style={{color: "white"}}>{p.maxOperators || 1}</strong></span>
@@ -2635,8 +2646,8 @@ export default function AdminCRM() {
                       }}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
-                      <option value="crm-trial">🎁 Teste Grátis (7 Dias — 100 atendimentos)</option>
-                      {plans.filter(p => p.id !== "crm-trial").map(p => (
+                      <option value="Teste Grátis (7 Dias)">🎁 Teste Grátis (7 Dias — 100 mensagens IA)</option>
+                      {plans.filter(p => p.id !== "crm-trial" && p.isActive !== false).map(p => (
                         <option key={p.id} value={p.name}>
                           {p.name} — R$ {p.price}/mês ({p.quotaLimit.toLocaleString("pt-BR")} msgs)
                         </option>
@@ -2942,7 +2953,7 @@ export default function AdminCRM() {
                             {client.plan.isTrial ? "Gratuito (7 dias)" : `R$ ${client.plan.price}/mês`}
                           </strong>
                           <small style={{color: "#8e87a2", fontSize: "11px"}}>
-                            {client.plan.isTrial ? "100 atendimentos de teste" : `${client.plan.customQuotaOverride || client.plan.quotaLimit || 200} atendimentos`}
+                            {client.plan.isTrial ? "100 mensagens da IA de teste" : `${client.plan.customQuotaOverride || client.plan.quotaLimit || 200} mensagens IA`}
                           </small>
                         </div>
 
@@ -3205,10 +3216,15 @@ export default function AdminCRM() {
                   </strong>
                   <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "10px"}}>
                     {TECHNICAL_FEATURES_LIST.map(feat => {
-                      const isChecked = (editingPlan.allowedFeatures || []).includes(feat.id);
+                      const isChecked = Boolean(feat.isCore) || (editingPlan.allowedFeatures || []).includes(feat.id);
                       return (
                         <div
                           key={feat.id}
+                          role="checkbox"
+                          aria-checked={isChecked || Boolean(feat.isCore)}
+                          aria-disabled={Boolean(feat.isCore)}
+                          tabIndex={feat.isCore ? -1 : 0}
+                          onKeyDown={event => { if (event.key === " " || event.key === "Enter") { event.preventDefault(); handleToggleFeatureInEditor(feat.id); } }}
                           onClick={() => handleToggleFeatureInEditor(feat.id)}
                           style={{
                             display: "flex",
@@ -3227,7 +3243,7 @@ export default function AdminCRM() {
                           )}
                           <div>
                             <span style={{fontSize: "12px", fontWeight: 700, color: isChecked ? "white" : "#9ca3af", display: "block"}}>
-                              {feat.name}
+                              {feat.name}{feat.isCore ? " · Sempre incluído" : ""}
                             </span>
                             <small style={{fontSize: "11px", color: "#8e87a2", lineHeight: "1.2", display: "block"}}>
                               {feat.description}
@@ -3643,7 +3659,7 @@ export default function AdminCRM() {
                   >
                     <div>
                       <strong style={{color: "white", display: "block"}}>{p.name}</strong>
-                      <small style={{color: "#9ca3af"}}>{p.quotaLimit.toLocaleString("pt-BR")} atendimentos/mês</small>
+                      <small style={{color: "#9ca3af"}}>{p.quotaLimit.toLocaleString("pt-BR")} mensagens IA/mês</small>
                     </div>
                     <strong style={{color: "#ec4899"}}>R$ {p.price}/mês</strong>
                   </div>

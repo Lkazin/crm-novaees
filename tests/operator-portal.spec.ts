@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Each public-screen test owns the unauthenticated browser state.
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/crm/auth/session", async route => {
+  await page.route("**/api/crm/auth/session*", async route => {
     if (route.request().method() === "GET") return route.fulfill({json:{authenticated:false}});
     await route.fallback();
   });
@@ -10,8 +10,8 @@ test.beforeEach(async ({ page }) => {
 
 test("operator login does not offer public registration", async ({page}) => {
   await page.goto("/operator");
-  await expect(page.getByRole("heading",{name:"Acesso ao Painel Master"})).toBeVisible();
-  await expect(page.getByPlaceholder("E-mail do administrador",{exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Acesso da Empresa"})).toBeVisible();
+  await expect(page.getByPlaceholder("seu@email.com",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:/Cadastrar|Criar conta/})).toHaveCount(0);
   await expect(page.getByRole("button",{name:"Novo contato"})).toHaveCount(0);
 });
@@ -35,7 +35,7 @@ test("operator login refuses malformed credentials without external secrets", as
 for (const width of [390,768,1440]) test(`operator login fits viewport ${width}`,async ({page})=>{
   await page.setViewportSize({width,height:900});
   await page.goto("/operator");
-  await expect(page.getByRole("heading",{name:"Acesso ao Painel Master"})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Acesso da Empresa"})).toBeVisible();
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+1);
   expect(overflow).toBe(false);
 });

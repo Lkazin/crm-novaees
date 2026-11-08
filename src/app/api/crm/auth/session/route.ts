@@ -6,7 +6,9 @@ import {
   MASTER_REMEMBER_TTL_SEC,
   signMasterToken,
   timingSafeMatch,
-  verifyMasterRequest
+  verifyMasterRequest,
+  getMasterPassword,
+  getLegacyAdminToken
 } from "@/lib/crm/master-auth";
 import { getRedis } from "@/lib/crm/plans";
 
@@ -33,7 +35,7 @@ export async function GET(request: NextRequest) {
       if (operator) {
         try {
           const memberships = await supabaseRows<Membership[]>(
-            `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(operator.id)}`,
+            `crm_tenant_memberships?select=tenant_id,role&is_active=eq.true&user_id=eq.${encodeURIComponent(operator.id)}`,
             operator.token
           );
           const tenantIds = memberships.map(m => m.tenant_id).filter(id => UUID.test(id));
@@ -76,7 +78,7 @@ export async function GET(request: NextRequest) {
     if (operator) {
       try {
         const memberships = await supabaseRows<Membership[]>(
-          `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(operator.id)}`,
+          `crm_tenant_memberships?select=tenant_id,role&is_active=eq.true&user_id=eq.${encodeURIComponent(operator.id)}`,
           operator.token
         );
         const tenantIds = memberships.map(m => m.tenant_id).filter(id => UUID.test(id));
@@ -153,17 +155,12 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "missing_credentials", message: "Informe a senha para continuar." }, 400);
     }
 
-    const masterPassword = (process.env.CRM_MASTER_PASSWORD || "Noah2027.").trim();
+    const masterPassword = getMasterPassword();
 
-    const adminToken = (process.env.CRM_LAB_ADMIN_TOKEN || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf").trim();
-    const isMasterPasswordMatch = Boolean(
-      masterPassword && (
-        timingSafeMatch(password, masterPassword) ||
-        (masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword.slice(0, -1))) ||
-        (!masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword + "."))
-      )
-    );
+    const adminToken = getLegacyAdminToken();
+    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(password, masterPassword));
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(password, adminToken));
+    if (scope !== "master" && scope !== "client") return privateJson({ error: "invalid_scope" }, 400);
 
     // 1. Attempt Supabase Auth if email is provided
     let supaAccessToken: string | null = null;
@@ -199,10 +196,6 @@ export async function POST(request: NextRequest) {
       !request.nextUrl.hostname.includes("localhost") &&
       !request.nextUrl.hostname.includes("127.0.0.1");
 
-    // Clear rate limit on successful credentials match
-    if (isMasterPasswordMatch || isAdminTokenMatch || supaAccessToken) {
-      try { await redis.del(rateLimitKey); } catch {}
-    }
 
     // =========================================================================
     // FLOW 1: EXCLUSIVE MASTER LOGIN (Strictly via /novaescrmadm with scope="master")
@@ -243,19 +236,15 @@ export async function POST(request: NextRequest) {
           maxAge
         });
 
-        if (supaAccessToken) {
-          response.cookies.set(sessionCookieName(), supaAccessToken, {
-            httpOnly: true,
-            sameSite: "lax",
-            secure: isHttps,
-            path: "/",
-            maxAge: rememberMe ? MASTER_REMEMBER_TTL_SEC : supaMaxAge
-          });
-        }
+        // A Master session must not leave a store session active.
+        response.cookies.set(sessionCookieName(), "", { httpOnly: true, sameSite: "lax", secure: isHttps, path: "/", maxAge: 0 });
+        try { await redis.del(rateLimitKey); } catch {}
+
 
         return response;
       }
 
+      try { await redis.incr(rateLimitKey); await redis.expire(rateLimitKey, 15 * 60); } catch {}
       return privateJson({
         error: "invalid_master_credentials",
         message: "Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb."
@@ -269,7 +258,7 @@ export async function POST(request: NextRequest) {
     if (supaAccessToken && supaUserId) {
       try {
         const memberships = await supabaseRows<Membership[]>(
-          `crm_tenant_memberships?select=tenant_id,role&user_id=eq.${encodeURIComponent(supaUserId)}`,
+          `crm_tenant_memberships?select=tenant_id,role&is_active=eq.true&user_id=eq.${encodeURIComponent(supaUserId)}`,
           supaAccessToken
         );
         const tenantIds = memberships.map(m => m.tenant_id).filter(id => UUID.test(id));
@@ -302,6 +291,8 @@ export async function POST(request: NextRequest) {
           tenants: activeTenants,
           actor: supaUserEmail || supaUserId
         });
+
+        try { await redis.del(rateLimitKey); } catch {}
 
         // Set Client/Operator session cookie
         response.cookies.set(sessionCookieName(), supaAccessToken, {

@@ -2,7 +2,7 @@ import {test,expect} from "@playwright/test";
 
 // Each public-screen test owns the unauthenticated browser state.
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/crm/auth/session", async route => {
+  await page.route("**/api/crm/auth/session*", async route => {
     if (route.request().method() === "GET") return route.fulfill({json:{authenticated:false}});
     await route.fallback();
   });
@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test("Master page is available but never reveals companies without operator login",async({page})=>{
  await page.goto("/admin");
  await expect(page.getByRole("heading",{name:"Acesso ao Painel Master"})).toBeVisible();
- await expect(page).toHaveURL(/\/\?error=unauthorized_admin$/);
+ await expect(page).toHaveURL(/\/novaescrmadm\?error=unauthorized_admin$/);
  await expect(page.getByText("Nenhuma empresa cadastrada no CRM.")).toHaveCount(0);
 });
 test("Master overview rejects unauthenticated requests",async({request})=>{

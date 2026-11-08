@@ -7,11 +7,12 @@ import {
   Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
-  Calendar, CreditCard, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
+  Calendar, CreditCard, Crown, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
   Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
+  CommercialPlansComparison,
   HowAttendanceWorksPanel,
   featureAvailable, FeatureUnavailable, commercialPlanId,
   QuickRepliesSection,
@@ -19,6 +20,10 @@ import {
   ReportsAndIndicatorsSection,
   FeatureGovernanceMatrix,
   UpgradeRequestModal,
+  ConsumptionAlertBanner,
+  RechargeMessagesModal,
+  RechargeHistoryTable,
+  type CommercialPlanItem,
   type WhatsappSlotItem,
   type QuickReplyItem,
   type TeamOperatorItem,
@@ -72,7 +77,19 @@ type Data = {
     trialStartedAt?: string;
     trialExpiresAt?: string;
     trialStatus?: "active" | "expiring_soon" | "expired" | "quota_exhausted" | "converted";
+    rechargeCreditsBalance?: number;
+    rechargesHistory?: Array<{
+      id: string;
+      packagesCount: number;
+      messagesAdded: number;
+      pricePaid: number;
+      purchasedAt: string;
+      status: string;
+      paymentMethod?: string;
+      txId?: string;
+    }>;
   };
+  commercialPlans?: CommercialPlanItem[];
   allowedFeatures?: string[];
   featureStates?: Record<string, FeatureStateItem>;
   contacts: Contact[];
@@ -288,7 +305,7 @@ export default function ClientWorkspace({
     quotaLimit: number;
     quotaUsed: number;
   }>({
-    quotaLimit: 500,
+    quotaLimit: 0,
     quotaUsed: 0
   });
 
@@ -389,9 +406,11 @@ export default function ClientWorkspace({
   const [priorityFilter, setPriorityFilter] = useState<"all" | "urgent" | "high" | "normal" | "low">("all");
   const [upgradeModal, setUpgradeModal] = useState<{ open: boolean; targetPlan: string; reason: string }>({
     open: false,
-    targetPlan: "CRM Business",
+    targetPlan: "CRM Premium",
     reason: ""
   });
+  const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
+  const [localRechargeBalance, setLocalRechargeBalance] = useState<number | null>(null);
   const [surveyOpen, setSurveyOpen] = useState(false);
   const [surveyRating, setSurveyRating] = useState(5);
   const [surveyComment, setSurveyComment] = useState("");
@@ -501,8 +520,8 @@ export default function ClientWorkspace({
         }
         if (json.plan) {
           setQuotaData({
-            quotaLimit: json.plan.quotaLimit || 200,
-            quotaUsed: json.plan.quotaUsed || 0
+            quotaLimit: json.plan.quotaLimit ?? 0,
+            quotaUsed: json.plan.quotaUsed ?? 0
           });
         }
         if (Array.isArray(json.allowedFeatures)) {
@@ -582,8 +601,8 @@ export default function ClientWorkspace({
       }
       if (json.plan) {
         setQuotaData({
-          quotaLimit: json.plan.quotaLimit || 200,
-          quotaUsed: json.plan.quotaUsed || 0
+          quotaLimit: json.plan.quotaLimit ?? 0,
+          quotaUsed: json.plan.quotaUsed ?? 0
         });
       }
 
@@ -644,13 +663,12 @@ export default function ClientWorkspace({
     let active = true;
     (async () => {
       try {
-        const res = await fetch("/api/crm/auth/session", { cache: "no-store", credentials: "same-origin" });
+        const res = await fetch(`/api/crm/auth/session?scope=${embedded ? "master" : "client"}`, { cache: "no-store", credentials: "same-origin" });
         const result = await res.json() as { authenticated: boolean; role?: string };
         if (!active) return;
-        if (!result.authenticated) {
+        if (!result.authenticated || result.role !== (embedded ? "master" : "client")) {
           setAuthenticated(false);
           if (!embedded && typeof window !== "undefined") {
-            try { await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" }); } catch {}
             window.location.href = "/?error=unauthorized_client";
           }
           setError("Sua sessão expirou. Entre novamente.");
@@ -684,7 +702,7 @@ export default function ClientWorkspace({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, scope: "client" })
       });
       const data = await res.json() as { authenticated?: boolean; success?: boolean; error?: string };
       if (!res.ok) throw Error(data.error === "invalid_credentials" ? "E-mail ou senha incorretos." : "Não foi possível autenticar.");
@@ -1468,7 +1486,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
   const thread = current ? messages.filter(m => m.conversation_id === current.id).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) : [];
 
   // Quota percentage
-  const quotaPercent = Math.min(100, Math.round(((quotaData.quotaUsed || 0) / (quotaData.quotaLimit || 200)) * 100));
+  const quotaPercent = quotaData.quotaLimit > 0 ? Math.min(100, Math.round((quotaData.quotaUsed / quotaData.quotaLimit) * 100)) : 0;
 
   const tabFeatures: Partial<Record<Tab,string>> = {whatsapp:"ai_chat",conhecimento:"ai_chat",artigos:"ai_chat",simulador:"simulator",horarios:"business_hours_basic",atendimentos:"human_handoff",contatos:"human_handoff",equipe:"human_handoff",relatorios:"basic_indicators"};
   const activeFeatureState = tabFeatures[activeTab] ? featureStates[tabFeatures[activeTab]!] : undefined;
@@ -2082,7 +2100,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         background: "rgba(236, 72, 153, 0.25)",
                         color: "#f472b6"
                       }}>
-                        {quotaData.quotaUsed} / {quotaData.quotaLimit} atendimentos
+                        {quotaData.quotaUsed} / {quotaData.quotaLimit} mensagens IA
                       </span>
                     </div>
                     <p style={{margin: "4px 0 0", fontSize: "13px", color: "rgba(226, 232, 240, 0.85)"}}>
@@ -4631,6 +4649,14 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* SEÇÃO 5: MEU PLANO & ASSINATURA */}
             {activeTab === "plano" && (
               <section style={{display: "flex", flexDirection: "column", gap: "24px"}}>
+                {/* Alerta de Consumo Visual (80%, 90%, 100%) */}
+                <ConsumptionAlertBanner
+                  quotaUsed={quotaData.quotaUsed}
+                  quotaLimit={quotaData.quotaLimit}
+                  rechargeBalance={localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
+                  onBuyRecharge={() => setRechargeModalOpen(true)}
+                />
+
                 {/* Header da Seção */}
                 <div className="op-card" style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
@@ -4642,35 +4668,59 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         Meu Plano & Franquia Comercial
                       </h2>
                       <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
-                        Acompanhe seu consumo de atendimentos com IA, limites de operadores e recursos contratados.
+                        Acompanhe as mensagens enviadas pela IA, limites de operadores e recursos contratados.
                       </p>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => openUpgradeRequest("CRM Business", "Solicitação de Upgrade pela aba Meu Plano")}
-                    style={{
-                      padding: "10px 20px",
-                      borderRadius: "10px",
-                      background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                      color: "#fff",
-                      border: "none",
-                      fontWeight: 700,
-                      fontSize: "14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      cursor: "pointer",
-                      boxShadow: "0 4px 18px rgba(236, 72, 153, 0.4)"
-                    }}
-                  >
-                    <Sparkles size={16}/> Solicitar Upgrade de Plano
-                  </button>
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => setRechargeModalOpen(true)}
+                      style={{
+                        padding: "10px 18px",
+                        borderRadius: "10px",
+                        background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                        color: "#fff",
+                        border: "none",
+                        fontWeight: 800,
+                        fontSize: "14px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 18px rgba(236, 72, 153, 0.4)"
+                      }}
+                    >
+                      <Sparkles size={16}/> Comprar mais mensagens
+                    </button>
+
+                    {data?.plan?.isTrial && (
+                      <button
+                        type="button"
+                        onClick={() => openUpgradeRequest("CRM Premium", "Solicitação de ativação do Plano Premium definitivo")}
+                        style={{
+                          padding: "10px 18px",
+                          borderRadius: "10px",
+                          background: "rgba(255, 255, 255, 0.08)",
+                          border: "1px solid rgba(255, 255, 255, 0.2)",
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: "14px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        <Crown size={16} color="#f472b6"/> Assinar CRM Premium (R$ 89,90)
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Card de Resumo do Plano Atual + Barra de Consumo */}
-                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px"}}>
+                {/* Card de Resumo do Plano Atual + Barra de Consumo + Saldo de Recargas */}
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "20px"}}>
                   {/* Detalhes do Plano Contratado */}
                   <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
                     <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
@@ -4679,7 +4729,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           Plano em Operação
                         </span>
                         <h3 style={{fontSize: "24px", fontWeight: 900, margin: "4px 0 0", color: "#fff"}}>
-                          {data?.plan?.isTrial ? "Teste Grátis (7 Dias)" : (data?.plan?.name || "CRM Business")}
+                          {data?.plan?.isTrial ? "Teste Grátis (7 Dias)" : (data?.plan?.name || "Plano indisponível")}
                         </h3>
                       </div>
                       <span style={{
@@ -4701,7 +4751,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
                     <div style={{display: "flex", alignItems: "baseline", gap: "6px", margin: "6px 0"}}>
                       <span style={{fontSize: "32px", fontWeight: 900, color: "#fff"}}>
-                        {data?.plan?.isTrial ? "Grátis" : `R$ ${data?.plan?.price || "99,90"}`}
+                        {data?.plan?.isTrial ? "Grátis" : data?.plan?.price ? `R$ ${data.plan.price}` : "Valor indisponível"}
                       </span>
                       <span style={{fontSize: "14px", color: "#aba8bf"}}>
                         {data?.plan?.isTrial ? "por 7 dias corridos" : "/mês"}
@@ -4729,7 +4779,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   {/* Medidor de Atendimentos com IA */}
                   <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
                     <span style={{fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "#8b5cf6", fontWeight: 800}}>
-                      Consumo de Atendimentos IA
+                      Consumo de Mensagens IA
                     </span>
                     <div style={{display: "flex", justifyContent: "space-between", alignItems: "baseline"}}>
                       <span style={{fontSize: "32px", fontWeight: 900, color: "#fff"}}>
@@ -4759,7 +4809,52 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
 
                     <p style={{fontSize: "12px", color: "#8e87a2", margin: 0, lineHeight: 1.5}}>
-                      Cada atendimento é contabilizado por sessão de 24 horas por cliente no WhatsApp após a 1ª resposta automática da IA enviada com sucesso. Atendimento apenas humano não consome franquia.
+                      Cada mensagem enviada com sucesso pela IA consome 1 unidade da franquia. Mensagens de atendentes humanos e falhas de envio não consomem saldo.
+                    </p>
+                  </div>
+
+                  {/* Saldo de Recargas Adicionais (Créditos Separados) */}
+                  <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "16px"}}>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                      <span style={{fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "#00db8c", fontWeight: 800}}>
+                        Créditos Adicionais de Recarga
+                      </span>
+                      <span style={{fontSize: "11px", fontWeight: 800, color: "#c4b5fd", background: "rgba(139, 92, 246, 0.15)", padding: "3px 8px", borderRadius: "6px"}}>
+                        R$ 20 = 100 msgs
+                      </span>
+                    </div>
+
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "baseline"}}>
+                      <span style={{fontSize: "32px", fontWeight: 900, color: "#00db8c"}}>
+                        {localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
+                        <span style={{fontSize: "16px", color: "#aba8bf", fontWeight: 500}}> msgs disponíveis</span>
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setRechargeModalOpen(true)}
+                      style={{
+                        background: "rgba(0, 219, 140, 0.12)",
+                        border: "1px solid rgba(0, 219, 140, 0.35)",
+                        color: "#00db8c",
+                        borderRadius: "10px",
+                        padding: "10px",
+                        fontWeight: 700,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                        marginTop: "auto"
+                      }}
+                    >
+                      <Plus size={16}/> Comprar Recarga Adicional
+                    </button>
+
+                    <p style={{fontSize: "12px", color: "#8e87a2", margin: 0, lineHeight: 1.5}}>
+                      As recargas não possuem data de expiração precoce e não alteram o valor da mensalidade fixa.
                     </p>
                   </div>
                 </div>
@@ -4817,266 +4912,43 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   onRequestUpgrade={(p, r) => openUpgradeRequest(p, r)}
                 />
 
-                {/* Comparativo dos Três Planos Comerciais */}
-                <div className="op-card" style={{display: "flex", flexDirection: "column", gap: "20px"}}>
-                  <div>
-                    <h3 style={{fontSize: "20px", fontWeight: 800, margin: 0, color: "#fff"}}>
-                      Conheça os Planos Comerciais NovaesWeb CRM IA
-                    </h3>
-                    <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
-                      Escale seu atendimento com automação inteligente, múltiplos atendentes e até 5 números WhatsApp.
-                    </p>
-                  </div>
+                {/* Histórico de Recargas Adicionais */}
+                <RechargeHistoryTable recharges={data?.plan?.rechargesHistory} />
 
-                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px"}}>
-                    {/* Plano 1: Start */}
-                    <div
-                      style={{
-                        background: "rgba(255, 255, 255, 0.02)",
-                        border: "1px solid rgba(255, 255, 255, 0.1)",
-                        borderRadius: "16px",
-                        padding: "24px 20px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "16px"
-                      }}
-                    >
-                      <div>
-                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Start</h4>
-                        <p style={{fontSize: "12px", color: "#8e87a2", margin: "4px 0 0"}}>
-                          Ideal para autônomos e pequenos comércios locais.
-                        </p>
-                      </div>
-
-                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
-                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 59,90</span>
-                        <span style={{fontSize: "13px", color: "#8e87a2"}}>/mês</span>
-                      </div>
-
-                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#c9bede"}}>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>200 atendimentos</strong> com IA/mês
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 número</strong> WhatsApp (1/5 espaços)
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1 operador</strong> humano
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> IA personalizada + Base de conhecimento
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Assistente de configuração + Simulador
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Atendimento humano + Transbordo IA → humano
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários básicos + Respostas rápidas
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Contatos, histórico e Indicadores básicos
-                        </li>
-                      </ul>
-
-                      <button
-                        type="button"
-                        onClick={() => openUpgradeRequest("CRM Start", "Interesse no plano CRM Start (R$ 59,90/mês)")}
-                        style={{
-                          marginTop: "auto",
-                          padding: "10px",
-                          borderRadius: "10px",
-                          background: "rgba(255, 255, 255, 0.08)",
-                          border: "1px solid rgba(255, 255, 255, 0.15)",
-                          color: "#fff",
-                          textAlign: "center",
-                          cursor: "pointer",
-                          fontWeight: 700,
-                          fontSize: "13px"
-                        }}
-                      >
-                        Solicitar Start
-                      </button>
-                    </div>
-
-                    {/* Plano 2: Business (DESTAQUE MAIS RECOMENDADO) */}
-                    <div
-                      style={{
-                        background: "linear-gradient(135deg, rgba(60, 20, 80, 0.65), rgba(25, 10, 45, 0.85))",
-                        border: "2px solid #ec4899",
-                        borderRadius: "16px",
-                        padding: "24px 20px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "16px",
-                        position: "relative",
-                        boxShadow: "0 0 28px rgba(236, 72, 153, 0.35)"
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute",
-                        top: "-12px",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                        color: "#fff",
-                        padding: "3px 14px",
-                        borderRadius: "999px",
-                        fontSize: "11px",
-                        fontWeight: 900,
-                        letterSpacing: "0.5px",
-                        boxShadow: "0 2px 10px rgba(236, 72, 153, 0.5)"
-                      }}>
-                        ⭐ MAIS RECOMENDADO
-                      </div>
-
-                      <div style={{marginTop: "6px"}}>
-                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Business</h4>
-                        <p style={{fontSize: "12px", color: "#fbcfe8", margin: "4px 0 0"}}>
-                          Para empresas em expansão que exigem escala e equipe.
-                        </p>
-                      </div>
-
-                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
-                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 99,90</span>
-                        <span style={{fontSize: "13px", color: "#fbcfe8"}}>/mês</span>
-                      </div>
-
-                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#f5d0fe"}}>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>600 atendimentos</strong> com IA/mês
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>3 números</strong> WhatsApp (3/5 espaços)
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>3 operadores</strong> humanos
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Horários avançados e intervalos de almoço
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Etiquetas comerciais e Prioridade da fila
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Resumos inteligentes + Alertas sonoros
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Modelo reserva de IA (zero quedas)
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Pesquisa de satisfação + Indicadores comerciais
-                        </li>
-                      </ul>
-
-                      <button
-                        type="button"
-                        onClick={() => openUpgradeRequest("CRM Business", "Upgrade para o plano CRM Business (R$ 99,90/mês)")}
-                        style={{
-                          marginTop: "auto",
-                          padding: "11px",
-                          borderRadius: "10px",
-                          background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                          color: "#fff",
-                          border: "none",
-                          textAlign: "center",
-                          cursor: "pointer",
-                          fontWeight: 800,
-                          fontSize: "13px",
-                          boxShadow: "0 4px 14px rgba(236, 72, 153, 0.4)"
-                        }}
-                      >
-                        Fazer Upgrade p/ Business
-                      </button>
-                    </div>
-
-                    {/* Plano 3: Premium */}
-                    <div
-                      style={{
-                        background: "rgba(255, 255, 255, 0.02)",
-                        border: "1px solid rgba(255, 255, 255, 0.1)",
-                        borderRadius: "16px",
-                        padding: "24px 20px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "16px"
-                      }}
-                    >
-                      <div>
-                        <h4 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "#fff"}}>CRM Premium</h4>
-                        <p style={{fontSize: "12px", color: "#8e87a2", margin: "4px 0 0"}}>
-                          Para redes de lojas, clínicas e alta demanda comercial.
-                        </p>
-                      </div>
-
-                      <div style={{display: "flex", alignItems: "baseline", gap: "4px"}}>
-                        <span style={{fontSize: "28px", fontWeight: 900, color: "#fff"}}>R$ 159,90</span>
-                        <span style={{fontSize: "13px", color: "#8e87a2"}}>/mês</span>
-                      </div>
-
-                      <ul style={{listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#c9bede"}}>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> <strong>1.500 atendimentos</strong> com IA/mês
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>5 números</strong> WhatsApp (5/5 espaços)
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Até <strong>5 operadores</strong> humanos
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Tudo do plano Business incluído
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Relatórios avançados de funil e conversão
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Análise de satisfação e NPS detalhada
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Indicadores de produtividade por atendente
-                        </li>
-                        <li style={{display: "flex", alignItems: "center", gap: "8px"}}>
-                          <Check size={16} color="#00db8c" style={{flexShrink: 0}}/> Filtros e análises comerciais avançadas
-                        </li>
-                      </ul>
-
-                      <button
-                        type="button"
-                        onClick={() => openUpgradeRequest("CRM Premium", "Upgrade para o plano CRM Premium (R$ 159,90/mês)")}
-                        style={{
-                          marginTop: "auto",
-                          padding: "10px",
-                          borderRadius: "10px",
-                          background: "rgba(255, 255, 255, 0.08)",
-                          border: "1px solid rgba(255, 255, 255, 0.15)",
-                          color: "#fff",
-                          textAlign: "center",
-                          cursor: "pointer",
-                          fontWeight: 700,
-                          fontSize: "13px"
-                        }}
-                      >
-                        Solicitar Premium
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <CommercialPlansComparison
+                  plans={data?.commercialPlans ?? []}
+                  featureStates={featureStates}
+                  currentPlanId={data?.plan?.planId}
+                  onRequestUpgrade={openUpgradeRequest}
+                />
               </section>
             )}
 
             {embedded && activeTab === "artigos" && <KnowledgeWorkspace embedded tenantId={tenant} />}
 
+            </fieldset>
+            <RechargeMessagesModal
+              open={rechargeModalOpen}
+              onClose={() => setRechargeModalOpen(false)}
+              tenantId={tenant}
+              currentBalance={localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
+              onRechargeSuccess={(newBalance) => {
+                setLocalRechargeBalance(newBalance);
+                if (tenant) {
+                  void fetchReports(tenant);
+                  void fetchData(tenant, true);
+                }
+              }}
+            />
             <UpgradeRequestModal
               open={upgradeModal.open}
               initialPlan={upgradeModal.targetPlan}
               initialNotes={upgradeModal.reason}
-              currentPlanName={data?.plan?.name || "CRM Start"}
+              currentPlanName={data?.plan?.name || "Plano indisponível"}
+              plans={data?.commercialPlans ?? []}
               onClose={() => setUpgradeModal(prev => ({ ...prev, open: false }))}
               onSubmitUpgrade={handleSubmitUpgradeRequest}
             />
-            </fieldset>
           </Content>
         </>
       )}

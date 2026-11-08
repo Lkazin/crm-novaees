@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Each public-screen test owns the unauthenticated browser state.
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/crm/auth/session", async route => {
+  await page.route("**/api/crm/auth/session*", async route => {
     if (route.request().method() === "GET") return route.fulfill({json:{authenticated:false}});
     await route.fallback();
   });

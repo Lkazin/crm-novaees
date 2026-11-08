@@ -4,9 +4,8 @@ import { cookies } from "next/headers";
 const COOKIE = "nw_crm_session";
 type SupaUser = { id?: string; email?: string };
 export function supabaseSettings() {
-  const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "https://mpteambmrlflllfqtkmq.supabase.co")?.trim() ?? "";
-  const fallbackKey = Buffer.from("c2Jfc2VjcmV0X2pEcXFlWkR3WEZZcEJIc053RVp2dGdfOEN2OGFoNjQ=", "base64").toString("utf8");
-  const key = (process.env.CRM_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || fallbackKey)?.trim() ?? "";
+  const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim() ?? "";
+  const key = (process.env.CRM_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY)?.trim() ?? "";
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(url) || !key || key.length < 20)
     throw new Error("crm_supabase_not_configured");
   return { url: url.replace(/\/$/, ""), key };

@@ -14,7 +14,13 @@ async function fixture(page: Page, tier: "start"|"business"|"premium", state: "a
   const max = tier === "start" ? 1 : tier === "business" ? 3 : 5;
   const featureStates = Object.fromEntries(ALL.map(id=>[id,{id,name:`Recurso ${id}`,description:`Descrição ${id}`,minPlanId:CORE.includes(id)?"crm-start":BUSINESS.includes(id)?"crm-business":"crm-premium",minPlanName:CORE.includes(id)?"CRM Start":BUSINESS.includes(id)?"CRM Business":"CRM Premium",state:state === "suspended" ? "suspended" : state === "maintenance" && id === "ai_chat" ? "maintenance" : allowed.includes(id)?"allowed":"locked_by_plan",reason:state === "allowed" ? undefined : "Indisponível temporariamente"}]));
   const slots = [1,2,3,4,5].map(slot=>({slot,label:`WhatsApp #${slot}`,instanceName:slot===1?"loja_fixture":`loja_fixture_${slot}`,unlocked:slot<=max&&state==="allowed",minPlanId:slot===1?"crm-start":slot<=3?"crm-business":"crm-premium",minPlanName:slot===1?"CRM Start":slot<=3?"CRM Business":"CRM Premium",status:slot<=max?"disconnected":"locked",channelId:null,pausedByDowngrade:false}));
-  const plan = {name:`CRM ${tier}`,planId:`crm-${tier}`,maxWhatsappConnections:max,maxOperators:max,quotaLimit:tier==="start"?200:tier==="business"?600:1500,quotaUsed:2,status:"paid",dueDate:"2099-12-01",autoBlock:false};
+  const plan = {name:`CRM ${tier[0].toUpperCase()+tier.slice(1)}`,planId:`crm-${tier}`,maxWhatsappConnections:max,maxOperators:max,quotaLimit:tier==="start"?200:tier==="business"?600:1500,quotaUsed:2,status:"paid",dueDate:"2099-12-01",autoBlock:false};
+  const commercialPlans = [
+    {id:"crm-trial",name:"Teste Grátis (7 Dias)",price:"0,00",quotaLimit:100,maxOperators:1,maxWhatsappConnections:1,features:BUSINESS,isTrial:true},
+    {id:"crm-start",name:"CRM Start",price:"59,90",quotaLimit:200,maxOperators:1,maxWhatsappConnections:1,features:CORE},
+    {id:"crm-business",name:"CRM Business",price:"99,90",quotaLimit:600,maxOperators:3,maxWhatsappConnections:3,features:BUSINESS},
+    {id:"crm-premium",name:"CRM Premium",price:"159,90",quotaLimit:1500,maxOperators:5,maxWhatsappConnections:5,features:ALL}
+  ];
   const requests: Record<string,unknown>[] = [];
   await page.route("**/api/**", async route=>{
     const request=route.request(), path=new URL(request.url()).pathname;
@@ -25,7 +31,7 @@ async function fixture(page: Page, tier: "start"|"business"|"premium", state: "a
     } else if(path==="/api/crm/auth/session") json={authenticated:true,role:"master"};
     else if(path==="/api/crm/admin/clients")json={clients:[],upgradeRequests:[]};
     else if(path==="/api/crm/admin/plans")json={plans:[],clientCounts:{},enrolledStores:{}};
-    else if(path==="/api/crm/operator/data")json={tenants:[{id:TENANT,name:"NovaesWeb",status:"active"}],selectedTenant:TENANT,contacts:[],conversations:[],messages:[],tags:[],contactTags:[],allowedFeatures:allowed,featureStates,isSuspended:state==="suspended",plan};
+    else if(path==="/api/crm/operator/data")json={tenants:[{id:TENANT,name:"NovaesWeb",status:"active"}],selectedTenant:TENANT,commercialPlans,contacts:[],conversations:[],messages:[],tags:[],contactTags:[],allowedFeatures:allowed,featureStates,isSuspended:state==="suspended",plan};
     else if(path==="/api/crm/operator/ai-settings")json={agentLabel:"Fixture",enabled:true,storeInfo:"",allowedFeatures:allowed,featureStates,whatsappSlots:slots,quickReplies:[],teamOperators:[],plan};
     else if(path==="/api/crm/operator/features")json={featureStates,quickReplies:[],teamOperators:[],reports:{basicIndicators:{quotaUsed:2,quotaLimit:200,quotaPercent:1,totalConversations:7,activeConversations:3,aiConversations:4,humanConversations:3,totalContacts:5},commercialIndicators:tier==="start"?null:{tagBreakdown:{Interessado:2},priorityBreakdown:{urgent:0,high:1,normal:2,low:0},handoffCount:3,handoffRate:40,totalSurveys:2,avgSatisfaction:4.5},premiumAnalytics:tier!=="premium"?null:{starDistribution:{1:0,2:0,3:0,4:1,5:1},csatPercent:100,aiAvgRating:4,humanAvgRating:5,detractors:[],operatorMetrics:[{operatorId:TENANT,name:"Ana",role:"agent",conversationsHandled:7,surveysCount:2,avgRating:4.5}],channelsSummary:[]}}};
     else if(path==="/api/crm/whatsapp/status")json={connected:false,state:"disconnected",whatsappSlots:slots};

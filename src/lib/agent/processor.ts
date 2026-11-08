@@ -4,7 +4,7 @@ import type { AgentConfig } from "./config";
 import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
-import { sendText } from "./evolution";
+import { sendText, EvolutionSendError } from "./evolution";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
@@ -227,7 +227,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       return { isBlocked: true, blockedReason: "channel_paused_by_plan", channelFound: true, tenantId };
     }
 
-    quotaLimit = effectivePlan.quotaLimit;
+    quotaLimit = effectivePlan.quotaLimit + (effectivePlan.rechargeCreditsBalance || 0);
 
     if (effectivePlan.featureStates?.ai_chat?.state !== "allowed") {
       return { isBlocked: true, blockedReason: "feature_locked", channelFound: true, tenantId };
@@ -462,11 +462,9 @@ export async function processWebhook(
         return { status: "disabled", reason: "outside_operating_hours" };
       }
 
-      // Redis is only a UI/loop projection. Admission and 24h accounting live in PostgreSQL.
+      // PostgreSQL charges each accepted AI reply. Redis only projects usage and the 24h anti-loop guard.
       const sessionKey = `crm:session:${tenantId}:${incoming.number}`;
       const sessionMsgsKey = `crm:session_msgs:${tenantId}:${incoming.number}`;
-      const monthKey = getBrazilMonthKey(now);
-      const quotaKey = isTrial ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${monthKey}`;
       if (await redis.exists(sessionKey) && Number(await redis.get(sessionMsgsKey) || 0) >= MAX_AI_REPLIES_PER_24H_WINDOW) {
         await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Limite de segurança de respostas automáticas na janela de 24h atingido");
         return { status: "disabled", reason: "session_message_cap_handoff" };
@@ -480,22 +478,34 @@ export async function processWebhook(
       }
 
       if (!Number.isInteger(quotaLimit) || quotaLimit! < 0) return { status: "disabled", reason: "invalid_quota_limit" };
-      const input: AttendanceInput = { tenantId, phone: incoming.number, instance: incoming.instance, limit: quotaLimit!, floor: quotaUsed, floorPeriod: quotaPeriod, isTrial: Boolean(isTrial), now };
+      const input: AttendanceInput = { tenantId, phone: incoming.number, instance: incoming.instance, messageIds: [...new Set([...items.map(item => item.id), incoming.id].filter(Boolean))], limit: quotaLimit!, floor: quotaUsed, floorPeriod: quotaPeriod, isTrial: Boolean(isTrial), now };
       const reservation = await quotaStore.reserve(input);
+      if (reservation.reason === "message_already_processed") {
+        await markItemsDone();
+        return { status: "duplicate" };
+      }
       if (!reservation.allowed || !reservation.token) return { status: "disabled", reason: reservation.reason || "quota_exceeded" };
       let accepted = false;
+      let sendStarted = false;
+      let rejected = false;
       try {
         const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);
-        await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+        sendStarted = true;
+        try {
+          await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+        } catch (error) {
+          rejected = error instanceof EvolutionSendError && error.outcome === "rejected";
+          throw error;
+        }
         accepted = true;
-        await markItemsDone();
         // Failed or uncertain commit keeps its durable reservation; never silently refund an accepted send.
         const committed = await quotaStore.commit(input, reservation.token);
         try {
+          const quotaKey = committed.period === "trial" ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${committed.period}`;
           await redis.set(quotaKey, String(committed.used));
-          if (committed.newWindow) {
+          if (!await redis.exists(sessionKey)) {
             await redis.set(sessionKey, "1", "EX", 86400);
             await redis.set(sessionMsgsKey, "1", "EX", 86400);
           } else {
@@ -507,7 +517,9 @@ export async function processWebhook(
         try { await persistOutboundInSupabase(incoming.instance, incoming.number, answer); } catch {}
         return { status: "sent" };
       } finally {
-        if (!accepted) await quotaStore.release(input, reservation.token);
+        // Unknown provider outcome stays reserved for reconciliation. Confirmed rejection or
+        // failure before starting provider I/O can safely release without charging.
+        if (!accepted && (!sendStarted || rejected)) await quotaStore.release(input, reservation.token);
       }
     } finally {
       await redis.del(debounceKey);

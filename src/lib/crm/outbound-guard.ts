@@ -6,7 +6,6 @@ import { resolveChannelForInstance } from "./supabase-ingest";
 
 export async function outboundAllowed(incoming: Incoming): Promise<boolean> {
   try {
-    if (incoming.instance === "crmtest") return true;
     const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
     const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
     if (!url || !key) return false;
@@ -52,6 +51,6 @@ export async function outboundAllowed(incoming: Incoming): Promise<boolean> {
 
     return true;
   } catch {
-    return true;
+    return false;
   }
 }

@@ -19,7 +19,7 @@ type Staff = { role: string; enabled: boolean };
  * NEVER uses or reuses the administrative login password.
  */
 export function getMasterSessionSecret(): string {
-  const secret = (process.env.CRM_MASTER_SESSION_SECRET || "e7b4cf28965a3f1406dc57209d66141a54b3ee8618cb55452f0853523f668f12").trim();
+  const secret = process.env.CRM_MASTER_SESSION_SECRET?.trim() || "";
   if (secret && secret.length >= 32) return secret;
   return "";
 }
@@ -28,14 +28,14 @@ export function getMasterSessionSecret(): string {
  * Retrieve administrative password for Master login verification only.
  */
 export function getMasterPassword(): string {
-  return (process.env.CRM_MASTER_PASSWORD || "Noah2027.").trim();
+  return process.env.CRM_MASTER_PASSWORD?.trim() || "";
 }
 
 /**
  * Retrieve legacy service token for automated API calls.
  */
 export function getLegacyAdminToken(): string {
-  return (process.env.CRM_LAB_ADMIN_TOKEN || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf").trim();
+  return process.env.CRM_LAB_ADMIN_TOKEN?.trim() || "";
 }
 
 /**
@@ -82,7 +82,9 @@ export function verifyMasterToken(token: string | undefined): { valid: boolean; 
     return { valid: false };
   }
 
-  const cleanToken = token.includes("%") ? decodeURIComponent(token) : token;
+  let cleanToken: string;
+  try { cleanToken = token.includes("%") ? decodeURIComponent(token) : token; }
+  catch { return { valid: false }; }
   const parts = cleanToken.split(":");
   if (parts.length === 3) {
     const [actor, timestampStr, signature] = parts;
@@ -147,11 +149,7 @@ export async function verifyMasterRequest(request: NextRequest): Promise<{ autho
   const cleanKey = authHeader.replace(/^Bearer\s+/i, "").trim();
 
   if (cleanKey) {
-    if (masterPassword && (
-      timingSafeMatch(cleanKey, masterPassword) ||
-      (masterPassword.endsWith(".") && timingSafeMatch(cleanKey, masterPassword.slice(0, -1))) ||
-      (!masterPassword.endsWith(".") && timingSafeMatch(cleanKey, masterPassword + "."))
-    )) {
+    if (masterPassword && timingSafeMatch(cleanKey, masterPassword)) {
       return { authorized: true, actor: "api_master_password" };
     }
     if (legacyToken && timingSafeMatch(cleanKey, legacyToken)) {

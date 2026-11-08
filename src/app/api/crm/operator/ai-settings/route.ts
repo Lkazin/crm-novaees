@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { authorizeCrmTenant, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { getEffectiveTenantPlan, requireTenantFeature } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, requireTenantFeature, DEFAULT_QUICK_REPLIES } from "@/lib/crm/plans";
 import { buildTenantWhatsappSlots } from "@/lib/crm/whatsapp-slots";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 
@@ -43,30 +43,6 @@ export type OperatingHours = {
 
 const DEFAULT_DAYS = ["seg", "ter", "qua", "qui", "sex", "sab"];
 
-export const DEFAULT_QUICK_REPLIES = [
-  {
-    id: "qr_boas_vindas",
-    shortcut: "/oi",
-    title: "Boas-vindas e Apresentação",
-    body: "Olá! Tudo bem? 😊 Sou do atendimento humano. Como posso ajudar você hoje?",
-    category: "Saudação"
-  },
-  {
-    id: "qr_pix",
-    shortcut: "/pix",
-    title: "Dados para Pagamento via PIX",
-    body: "Para pagamento via PIX, assim que realizar a transferência nos envie o comprovante por aqui para confirmarmos seu pedido imediatamente! ✅",
-    category: "Financeiro"
-  },
-  {
-    id: "qr_encerramento",
-    shortcut: "/obrigado",
-    title: "Agradecimento e Encerramento",
-    body: "Muito obrigado pelo seu contato! Qualquer outra dúvida, permanecemos à disposição. Tenha um excelente dia! 🙌",
-    category: "Encerramento"
-  }
-];
-
 function buildDefaultSchedule(openTime = "08:00", closeTime = "18:00", activeDays: string[] = DEFAULT_DAYS): Record<string, DaySchedule> {
   const schedule: Record<string, DaySchedule> = {};
   for (const d of ALL_DAYS) {
@@ -83,7 +59,7 @@ function buildDefaultSchedule(openTime = "08:00", closeTime = "18:00", activeDay
   return schedule;
 }
 
-export function normalizeOperatingHours(
+function normalizeOperatingHours(
   raw?: Partial<OperatingHours> | null,
   fallbackTimezone = "America/Sao_Paulo",
   allowAdvancedIntervals = true

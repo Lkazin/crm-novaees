@@ -2,6 +2,13 @@ import type { AgentConfig } from "./config";
 
 export type EvolutionSendConfig = Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance" | "sendFormat">;
 
+export class EvolutionSendError extends Error {
+  constructor(message: string, public readonly outcome: "rejected" | "uncertain") {
+    super(message);
+    this.name = "EvolutionSendError";
+  }
+}
+
 export async function sendText(number: string, text: string, cfg: EvolutionSendConfig, targetInstance?: string): Promise<void> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const endpoint = `${cfg.evolutionUrl}/message/sendText/${instance}`;
@@ -20,9 +27,9 @@ export async function sendText(number: string, text: string, cfg: EvolutionSendC
       cache: "no-store",
     });
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[evolution-send-error] ${endpoint} -> ${response.status}:`, errorText);
-      throw new Error(`Evolution retornou HTTP ${response.status}: ${errorText}`);
+      console.error(`[evolution-send-error] HTTP ${response.status}`);
+      // A timeout or server error may happen after provider acceptance: do not retry/refund automatically.
+      throw new EvolutionSendError(`Evolution retornou HTTP ${response.status}`, response.status >= 400 && response.status < 500 && response.status !== 408 ? "rejected" : "uncertain");
     }
   } finally {
     clearTimeout(timeout);

@@ -54,6 +54,9 @@ export function middleware(request: NextRequest) {
 
   // 4. Protect /cliente routes: must have Client/Operator session cookie
   if (pathname === "/cliente" || pathname.startsWith("/cliente/")) {
+    if (pathname === "/cliente" && masterCookie && request.nextUrl.searchParams.get("tenant") === "novaesweb") {
+      return NextResponse.redirect(new URL("/admin?section=crm", request.url));
+    }
     if (!operatorCookie && !masterCookie) {
       const loginUrl = new URL("/", request.url);
       loginUrl.searchParams.set("error", "unauthorized_client");

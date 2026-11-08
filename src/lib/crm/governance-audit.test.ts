@@ -85,3 +85,23 @@ test("invalid commercial limits and trial timestamps are refused",async()=>fixtu
  const cache=memoryRedis();const initial=cache.values.get("crm:master:plans");await assert.rejects(saveMasterPlan({...business,maxWhatsappConnections:6},"apply","immediate","fixture_master",cache.redis),/invalid_plan_limits/);assert.equal(cache.values.get("crm:master:plans"),initial);
  await assert.rejects(getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:"crm-trial",trialStartedAt:"garbage"}}),cache.redis),/invalid_trial_start/);
 }));
+
+
+test("Business legacy contract with five slots cannot unlock Premium connections or resources",async()=>{
+ const cache=memoryRedis();
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,name:"Plus",contractedPlan:{quotaLimit:600,price:business.price,features:[...business.features,"advanced_reports"],maxOperators:5,maxWhatsappConnections:5,version:1}}}),cache.redis);
+ assert.equal(plan.planName,"CRM Business");assert.equal(plan.maxWhatsappConnections,3);assert.equal(plan.maxOperators,3);
+ assert.equal(plan.allowedFeatures.includes("advanced_reports"),false);assert.equal(plan.featureStates?.advanced_reports.state,"locked_by_plan");
+});
+
+test("a resource unchecked in the published plan is blocked despite the old snapshot",async()=>{
+ const catalog=DEFAULT_PLANS.map(p=>p.id===business.id?{...p,features:p.features.filter(f=>f!=="quick_replies")}:p);
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,contractedPlan:{quotaLimit:600,price:business.price,features:business.features,maxOperators:3,maxWhatsappConnections:3,version:1}}}),memoryRedis(catalog).redis);
+ assert.equal(plan.allowedFeatures.includes("quick_replies"),false);assert.equal(plan.featureStates?.quick_replies.state,"locked_by_plan");
+});
+
+
+test("legacy feature exceptions cannot silently unlock resources outside the selected plan",async()=>{
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,customFeaturesOverride:["advanced_reports"]}}),memoryRedis().redis);
+ assert.equal(plan.allowedFeatures.includes("advanced_reports"),false);
+});

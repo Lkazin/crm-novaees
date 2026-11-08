@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentConfig } from "./config";
 import { processWebhook as processWebhookActual, getBrazilMonthKey } from "./processor";
+import { EvolutionSendError } from "./evolution";
 
 const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
  getStoreContext: async()=>({tenantId:"11111111-1111-4111-8111-111111111111",quotaLimit:200,context:{}}),
@@ -54,6 +55,11 @@ function fakeRedis() {
   };
 }
 
+test("período mensal da franquia vira à meia-noite de São Paulo, não à meia-noite UTC", () => {
+  assert.equal(getBrazilMonthKey(new Date("2026-12-01T02:59:59Z")), "2026-11");
+  assert.equal(getBrazilMonthKey(new Date("2026-12-01T03:00:00Z")), "2026-12");
+});
+
 test("disabled switch never connects or sends", async () => {
   assert.equal((await processWebhook(payload, { ...cfg, sendEnabled: false })).status, "disabled");
 });
@@ -70,7 +76,7 @@ test("single allowed message generates and sends exactly once", async () => {
   assert.equal(sends, 1);
 });
 
-test("failed send releases lock and allows retry without charging quota on failure", async () => {
+test("confirmed send rejection releases lock and allows retry without charging quota on failure", async () => {
   const db = fakeRedis(); let calls = 0;
   const tenantId = "tenant-quota-test";
   const monthKey = getBrazilMonthKey(new Date("2026-11-07T12:00:00Z"));
@@ -79,7 +85,7 @@ test("failed send releases lock and allows retry without charging quota on failu
     nowDate: new Date("2026-11-07T12:00:00Z"),
     getStoreContext: async () => ({ tenantId, quotaLimit: 200, isTrial: false, context: {} }),
     generate: async () => "Oi",
-    send: async () => { calls++; if (calls === 1) throw new Error("network"); }
+    send: async () => { calls++; if (calls === 1) throw new EvolutionSendError("HTTP 400", "rejected"); }
   };
   await assert.rejects(processWebhook(payload, cfg, deps));
   // Quota must still be 0 because send failed!
@@ -116,7 +122,7 @@ test("handoff during AI generation blocks outbound message", async () => {
   assert.equal(sent, 0);
 });
 
-test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imediata vs Retomada 24h vs Virada do mês)", async () => {
+test("franquia por mensagem: humano e transferência isentos; cada resposta IA cobra, mesmo dentro de 24h; mês separado", async () => {
   const db = fakeRedis();
   const tenantId = "tenant-etapa6";
   const novDate = new Date("2026-11-15T14:00:00Z");
@@ -180,7 +186,7 @@ test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imed
   assert.equal(aiRes1.status, "sent");
   assert.equal(await db.get(novKey), "1");
 
-  // 4. Conversa retomada dentro da janela de 24h NÃO consome nova franquia
+  // 4. Outra resposta dentro de 24h consome mais uma unidade.
   const aiRes2 = await processWebhook(
     { ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "msg_ai_2" } } },
     cfg,
@@ -194,9 +200,9 @@ test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imed
     }
   );
   assert.equal(aiRes2.status, "sent");
-  assert.equal(await db.get(novKey), "1");
+  assert.equal(await db.get(novKey), "2");
 
-  // 5. Nova janela após expirar 24h consome +1 (total 2 no mês)
+  // 5. Expirar a janela anti-loop não altera a regra: outra resposta cobra +1.
   await db.del(`crm:session:${tenantId}:5511999998888`);
   const aiRes3 = await processWebhook(
     { ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "msg_ai_3" } } },
@@ -211,7 +217,7 @@ test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imed
     }
   );
   assert.equal(aiRes3.status, "sent");
-  assert.equal(await db.get(novKey), "2");
+  assert.equal(await db.get(novKey), "3");
 
   // 6. Virada do mês inicia contador limpo no novo mês (2026-12)
   await db.del(`crm:session:${tenantId}:5511999998888`);
@@ -229,7 +235,61 @@ test("Etapa 6: Contagem correta de franquia (IA vs Humano vs Transferência imed
   );
   assert.equal(aiResDec.status, "sent");
   assert.equal(await db.get(decKey), "1");
-  assert.equal(await db.get(novKey), "2");
+  assert.equal(await db.get(novKey), "3");
+});
+
+test("cinco respostas IA ao mesmo contato cobram cinco unidades e a sexta é bloqueada", async () => {
+  const db = fakeRedis(); let sends = 0; let generations = 0;
+  const deps = {
+    redis: db as never, nowDate: new Date("2026-11-07T12:00:00Z"),
+    getStoreContext: async () => ({ tenantId: "message-quota", quotaLimit: 5, context: {} }),
+    generate: async () => { generations++; return "Resposta"; },
+    send: async () => { sends++; }
+  };
+  for (let i = 1; i <= 5; i++) {
+    const message = { ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "per-message-" + i } } };
+    assert.equal((await processWebhook(message, cfg, deps)).status, "sent");
+    assert.equal(await db.get("crm:quota:message-quota:2026-11"), String(i));
+  }
+  const result = await processWebhook({ ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "sixth" } } }, cfg, deps);
+  assert.equal(result.reason, "quota_exceeded");
+  assert.equal(generations, 5); assert.equal(sends, 5);
+  // Loss of the Redis event marker does not send or charge a persisted event again.
+  await db.del("crm:lab:done:crmtest:per-message-1");
+  const duplicate = await processWebhook({ ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "per-message-1" } } }, cfg, deps);
+  assert.equal(duplicate.status, "duplicate"); assert.equal(sends, 5);
+});
+
+test("franquia grátis usa limite total de 100 mensagens e não renova na virada do mês", async () => {
+  const db = fakeRedis(); let sends = 0;
+  const deps = {
+    redis: db as never,
+    getStoreContext: async () => ({ tenantId: "trial-message-quota", quotaLimit: 100, quotaUsed: 99, quotaPeriod: "trial", isTrial: true, context: {} }),
+    generate: async () => "Última mensagem grátis", send: async () => { sends++; }
+  };
+  assert.equal((await processWebhook(payload, cfg, { ...deps, nowDate: new Date("2026-11-30T23:00:00Z") })).status, "sent");
+  assert.equal(await db.get("crm:quota:trial:trial-message-quota"), "100");
+  const result = await processWebhook({ ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "trial-next-month" } } }, cfg, { ...deps, nowDate: new Date("2026-12-02T12:00:00Z") });
+  assert.equal(result.reason, "quota_exceeded"); assert.equal(sends, 1);
+});
+
+test("commit incerto após envio conserva reserva e bloqueia reenvio do mesmo evento", async () => {
+  const db = fakeRedis(); let sends = 0;
+  const base = memoryAttendanceQuota(db);
+  const deps = { redis: db as never, quota: { ...base, commit: async () => { throw Error("commit_timeout"); } }, generate: async () => "Resposta", send: async () => { sends++; } };
+  await assert.rejects(processWebhook(payload, cfg, deps), /commit_timeout/);
+  await db.del("crm:lab:done:crmtest:unique1");
+  const result = await processWebhook(payload, cfg, deps);
+  assert.equal(result.reason, "message_busy"); assert.equal(sends, 1);
+});
+
+test("timeout ou falha de rede no envio mantém reserva sem cobrar nem reenviar automaticamente", async () => {
+  const db = fakeRedis(); let sends = 0;
+  const deps = { redis: db as never, nowDate: new Date("2026-11-07T12:00:00Z"), generate: async () => "Resposta", send: async () => { sends++; throw Error("network_timeout"); } };
+  await assert.rejects(processWebhook(payload, cfg, deps), /network_timeout/);
+  const result = await processWebhook(payload, cfg, deps);
+  assert.equal(result.reason, "message_busy"); assert.equal(sends, 1);
+  assert.equal(await db.get("crm:quota:11111111-1111-4111-8111-111111111111:2026-11"), null);
 });
 
 test("missing company context blocks generation, sending and quota access",async()=>{

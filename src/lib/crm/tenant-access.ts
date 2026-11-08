@@ -4,6 +4,7 @@ import { verifyMasterRequest } from "./master-auth";
 import { supabaseRows, verifyOperator } from "./supabase-server";
 import type { EffectiveTenantPlan, FeatureId } from "./plans";
 import { expectedSlotInstanceName } from "./whatsapp-slots";
+import { resolveMasterOwnTenant } from "./master-own-tenant";
 
 export const TENANT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type CrmTenant = { id: string; name: string; status: string };
@@ -43,11 +44,8 @@ type AccessChecks = {
 export async function getCrmAccess(request: NextRequest, checks: AccessChecks = {}): Promise<CrmAccess | null> {
   const master = await (checks.verifyMaster ?? verifyMasterRequest)(request);
   if (master.authorized) {
-    const configuredId = process.env.CRM_MASTER_OWN_TENANT_ID?.trim();
-    if (configuredId && !TENANT_UUID.test(configuredId)) throw new Error("invalid_master_own_tenant");
-    const filter = configuredId ? `id=eq.${configuredId}` : "name=ilike.NovaesWeb";
-    const tenants = await serviceRows<CrmTenant[]>(`crm_tenants?select=id,name,status&${filter}&limit=2`);
-    if (tenants.length !== 1 || !TENANT_UUID.test(tenants[0].id)) throw new Error("master_own_tenant_unavailable");
+    const tenant = await resolveMasterOwnTenant<CrmTenant>(serviceRows);
+    const tenants = [tenant];
     return { isMaster: true, operatorId: null, operatorEmail: master.actor, token: "", tenants,
       memberships: [{ tenant_id: tenants[0].id, role: "owner" }] };
   }

@@ -3,7 +3,7 @@ import Redis from "ioredis";
 import { getCrmAccess, selectCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
 import { privateJson, supabaseRows } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
-import { getEffectiveTenantPlan } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, getMasterPlans } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
@@ -258,6 +258,11 @@ export async function GET(request: NextRequest) {
       plan: planData,
       allowedFeatures: effectivePlan.allowedFeatures,
       featureStates: effectivePlan.featureStates,
+      commercialPlans: (await getMasterPlans()).filter(p => p.status === "active").map(p => ({
+        id: p.id, name: p.name, price: p.price, quotaLimit: p.quotaLimit,
+        maxOperators: p.maxOperators, maxWhatsappConnections: p.maxWhatsappConnections,
+        features: p.features, isTrial: p.id === "crm-trial"
+      })),
       contacts,
       conversations,
       messages,

@@ -44,6 +44,8 @@ function fixture(options: Options = {}) {
     "@/lib/crm/supabase-server": { privateJson, isAllowedOrigin: () => true },
     "@/lib/crm/plans": {
       getEffectiveTenantPlan: async () => plan,
+      DEFAULT_QUICK_REPLIES: [],
+      RECHARGE_PACKAGES: [],
       getMasterPlans: async () => [{ id: "crm-business", name: "CRM Business", status: "active", price: "99,90" }, { id: "crm-premium", name: "CRM Premium", status: "active", price: "159,90" }],
       requireTenantFeature: async () => ({ allowed: !options.featureDenied && !options.maintenance, state: options.maintenance ? "maintenance" : options.featureDenied ? "locked_by_plan" : "allowed", statusHttp: options.maintenance ? 503 : options.featureDenied ? 403 : 200, errorCode: options.maintenance ? "FEATURE_MAINTENANCE" : "PLAN_FEATURE_LOCKED", effectivePlan: plan }),
     },
@@ -135,3 +137,16 @@ test("anonymous caller cannot create an operator or load tenant settings", async
   assert.equal(f.calls.length, 0);
 });
 
+
+
+test("a request for the current plan is rejected and does not change the subscription", async () => {
+  const f = fixture({max:3});
+  assert.equal((await f.post({action:"request_upgrade",targetPlanId:"crm-business"})).status,400);
+  assert.equal(f.patches.length,0);
+});
+
+test("slot labels reject fractional numbers before storing metadata", async () => {
+  const f=fixture();
+  assert.equal((await f.post({action:"set_slot_label",slot:1.5,label:"Sales"})).status,400);
+  assert.equal(f.patches.length,0);
+});

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Each public-screen test owns the unauthenticated browser state.
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/crm/auth/session", async route => {
+  await page.route("**/api/crm/auth/session*", async route => {
     if (route.request().method() === "GET") return route.fulfill({json:{authenticated:false}});
     await route.fallback();
   });
@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 
 test("knowledge editor requires an authenticated operator",async({page})=>{
  await page.goto("/operator/knowledge");
- await expect(page.getByRole("heading",{name:"Acesso ao Painel Master"})).toBeVisible();
+ await expect(page.getByRole("heading",{name:"Acesso da Empresa"})).toBeVisible();
  await expect(page).toHaveURL(/\/\?error=unauthorized_client$/);
  await expect(page.getByRole("button",{name:"Salvar no Supabase"})).toHaveCount(0);
 });
@@ -29,7 +29,7 @@ test("knowledge editing is inaccessible without a valid session",async({request,
 for(const width of [360,390,768,1366]){
  test(`knowledge editor fits screen ${width}`,async({page})=>{
   await page.setViewportSize({width,height:820});await page.goto("/operator/knowledge");
-  await expect(page.getByRole("heading",{name:"Acesso ao Painel Master"})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Acesso da Empresa"})).toBeVisible();
   const over=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
   expect(over).toBe(false);
  });

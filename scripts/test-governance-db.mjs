@@ -24,6 +24,7 @@ try {
   await query(await fs.readFile(new URL("../supabase/migrations/"+f,import.meta.url),"utf8"));
  await query("grant all on all tables in schema public to service_role;");
  await query(await fs.readFile(new URL("../supabase/migrations/20261107135335_crm_atomic_plan_governance.sql",import.meta.url),"utf8"));
+ await query(await fs.readFile(new URL("../supabase/migrations/20261108004127_crm_ai_message_quota.sql",import.meta.url),"utf8"));
  await query("insert into auth.users(id)values('"+owner+"'),('"+op1+"'),('"+op2+"');insert into crm_tenants(id,name,status)values('"+A+"','Fixture A','active'),('"+B+"','Fixture B','active');"+
  "insert into crm_tenant_settings(tenant_id,business_description)values('"+A+"','"+JSON.stringify({plan,storeInfo:"preserve",usageCounters:{trialUsed:0}})+"'),('"+B+"','"+JSON.stringify({plan})+"');"+
  "insert into crm_channels(tenant_id,instance_name,status)values('"+A+"','loja_fixture','connected'),('"+A+"','loja_fixture_2','connected'),('"+B+"','loja_other','connected');"+
@@ -74,7 +75,51 @@ try {
  const exhausted=JSON.parse(await query("select crm_reserve_attendance('"+B+"','"+("e".repeat(64))+"','loja_other','ffffffff-ffff-4fff-8fff-ffffffffffff',100,100,'trial');"));assert.equal(exhausted.allowed,false);assert.equal(exhausted.reason,"quota_exceeded");
  await query("select crm_replace_plan('"+B+"','"+JSON.stringify({...trial,trialExpiresAt:new Date(Date.now()-1000).toISOString()})+"');");
  await assert.rejects(query("select crm_reserve_attendance('"+B+"','"+("d".repeat(64))+"','loja_other','ffffffff-ffff-4fff-8fff-ffffffffffff',100,0);"),/trial_expired/);
- console.log("PASS: isolated PostgreSQL migration, concurrent quota/operators, idempotent commit, durable limit, 24h window, downgrade history, cross-tenant RLS, private RPCs, atomic settings and trial period.");
+ // New billing: five replies to the same contact consume five units, not one 24h window.
+ const messagePlan={...plan,quotaLimit:5,contractedPlan:{...plan.contractedPlan,quotaLimit:5}};
+ await query("select crm_replace_plan('"+B+"','"+JSON.stringify(messagePlan)+"');");
+ const messageToken=i=>"90000000-0000-4000-8000-"+String(i).padStart(12,"0");
+ const messageKeys=i=>"array['"+String(i).padStart(64,"0")+"']::text[]";
+ const reserveMessage=(i,token=messageToken(i),floor=0,floorPeriod="1999-01")=>"select crm_reserve_ai_message('"+B+"',"+messageKeys(i)+",'loja_other','"+token+"',5,"+floor+",'"+floorPeriod+"');";
+ const commitMessage=token=>"select crm_dispatch_ai_message('"+B+"','"+token+"','loja_other',5);select crm_commit_ai_message('"+B+"','"+token+"');";
+ // Reservations and failed-send releases never charge; a retry can use the same event.
+ assert.equal(JSON.parse(await query(reserveMessage(1,messageToken(91)))).allowed,true);
+ await query("select crm_release_ai_message('"+B+"','"+messageToken(91)+"');");
+ assert.equal(await query("select sum(used) from crm_attendance_usage where tenant_id='"+B+"' and period_key<>'trial';"),"0");
+ for(let i=1;i<=4;i++) {
+  const reserved=JSON.parse(await query(reserveMessage(i,messageToken(i),999,"1999-01")));
+  assert.equal(reserved.allowed,true,"stale previous-month floor cannot exhaust current month");
+  await query(commitMessage(messageToken(i)));
+  assert.equal(await query("select used from crm_attendance_usage where tenant_id='"+B+"' and period_key<>'trial';"),String(i));
+ }
+ const finalAttempts=await Promise.all([query(reserveMessage(5)),query(reserveMessage(6))]);
+ const finalEntries=finalAttempts.map(x=>JSON.parse(x));assert.equal(finalEntries.filter(x=>x.allowed).length,1,"two sessions cannot exceed final message quota");
+ const winner=finalEntries[0].allowed?5:6;
+ await query(commitMessage(messageToken(winner)));
+ await query("select crm_commit_ai_message('"+B+"','"+messageToken(1)+"');select crm_commit_ai_message('"+B+"','"+messageToken(winner)+"');");
+ assert.equal(await query("select used from crm_attendance_usage where tenant_id='"+B+"' and period_key<>'trial';"),"5","old and current commit retries cannot double charge");
+ assert.equal(JSON.parse(await query(reserveMessage(7))).reason,"quota_exceeded");
+ assert.equal(JSON.parse(await query(reserveMessage(1,messageToken(99)))).reason,"message_already_processed","persisted receipt deduplicates without Redis");
+ await assert.rejects(query("select crm_commit_ai_message('"+A+"','"+messageToken(1)+"');"),/message_reservation_not_found/);
+ await assert.rejects(query("set role authenticated;select crm_reserve_ai_message('"+B+"',"+messageKeys(8)+",'loja_other','"+messageToken(8)+"',5);"),/permission denied/);
+ await assert.rejects(query("set role authenticated;select * from crm_ai_message_reservations;"),/permission denied/);
+ // A dispatch in uncertain state retains its claim, even if the process restarts.
+ await query("select crm_replace_plan('"+B+"','"+JSON.stringify({...messagePlan,quotaLimit:6,contractedPlan:{...messagePlan.contractedPlan,quotaLimit:6}})+"');");
+ const mixedKeys="array['"+String(1).padStart(64,"0")+"','"+String(8).padStart(64,"0")+"']::text[]";
+ const mixed=JSON.parse(await query("select crm_reserve_ai_message('"+B+"',"+mixedKeys+",'loja_other','"+messageToken(81)+"',6);"));
+ assert.equal(mixed.allowed,true,"a mixed old/new batch must retain the new event");
+ assert.equal(await query("select cardinality(message_keys) from crm_ai_message_reservations where tenant_id='"+B+"' and token='"+messageToken(81)+"';"),"1");
+ await query("select crm_release_ai_message('"+B+"','"+messageToken(81)+"');");
+ assert.equal(JSON.parse(await query("select crm_reserve_ai_message('"+B+"',"+messageKeys(8)+",'loja_other','"+messageToken(8)+"',6);" )).allowed,true);
+ await query("select crm_dispatch_ai_message('"+B+"','"+messageToken(8)+"','loja_other',6);update crm_ai_message_reservations set updated_at=now()-interval '1 day' where tenant_id='"+B+"' and token='"+messageToken(8)+"';");
+ assert.equal(JSON.parse(await query("select crm_reserve_ai_message('"+B+"',"+messageKeys(8)+",'loja_other','"+messageToken(98)+"',6);" )).reason,"message_busy");
+ await query("select crm_release_ai_message('"+B+"','"+messageToken(8)+"');");
+ // Lifetime trial usage is shared with the existing durable counters, never reset monthly.
+ await query("select crm_replace_plan('"+B+"','"+JSON.stringify(trial)+"');");
+ const trialMessage=JSON.parse(await query("select crm_reserve_ai_message('"+B+"',"+messageKeys(9)+",'loja_other','"+messageToken(9)+"',100,99,'trial');"));
+ // The earlier test intentionally left trial usage at 100; it remains exhausted.
+ assert.equal(trialMessage.allowed,false);assert.equal(trialMessage.reason,"quota_exceeded");
+ console.log("PASS: isolated PostgreSQL migrations, per-message five=5, concurrent final quota, durable deduplication/idempotent commits, failed-send release, uncertain dispatch hold, stale month floor, lifetime trial, operator concurrency, downgrade history, cross-tenant RLS, private RPCs and atomic settings.");
 } finally {
  if(!external)await run(["stop",container]).catch(()=>{});
 }

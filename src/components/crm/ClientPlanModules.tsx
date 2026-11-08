@@ -56,6 +56,31 @@ export type FeatureStateItem = {
   reason?: string;
 };
 
+export type CommercialPlanItem = {
+  id: string; name: string; price: string; quotaLimit: number;
+  maxOperators: number; maxWhatsappConnections: number; features: string[];
+  isTrial?: boolean;
+};
+
+export function CommercialPlansComparison({plans,featureStates,currentPlanId,onRequestUpgrade}: {
+  plans: CommercialPlanItem[]; featureStates: Record<string,FeatureStateItem>; currentPlanId?: string;
+  onRequestUpgrade: (plan:string,reason:string)=>void;
+}) {
+  return <section className="op-card" aria-labelledby="commercial-plans-heading">
+    <h3 id="commercial-plans-heading">Planos e recursos da plataforma</h3>
+    <p>As opções abaixo seguem o catálogo publicado pela NovaesWeb. A mudança depende da aprovação da administração.</p>
+    {!plans.length ? <p role="status">O catálogo de planos está indisponível no momento. Tente novamente antes de solicitar uma mudança.</p> : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,250px),1fr))",gap:16}}>
+      {plans.map(plan => <article key={plan.id} data-testid={`commercial-plan-${plan.id}`} style={{padding:20,border:"1px solid #514163",borderRadius:14,display:"flex",flexDirection:"column",gap:12}}>
+        <h4 style={{fontSize:19,margin:0}}>{plan.name}</h4>
+        <strong style={{fontSize:25}}>{plan.isTrial ? "Grátis" : `R$ ${plan.price}`}<small style={{fontSize:12,fontWeight:400}}>{plan.isTrial ? " por 7 dias" : "/mês"}</small></strong>
+        <p style={{margin:0,fontSize:13}}>{plan.quotaLimit.toLocaleString("pt-BR")} mensagens da IA {plan.isTrial ? "no teste" : "por mês"}<br />{plan.maxWhatsappConnections} WhatsApp(s) · {plan.maxOperators} operador(es)</p>
+        <ul style={{paddingLeft:18,fontSize:12,lineHeight:1.8}}>{Object.values(featureStates).map(feature => <li key={feature.id} style={{color:plan.features.includes(feature.id)?"#e9dcf7":"#b0a3bd"}}>{plan.features.includes(feature.id) ? "✓ " : "🔒 "}{feature.name}</li>)}</ul>
+        {currentPlanId === plan.id ? <strong style={{marginTop:"auto",color:"#85e6b5"}}>Seu plano atual</strong> : plan.isTrial ? <p style={{fontSize:12,marginTop:"auto"}}>Teste inicial de novos clientes. Sem cobrança automática.</p> : <button type="button" className="op-primary" style={{marginTop:"auto"}} onClick={()=>onRequestUpgrade(plan.id,`Interesse no plano ${plan.name}`)}>Solicitar {plan.name}</button>}
+      </article>)}
+    </div>}
+  </section>;
+}
+
 // Matches the published operator/features response. No invented UI-only envelope.
 export type ReportsPayload = {
   basicIndicators: {quotaUsed:number;quotaLimit:number;quotaPercent:number;totalConversations:number;activeConversations:number;aiConversations:number;humanConversations:number;totalContacts:number} | null;
@@ -76,7 +101,7 @@ export function FeatureUnavailable({feature, onUpgrade}: {feature?:FeatureStateI
   const locked = feature?.state === "locked_by_plan";
   return <div role="status" className="op-card" style={{padding:"16px",border:"1px dashed #615477"}}>
     <strong>{feature?.state === "maintenance" ? "Recurso em manutenção" : feature?.state === "suspended" ? "Recurso suspenso" : locked ? "Recurso bloqueado pelo plano" : "Permissão indisponível"}</strong>
-    <p>{feature?.reason || "Não foi possível confirmar a permissão para este recurso."}</p>
+    <p>{feature?.reason || (locked ? `Disponível no plano ${feature.minPlanName}.` : "Não foi possível confirmar a permissão para este recurso.")}</p>
     {locked && onUpgrade && <button type="button" className="op-primary" onClick={()=>onUpgrade(feature.minPlanId,feature.name)}>Solicitar {feature.minPlanName}</button>}
   </div>;
 }
@@ -1409,6 +1434,7 @@ export function UpgradeRequestModal({
   initialPlan,
   initialNotes,
   currentPlanName,
+  plans,
   onClose,
   onSubmitUpgrade,
 }: {
@@ -1416,6 +1442,7 @@ export function UpgradeRequestModal({
   initialPlan: string;
   initialNotes: string;
   currentPlanName: string;
+  plans: CommercialPlanItem[];
   onClose: () => void;
   onSubmitUpgrade: (requestedPlan: string, notes: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
@@ -1490,9 +1517,8 @@ export function UpgradeRequestModal({
                 onChange={e => setSelectedPlan(e.target.value)}
                 style={{ width: "100%", marginTop: "6px", padding: "11px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "14px" }}
               >
-                <option value="crm-start">CRM Start — R$ 59,90/mês (200 atendimentos · 1 WhatsApp · 1 operador)</option>
-                <option value="crm-business">CRM Business — R$ 99,90/mês (600 atendimentos · 3 WhatsApps · 3 operadores)</option>
-                <option value="crm-premium">CRM Premium — R$ 159,90/mês (1.500 atendimentos · 5 WhatsApps · 5 operadores)</option>
+                <option value="" disabled>Selecione um plano publicado</option>
+                {plans.filter(plan => !plan.isTrial && plan.name !== currentPlanName).map(plan => <option key={plan.id} value={plan.id}>{plan.name} — R$ {plan.price}/mês ({plan.quotaLimit.toLocaleString("pt-BR")} mensagens IA · {plan.maxWhatsappConnections} WhatsApp(s) · {plan.maxOperators} operador(es))</option>)}
               </select>
             </label>
 
@@ -1509,7 +1535,7 @@ export function UpgradeRequestModal({
 
             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
               <button type="button" onClick={onClose} className="op-refresh">Cancelar</button>
-              <button type="submit" disabled={sending} className="op-primary" style={{ padding: "10px 20px", borderRadius: "10px", fontWeight: 800 }}>
+              <button type="submit" disabled={sending || !plans.some(plan => !plan.isTrial && plan.id === selectedPlan && plan.name !== currentPlanName)} className="op-primary" style={{ padding: "10px 20px", borderRadius: "10px", fontWeight: 800 }}>
                 {sending ? "Enviando..." : "Confirmar Solicitação de Upgrade"}
               </button>
             </div>
@@ -1520,3 +1546,466 @@ export function UpgradeRequestModal({
   );
 }
 
+
+// ============================================================================
+// RECARGA DE MENSAGENS E ALERTAS DE CONSUMO (80%, 90%, 100%)
+// ============================================================================
+
+export type RechargePackage = {
+  packagesCount: number;
+  messages: number;
+  price: string;
+  priceValue: number;
+  label: string;
+};
+
+export const DEFAULT_RECHARGE_PACKAGES: RechargePackage[] = [
+  { packagesCount: 1, messages: 100, price: "20,00", priceValue: 20, label: "100 mensagens (1 recarga)" },
+  { packagesCount: 2, messages: 200, price: "40,00", priceValue: 40, label: "200 mensagens (2 recargas)" },
+  { packagesCount: 3, messages: 300, price: "60,00", priceValue: 60, label: "300 mensagens (3 recargas)" },
+  { packagesCount: 5, messages: 500, price: "100,00", priceValue: 100, label: "500 mensagens (5 recargas)" },
+  { packagesCount: 10, messages: 1000, price: "200,00", priceValue: 200, label: "1.000 mensagens (10 recargas)" },
+];
+
+export function ConsumptionAlertBanner({
+  quotaUsed,
+  quotaLimit,
+  rechargeBalance = 0,
+  onBuyRecharge
+}: {
+  quotaUsed: number;
+  quotaLimit: number;
+  rechargeBalance?: number;
+  onBuyRecharge: () => void;
+}) {
+  const effectiveTotal = quotaLimit + rechargeBalance;
+  const percent = effectiveTotal > 0 ? Math.min(100, Math.round((quotaUsed / effectiveTotal) * 100)) : 0;
+
+  if (percent < 80) return null;
+
+  const isExhausted = percent >= 100;
+  const isCritical = percent >= 90 && !isExhausted;
+
+  const bgColor = isExhausted ? "rgba(239, 68, 68, 0.15)" : isCritical ? "rgba(249, 115, 22, 0.15)" : "rgba(234, 179, 8, 0.15)";
+  const borderColor = isExhausted ? "rgba(239, 68, 68, 0.4)" : isCritical ? "rgba(249, 115, 22, 0.4)" : "rgba(234, 179, 8, 0.4)";
+  const textColor = isExhausted ? "#fca5a5" : isCritical ? "#fdba74" : "#fde047";
+  const title = isExhausted
+    ? "⚠️ Franquia de Mensagens Esgotada (100%)"
+    : isCritical
+      ? "⚡ Atenção: 90% das Mensagens Consumidas"
+      : "ℹ️ Alerta de Consumo: 80% das Mensagens Utilizadas";
+
+  const message = isExhausted
+    ? "Você consumiu todas as mensagens da sua franquia. Novos envios automáticos da IA estão pausados para proteger sua conta. Compre uma recarga para reativar o atendimento imediatamente."
+    : isCritical
+      ? "Restam menos de 10% da sua franquia de mensagens. Compre uma recarga adicional para não interromper os atendimentos automáticos da IA."
+      : "Você já utilizou 80% da sua franquia mensal. Seus atendimentos continuam ativos normalmente.";
+
+  return (
+    <div style={{
+      background: bgColor,
+      border: `1px solid ${borderColor}`,
+      borderRadius: "14px",
+      padding: "16px 20px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "16px",
+      flexWrap: "wrap",
+      marginBottom: "20px"
+    }}>
+      <div style={{ flex: "1 1 300px" }}>
+        <strong style={{ color: textColor, fontSize: "15px", display: "block", marginBottom: "4px" }}>
+          {title}
+        </strong>
+        <p style={{ margin: 0, fontSize: "13px", color: "#e2e8f0", lineHeight: 1.5 }}>
+          {message}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onBuyRecharge}
+        style={{
+          background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+          color: "#fff",
+          border: "none",
+          borderRadius: "10px",
+          padding: "10px 18px",
+          fontWeight: 700,
+          fontSize: "13px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          boxShadow: "0 4px 14px rgba(236, 72, 153, 0.4)"
+        }}
+      >
+        <Sparkles size={16} /> Comprar mais mensagens
+      </button>
+    </div>
+  );
+}
+
+export function RechargeMessagesModal({
+  open,
+  onClose,
+  tenantId,
+  currentBalance = 0,
+  onRechargeSuccess
+}: {
+  open: boolean;
+  onClose: () => void;
+  tenantId: string;
+  currentBalance?: number;
+  onRechargeSuccess: (newBalance: number) => void;
+}) {
+  const [selectedPackages, setSelectedPackages] = useState<number>(1);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  const currentPkg = DEFAULT_RECHARGE_PACKAGES.find(p => p.packagesCount === selectedPackages) || DEFAULT_RECHARGE_PACKAGES[0];
+
+  const handleConfirmRecharge = async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          action: "buy_recharge",
+          packagesCount: currentPkg.packagesCount,
+          txId,
+          paymentMethod: "pix"
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Erro ao processar recarga.");
+      }
+
+      setSuccessMsg(data.message || `Recarga de ${currentPkg.messages} mensagens ativada com sucesso!`);
+      if (typeof data.rechargeCreditsBalance === "number") {
+        onRechargeSuccess(data.rechargeCreditsBalance);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Falha ao processar recarga.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0, 0, 0, 0.75)",
+      backdropFilter: "blur(6px)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 9999,
+      padding: "16px"
+    }}>
+      <div style={{
+        background: "#18142a",
+        border: "1px solid rgba(139, 92, 246, 0.3)",
+        borderRadius: "20px",
+        padding: "24px",
+        maxWidth: "520px",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: "18px",
+        boxShadow: "0 10px 40px rgba(0, 0, 0, 0.6)"
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{
+              width: "42px",
+              height: "42px",
+              borderRadius: "12px",
+              background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+              display: "grid",
+              placeItems: "center"
+            }}>
+              <Sparkles size={22} color="#fff" />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
+                Comprar Mais Mensagens
+              </h3>
+              <span style={{ fontSize: "12px", color: "#aba8bf" }}>
+                R$ 20,00 = 100 mensagens adicionais para a IA
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#aba8bf",
+              fontSize: "20px",
+              cursor: "pointer",
+              padding: "4px 8px"
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Saldo Atual */}
+        <div style={{
+          background: "rgba(255, 255, 255, 0.03)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          borderRadius: "12px",
+          padding: "12px 16px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}>
+          <span style={{ fontSize: "13px", color: "#c9bede" }}>Saldo de Recargas Disponível:</span>
+          <strong style={{ fontSize: "16px", color: "#00db8c" }}>{currentBalance} mensagens</strong>
+        </div>
+
+        {successMsg ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "12px 0" }}>
+            <div style={{
+              background: "rgba(0, 219, 140, 0.15)",
+              border: "1px solid #00db8c",
+              borderRadius: "12px",
+              padding: "16px",
+              color: "#d1fae5",
+              fontSize: "14px",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px"
+            }}>
+              <CheckCircle2 size={24} color="#00db8c" />
+              <span>{successMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                color: "#fff",
+                border: "none",
+                borderRadius: "10px",
+                padding: "12px",
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              Concluir e Voltar
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Opções de Pacotes */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <span style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>Escolha o pacote de recarga:</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "8px" }}>
+                {DEFAULT_RECHARGE_PACKAGES.map(pkg => (
+                  <div
+                    key={pkg.packagesCount}
+                    onClick={() => setSelectedPackages(pkg.packagesCount)}
+                    style={{
+                      border: selectedPackages === pkg.packagesCount ? "2px solid #ec4899" : "1px solid rgba(255, 255, 255, 0.1)",
+                      background: selectedPackages === pkg.packagesCount ? "rgba(236, 72, 153, 0.12)" : "rgba(255, 255, 255, 0.02)",
+                      borderRadius: "12px",
+                      padding: "12px 16px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      cursor: "pointer",
+                      transition: "all 0.15s"
+                    }}
+                  >
+                    <div>
+                      <strong style={{ color: "#fff", fontSize: "14px", display: "block" }}>
+                        {pkg.messages} mensagens da IA
+                      </strong>
+                      <span style={{ fontSize: "12px", color: "#aba8bf" }}>
+                        {pkg.packagesCount === 1 ? "1 recarga avulsa" : `${pkg.packagesCount} recargas combinadas`}
+                      </span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <strong style={{ color: "#00db8c", fontSize: "16px", display: "block" }}>
+                        R$ {pkg.price}
+                      </strong>
+                      <span style={{ fontSize: "11px", color: "#8e87a2" }}>Pagamento único</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Informações Comerciais Claras */}
+            <div style={{
+              background: "rgba(139, 92, 246, 0.08)",
+              border: "1px solid rgba(139, 92, 246, 0.2)",
+              borderRadius: "12px",
+              padding: "12px",
+              fontSize: "12px",
+              color: "#c4b5fd",
+              lineHeight: 1.5
+            }}>
+              💡 <strong>Regras comerciais:</strong> As mensagens de recarga são liberadas imediatamente após confirmação, acumulam com seu saldo atual e não alteram a sua mensalidade fixa de R$ 89,90.
+            </div>
+
+            {errorMsg && (
+              <div style={{
+                background: "rgba(239, 68, 68, 0.15)",
+                border: "1px solid #ef4444",
+                borderRadius: "10px",
+                padding: "10px 14px",
+                color: "#fca5a5",
+                fontSize: "13px"
+              }}>
+                {errorMsg}
+              </div>
+            )}
+
+            {/* Ações */}
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "6px" }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={loading}
+                style={{
+                  background: "rgba(255, 255, 255, 0.06)",
+                  border: "1px solid rgba(255, 255, 255, 0.12)",
+                  color: "#fff",
+                  borderRadius: "10px",
+                  padding: "10px 18px",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  cursor: "pointer"
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRecharge}
+                disabled={loading}
+                style={{
+                  background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                  border: "none",
+                  color: "#fff",
+                  borderRadius: "10px",
+                  padding: "10px 22px",
+                  fontWeight: 800,
+                  fontSize: "14px",
+                  cursor: loading ? "wait" : "pointer",
+                  boxShadow: "0 4px 16px rgba(236, 72, 153, 0.4)"
+                }}
+              >
+                {loading ? "Confirmando..." : `Confirmar Recarga de R$ ${currentPkg.price}`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function RechargeHistoryTable({
+  recharges = []
+}: {
+  recharges?: Array<{
+    id: string;
+    packagesCount: number;
+    messagesAdded: number;
+    pricePaid: number;
+    purchasedAt: string;
+    status: string;
+    paymentMethod?: string;
+    txId?: string;
+  }>;
+}) {
+  return (
+    <div className="op-card" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <h4 style={{ margin: 0, fontSize: "17px", fontWeight: 800, color: "#fff" }}>
+            Histórico de Recargas Adicionais
+          </h4>
+          <span style={{ fontSize: "12px", color: "#aba8bf" }}>
+            Registro auditado de pacotes extras de mensagens contratados
+          </span>
+        </div>
+      </div>
+
+      {recharges.length === 0 ? (
+        <div style={{
+          textAlign: "center",
+          padding: "28px 16px",
+          color: "#aba8bf",
+          fontSize: "13px",
+          background: "rgba(255, 255, 255, 0.02)",
+          borderRadius: "12px",
+          border: "1px dashed rgba(255, 255, 255, 0.08)"
+        }}>
+          Nenhuma recarga adicional realizada até o momento. As recargas de mensagens (R$ 20 = 100 msgs) aparecem aqui assim que confirmadas.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.1)", color: "#aba8bf" }}>
+                <th style={{ padding: "10px 12px" }}>Data / Hora</th>
+                <th style={{ padding: "10px 12px" }}>Mensagens</th>
+                <th style={{ padding: "10px 12px" }}>Valor Pago</th>
+                <th style={{ padding: "10px 12px" }}>Método</th>
+                <th style={{ padding: "10px 12px" }}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recharges.map(rec => (
+                <tr key={rec.id} style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.04)", color: "#fff" }}>
+                  <td style={{ padding: "10px 12px", color: "#c9bede" }}>
+                    {rec.purchasedAt ? new Date(rec.purchasedAt).toLocaleString("pt-BR") : "—"}
+                  </td>
+                  <td style={{ padding: "10px 12px", fontWeight: 700, color: "#ec4899" }}>
+                    +{rec.messagesAdded} mensagens
+                  </td>
+                  <td style={{ padding: "10px 12px", fontWeight: 700, color: "#00db8c" }}>
+                    R$ {Number(rec.pricePaid || 0).toFixed(2).replace(".", ",")}
+                  </td>
+                  <td style={{ padding: "10px 12px", textTransform: "uppercase", fontSize: "11px", color: "#aba8bf" }}>
+                    {rec.paymentMethod || "Pix"}
+                  </td>
+                  <td style={{ padding: "10px 12px" }}>
+                    <span style={{
+                      padding: "3px 8px",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      background: rec.status === "paid" ? "rgba(0, 219, 140, 0.15)" : "rgba(245, 158, 11, 0.15)",
+                      color: rec.status === "paid" ? "#00db8c" : "#f59e0b",
+                      border: `1px solid ${rec.status === "paid" ? "rgba(0, 219, 140, 0.3)" : "rgba(245, 158, 11, 0.3)"}`
+                    }}>
+                      {rec.status === "paid" ? "✅ Liberado" : "Pendente"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

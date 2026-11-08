@@ -5,6 +5,7 @@ import {
   CrmPlan,
   TECHNICAL_FEATURES,
   getMasterPlans,
+  selectPublishedPlan,
   getMasterPlansWithDrafts,
   discardPlanDraft,
   saveMasterPlan,
@@ -21,9 +22,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function getAdminConfig() {
-  const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "https://mpteambmrlflllfqtkmq.supabase.co")?.trim().replace(/\/$/, "") ?? "";
-  const fallbackKey = Buffer.from("c2Jfc2VjcmV0X2pEcXFlWkR3WEZZcEJIc053RVp2dGdfOEN2OGFoNjQ=", "base64").toString("utf8");
-  const serviceKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || fallbackKey)?.trim() ?? "";
+  const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "") ?? "";
+  const serviceKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim() ?? "";
   const redisUrl = process.env.CRM_REDIS_URL || process.env.REDIS_URL || "redis://127.0.0.1:6379";
   return { url, serviceKey, redisUrl };
 }
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
                 const hasOverride = parsed?.plan?.customQuotaOverride !== undefined && parsed?.plan?.customQuotaOverride !== null;
                 const tObj = tenantMap.get(s.tenant_id);
 
-                const matchedPlan = plans.find(p => p.id === pId || p.name.toLowerCase() === pName.toLowerCase());
+                const matchedPlan = plans.find(p => pId ? p.id === pId : p.name.toLowerCase() === pName.toLowerCase());
                 if (matchedPlan) {
                   counts[matchedPlan.id] = (counts[matchedPlan.id] || 0) + 1;
                   counts[matchedPlan.name] = (counts[matchedPlan.name] || 0) + 1;
@@ -119,7 +119,8 @@ export async function POST(request: NextRequest) {
     if (action === "discard_draft") {
       const planId = typeof body.planId === "string" ? body.planId : "";
       if (!planId) return privateJson({ error: "missing_plan_id" }, 400);
-      await discardPlanDraft(planId, auth.actor);
+      const discarded = await discardPlanDraft(planId, auth.actor);
+      if (!discarded) return privateJson({ error: "discard_draft_failed" }, 503);
       return privateJson({ discarded: true, planId });
     }
 
@@ -243,10 +244,9 @@ export async function PATCH(request: NextRequest) {
     if (customQuotaOverride !== null && (!Number.isInteger(customQuotaOverride) || customQuotaOverride < 0)) return privateJson({ error: "invalid_quota" }, 400);
 
     const masterPlans = await getMasterPlans();
-    const matchedPlan = masterPlans.find(
-      p => (planId && p.id === planId) || (planName && p.name.toLowerCase() === planName.toLowerCase())
-    );
-    if (!matchedPlan || matchedPlan.status !== "active") return privateJson({ error: "plan_not_found" }, 400);
+    const matchedPlan = selectPublishedPlan(masterPlans, planId, planName);
+    if (!matchedPlan) return privateJson({ error: "plan_not_found" }, 400);
+    if (matchedPlan.id === "crm-trial") return privateJson({ error: "trial_requires_new_account" }, 400);
 
     const suppliedPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "";
     const resolvedPrice = (suppliedPrice && suppliedPrice !== "149,00") ? suppliedPrice : matchedPlan.price;
@@ -287,10 +287,14 @@ export async function PATCH(request: NextRequest) {
       contractedAt: new Date().toISOString()
     };
     delete planObj.pendingPlanUpdate;
+    delete planObj.customFeaturesOverride;
 
     if (customQuotaOverride !== null) {
       planObj.customQuotaOverride = customQuotaOverride;
       planObj.exceptionReason = exceptionReason;
+    } else {
+      delete planObj.customQuotaOverride;
+      delete planObj.exceptionReason;
     }
 
     dataObj.plan = planObj;
