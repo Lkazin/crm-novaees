@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
     const requestedPlanId = typeof body.planId === "string" ? body.planId.trim() : "";
-    const requestedPlanName = typeof body.planName === "string" ? body.planName.trim() : "CRM Start";
+    const requestedPlanName = typeof body.planName === "string" ? body.planName.trim() : "CRM Premium";
     const dueDate = typeof body.dueDate === "string" && body.dueDate ? body.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const paymentStatus = body.paymentStatus === "pending" ? "pending" : "paid";
     const autoBlock = body.autoBlock !== false;
@@ -758,7 +758,7 @@ export async function PATCH(request: NextRequest) {
 
     // 6. Action: Convert Trial to Paid Commercial Plan
     if (action === "convert_trial") {
-      const targetPlanId = typeof body.planId === "string" ? body.planId : "crm-business";
+      const targetPlanId = typeof body.planId === "string" ? body.planId : "crm-premium";
       const targetDueDate = typeof body.dueDate === "string" ? body.dueDate : undefined;
       const result = await convertTrialToPaidPlan(tenantId, targetPlanId, auth.actor || "master_admin", targetDueDate);
       if (!result.success) {

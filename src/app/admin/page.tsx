@@ -518,13 +518,13 @@ export default function AdminCRM() {
   const [rememberMe, setRememberMe] = useState(true);
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
 
-  // Create client form state (initialized with official CRM Start values)
+  // Create client form state (initialized with official CRM Premium values)
   const [storeName, setStoreName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [planName, setPlanName] = useState("CRM Start");
-  const [planPrice, setPlanPrice] = useState("59,90");
-  const [quotaLimit, setQuotaLimit] = useState(200);
+  const [planName, setPlanName] = useState("CRM Premium");
+  const [planPrice, setPlanPrice] = useState("89,90");
+  const [quotaLimit, setQuotaLimit] = useState(1200);
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -768,7 +768,7 @@ export default function AdminCRM() {
     try {
       const isTrial = planName === "Teste Grátis (7 Dias)" || planName.includes("Teste Grátis");
       const selectedPlanObj = plans.find(p => p.name === planName);
-      const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-start");
+      const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-premium");
       const res = await fetch("/api/crm/admin/clients", {
         method: "POST",
         credentials: "same-origin",
