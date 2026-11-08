@@ -780,13 +780,13 @@ export function TeamOperatorsSection({
                 Limite de {maxOperators} acesso(s) do plano {planName} atingido
               </strong>
               <span style={{ color: "#d1c8e6", fontSize: "13px" }}>
-                O titular da conta conta como 1 acesso. Para adicionar mais funcionários à sua equipe, solicite o upgrade para o CRM Business (até 3 operadores) ou CRM Premium (até 5 operadores).
+                O titular da conta conta como 1 acesso. O plano CRM Premium permite até 2 operadores humanos simultâneos.
               </span>
             </div>
           </div>
           <button
             type="button"
-            onClick={() => onRequestUpgrade(maxOperators < 3 ? "CRM Business" : "CRM Premium", "Expandir limite de operadores da equipe")}
+            onClick={() => onRequestUpgrade("CRM Premium", "Expandir limite de operadores da equipe")}
             className="op-primary"
             style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
           >
@@ -1446,7 +1446,7 @@ export function UpgradeRequestModal({
   onClose: () => void;
   onSubmitUpgrade: (requestedPlan: string, notes: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
-  const [selectedPlan, setSelectedPlan] = useState(commercialPlanId(initialPlan || "CRM Business"));
+  const [selectedPlan, setSelectedPlan] = useState(commercialPlanId(initialPlan || "CRM Premium"));
   const [notes, setNotes] = useState(initialNotes || "");
   const [sending, setSending] = useState(false);
   const [doneMsg, setDoneMsg] = useState("");
@@ -1454,7 +1454,7 @@ export function UpgradeRequestModal({
 
   React.useEffect(() => {
     if (open) {
-      setSelectedPlan(commercialPlanId(initialPlan || "CRM Business"));
+      setSelectedPlan(commercialPlanId(initialPlan || "CRM Premium"));
       setNotes(initialNotes || "");
       setDoneMsg("");
     }

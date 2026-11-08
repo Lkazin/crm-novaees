@@ -1120,7 +1120,7 @@ export default function ClientWorkspace({
     }
   }
 
-  function openUpgradeRequest(targetPlan = "CRM Business", reason = "") {
+  function openUpgradeRequest(targetPlan = "CRM Premium", reason = "") {
     setUpgradeModal({ open: true, targetPlan, reason });
   }
 
@@ -1307,7 +1307,7 @@ export default function ClientWorkspace({
   // Set Commercial Tag on Contact
   async function handleSetCommercialTag(contactId: string, tagId: string) {
     if (!canUseFeature("commercial_tags")) {
-      openUpgradeRequest("CRM Business", "Utilizar Etiquetas Comerciais nas conversas");
+      openUpgradeRequest("CRM Premium", "Utilizar Etiquetas Comerciais nas conversas");
       return;
     }
     try {
@@ -1869,7 +1869,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   className="op-refresh"
                   title={
                     !canUseFeature("sound_notifications")
-                      ? "Notificações sonoras (Recurso CRM Business / Premium)"
+                      ? "Notificações sonoras (Recurso CRM Premium)"
                       : soundEnabled ? "Som de notificação ativado (clique para silenciar)" : "Som de notificação silenciado (clique para ativar)"
                   }
                   style={{
@@ -2106,7 +2106,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <p style={{margin: "4px 0 0", fontSize: "13px", color: "rgba(226, 232, 240, 0.85)"}}>
                       {data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 0
                         ? "Escolha um dos planos comerciais para reativar os atendimentos da IA. Seus dados estão seguros."
-                        : "Aproveite todos os recursos do CRM Business durante o teste. Sem fidelidade e sem cobrança automática."}
+                        : "Aproveite todos os recursos do CRM Premium durante o teste. Sem fidelidade e sem cobrança automática."}
                     </p>
                   </div>
                 </div>
@@ -2261,7 +2261,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         color: "#c4b5fd",
                         border: "1px solid rgba(139, 92, 246, 0.3)"
                       }}>
-                        Plano: {data?.plan?.name || "CRM Start"}
+                        Plano: {data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "CRM Premium")}
                       </span>
                     </div>
                   </div>
@@ -3585,7 +3585,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => openUpgradeRequest("CRM Business", "Ativar Horários Avançados e Intervalos de Almoço/Pausa")}
+                                    onClick={() => openUpgradeRequest("CRM Premium", "Ativar Horários Avançados e Intervalos de Almoço/Pausa")}
                                     style={{
                                       padding: "4px 10px",
                                       borderRadius: "8px",
@@ -3597,7 +3597,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                       cursor: "pointer"
                                     }}
                                   >
-                                    🔒 Intervalo / Pausa (CRM Business)
+                                    🔒 Intervalo / Pausa (CRM Premium)
                                   </button>
                                 )}
                               </div>
@@ -3758,7 +3758,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openUpgradeRequest("CRM Business", "Desbloquear Etiquetas Comerciais")}
+                          onClick={() => openUpgradeRequest("CRM Premium", "Desbloquear Etiquetas Comerciais")}
                           style={{
                             padding: "7px 10px",
                             borderRadius: "8px",
@@ -3771,7 +3771,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             textAlign: "left"
                           }}
                         >
-                          🔒 Etiquetas Comerciais (Disponível no CRM Business)
+                          🔒 Etiquetas Comerciais (Disponível no CRM Premium)
                         </button>
                       )}
 
@@ -3826,7 +3826,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openUpgradeRequest("CRM Business", "Desbloquear Prioridade de Atendimentos")}
+                          onClick={() => openUpgradeRequest("CRM Premium", "Desbloquear Prioridade de Atendimentos")}
                           style={{
                             padding: "7px 10px",
                             borderRadius: "8px",
@@ -3839,7 +3839,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             textAlign: "left"
                           }}
                         >
-                          🔒 Prioridade dos Atendimentos (Disponível no CRM Business)
+                          🔒 Prioridade dos Atendimentos (Disponível no CRM Premium)
                         </button>
                       )}
                     </div>
@@ -4259,10 +4259,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Business", "Definir Prioridade nos Atendimentos")}
+                                onClick={() => openUpgradeRequest("CRM Premium", "Definir Prioridade nos Atendimentos")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Prioridade (Business)
+                                🔒 Prioridade (Premium)
                               </button>
                             )}
 
@@ -4293,10 +4293,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Business", "Classificar clientes com Etiquetas Comerciais")}
+                                onClick={() => openUpgradeRequest("CRM Premium", "Classificar clientes com Etiquetas Comerciais")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Etiquetas (Business)
+                                🔒 Etiquetas (Premium)
                               </button>
                             )}
 
@@ -4318,10 +4318,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Business", "Registrar Pesquisa de Satisfação (1 a 5 estrelas)")}
+                                onClick={() => openUpgradeRequest("CRM Premium", "Registrar Pesquisa de Satisfação (1 a 5 estrelas)")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Satisfação (Business)
+                                🔒 Satisfação (Premium)
                               </button>
                             )}
                           </div>
@@ -4485,7 +4485,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             onSelectReply={bodyText => setHumanInput(bodyText)}
                             onSaveReply={handleSaveQuickReply}
                             onDeleteReply={handleDeleteQuickReply}
-                            onRequestUpgrade={() => openUpgradeRequest("CRM Start", "Ativar Respostas Rápidas")}
+                            onRequestUpgrade={() => openUpgradeRequest("CRM Premium", "Ativar Respostas Rápidas")}
                           />
                           {current.mode === "ai" && (
                             <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#aba8bf", background: "rgba(0, 219, 140, 0.06)", border: "1px solid rgba(0, 219, 140, 0.2)", padding: "6px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
@@ -4548,7 +4548,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 <TeamOperatorsSection
                   operators={teamOperators}
                   maxOperators={data?.plan?.maxOperators ?? 1}
-                  planName={data?.plan?.name || "CRM Start"}
+                  planName={data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "CRM Premium")}
                   isSuspended={isSuspended}
                   ownerEmail={data?.viewer?.role === "owner" ? data.viewer.email : undefined}
                   ownerName={currentTenantObj?.name ? `${currentTenantObj.name} (Administrador)` : "Proprietário / Titular"}
