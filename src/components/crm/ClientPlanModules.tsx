@@ -2281,7 +2281,7 @@ export function RechargeHistoryTable({
           Nenhuma recarga adicional realizada até o momento. As recargas de mensagens (R$ 20 = 100 msgs) aparecem aqui assim que confirmadas.
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div className="op-table-wrapper" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.1)", color: "#aba8bf" }}>

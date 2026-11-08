@@ -44,3 +44,32 @@ export async function sendText(number: string, text: string, cfg: EvolutionSendC
     clearTimeout(timeout);
   }
 }
+
+export type PresenceType = "composing" | "recording" | "paused" | "available" | "unavailable";
+
+export async function sendPresence(
+  number: string,
+  presence: PresenceType = "composing",
+  cfg: Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance">,
+  targetInstance?: string,
+  delayMs = 1200
+): Promise<boolean> {
+  const instance = encodeURIComponent(targetInstance || cfg.instance);
+  const endpoint = `${cfg.evolutionUrl}/chat/sendPresence/${instance}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: cfg.evolutionKey },
+      body: JSON.stringify({ number, presence, delay: delayMs }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}

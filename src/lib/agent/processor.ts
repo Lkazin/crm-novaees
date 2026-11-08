@@ -5,7 +5,7 @@ import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
 import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
-import { sendText, EvolutionSendError } from "./evolution";
+import { sendText, EvolutionSendError, sendPresence } from "./evolution";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
@@ -310,6 +310,7 @@ export async function processWebhook(
     quota?: AttendanceQuota;
     generate?: typeof generateAnswer;
     send?: (...args: Parameters<typeof sendText>) => Promise<{ messageId?: string } | void>;
+    sendPresence?: typeof sendPresence;
     maySend?: (incoming: Incoming) => Promise<boolean>;
     getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
     fetchConvContext?: typeof fetchConversationContext;
@@ -511,6 +512,11 @@ export async function processWebhook(
       let sendStarted = false;
       let rejected = false;
       try {
+        try {
+          await (deps.sendPresence ?? sendPresence)(incoming.number, "composing", cfg, incoming.instance);
+        } catch {
+          // Falha transitória de presença visual não deve impedir o atendimento
+        }
         const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);

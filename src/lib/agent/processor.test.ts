@@ -297,3 +297,30 @@ test("missing company context blocks generation, sending and quota access",async
  const result=await processWebhookActual(payload,cfg,{getStoreContext:async()=>({}),generate:async()=>{generated++;return "No";},send:async()=>{sent++;}});
  assert.equal(result.reason,"store_context_unavailable");assert.equal(generated,0);assert.equal(sent,0);
 });
+
+test("envia indicador de presenca 'composing' (digitando...) antes de gerar a resposta", async () => {
+  const db = fakeRedis();
+  const presenceCalls: Array<{ number: string; presence: string }> = [];
+  let generated = 0;
+  let sent = 0;
+  const deps = {
+    redis: db as never,
+    sendPresence: async (number: string, presence: string) => {
+      presenceCalls.push({ number, presence });
+    },
+    generate: async () => {
+      generated++;
+      return "Resposta automatica";
+    },
+    send: async () => {
+      sent++;
+    }
+  };
+  const result = await processWebhook(payload, cfg, deps);
+  assert.equal(result.status, "sent");
+  assert.equal(presenceCalls.length, 1);
+  assert.equal(presenceCalls[0].presence, "composing");
+  assert.equal(presenceCalls[0].number, "5511999998888");
+  assert.equal(generated, 1);
+  assert.equal(sent, 1);
+});

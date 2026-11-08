@@ -8,7 +8,7 @@ import {
   Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
-  Calendar, CreditCard, Crown, ChevronRight, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
+  Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
   Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus
 } from "lucide-react";
 import {
@@ -347,6 +347,37 @@ export default function ClientWorkspace({
 
   // Funnel & Tags filtering state
   const [funnelFilter, setFunnelFilter] = useState<"all" | "novo" | "ai" | "waiting_human" | "human" | "waiting_client" | "closed">("all");
+  const [funnelWrap, setFunnelWrap] = useState(false);
+  const funnelBarRef = useRef<HTMLDivElement>(null);
+  const [isDraggingFunnel, setIsDraggingFunnel] = useState(false);
+  const [dragStartX, setDragStartX] = useState(0);
+  const [dragScrollLeft, setDragScrollLeft] = useState(0);
+
+  const scrollFunnel = useCallback((offset: number) => {
+    if (funnelBarRef.current) {
+      funnelBarRef.current.scrollBy({ left: offset, behavior: "smooth" });
+    }
+  }, []);
+
+  const handleFunnelMouseDown = (e: React.MouseEvent) => {
+    if (!funnelBarRef.current || funnelWrap) return;
+    setIsDraggingFunnel(true);
+    setDragStartX(e.pageX - funnelBarRef.current.offsetLeft);
+    setDragScrollLeft(funnelBarRef.current.scrollLeft);
+  };
+
+  const handleFunnelMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingFunnel || !funnelBarRef.current || funnelWrap) return;
+    e.preventDefault();
+    const x = e.pageX - funnelBarRef.current.offsetLeft;
+    const walk = (x - dragStartX) * 1.5;
+    funnelBarRef.current.scrollLeft = dragScrollLeft - walk;
+  };
+
+  const handleFunnelMouseUpOrLeave = () => {
+    setIsDraggingFunnel(false);
+  };
+
   const [tagFilter, setTagFilter] = useState<string>("all");
 
   // Notifications & Sound state
@@ -4181,8 +4212,109 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       <input aria-label="Buscar contato" placeholder="Buscar por nome ou número..." value={search} onChange={e => setSearch(e.target.value)}/>
                     </label>
 
-                    {/* Estados das Conversas (Filtro Operacional) */}
-                    <div className="op-funnel-bar">
+                    {/* Controles de Navegação Lateral dos Filtros de Conversas */}
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "6px",
+                      fontSize: "11px",
+                      color: "#aba8bf",
+                      fontWeight: 600
+                    }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        <Filter size={12} color="#ec4899" />
+                        <span>Filtro de status</span>
+                      </span>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                        <button
+                          type="button"
+                          onClick={() => setFunnelWrap(!funnelWrap)}
+                          title={funnelWrap ? "Mudar para modo Carrossel (linha com scroll)" : "Mudar para modo Grade (todas visíveis)"}
+                          style={{
+                            background: funnelWrap ? "rgba(236, 72, 153, 0.22)" : "rgba(255, 255, 255, 0.06)",
+                            border: `1px solid ${funnelWrap ? "rgba(236, 72, 153, 0.45)" : "rgba(255, 255, 255, 0.1)"}`,
+                            color: funnelWrap ? "#f472b6" : "#c4bed6",
+                            borderRadius: "6px",
+                            padding: "2px 7px",
+                            fontSize: "10px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "3px"
+                          }}
+                        >
+                          <LayoutGrid size={11} />
+                          <span>{funnelWrap ? "Carrossel" : "Ver todas"}</span>
+                        </button>
+                        {!funnelWrap && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => scrollFunnel(-150)}
+                              title="Rolar filtros para a esquerda"
+                              aria-label="Rolar para esquerda"
+                              style={{
+                                background: "rgba(255, 255, 255, 0.08)",
+                                border: "1px solid rgba(255, 255, 255, 0.12)",
+                                color: "#fff",
+                                borderRadius: "6px",
+                                width: "22px",
+                                height: "22px",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                transition: "all 0.15s ease"
+                              }}
+                            >
+                              <ChevronLeft size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => scrollFunnel(150)}
+                              title="Rolar filtros para a direita"
+                              aria-label="Rolar para direita"
+                              style={{
+                                background: "rgba(255, 255, 255, 0.08)",
+                                border: "1px solid rgba(255, 255, 255, 0.12)",
+                                color: "#fff",
+                                borderRadius: "6px",
+                                width: "22px",
+                                height: "22px",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                transition: "all 0.15s ease"
+                              }}
+                            >
+                              <ChevronRight size={13} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Estados das Conversas (Filtro Operacional com Scroll e Drag) */}
+                    <div
+                      ref={funnelBarRef}
+                      className={`op-funnel-bar ${funnelWrap ? "wrapped" : ""}`}
+                      onWheel={(e) => {
+                        if (!funnelWrap && e.deltaY !== 0 && funnelBarRef.current) {
+                          funnelBarRef.current.scrollLeft += e.deltaY;
+                        }
+                      }}
+                      onMouseDown={handleFunnelMouseDown}
+                      onMouseMove={handleFunnelMouseMove}
+                      onMouseUp={handleFunnelMouseUpOrLeave}
+                      onMouseLeave={handleFunnelMouseUpOrLeave}
+                      style={{
+                        cursor: funnelWrap ? "default" : isDraggingFunnel ? "grabbing" : "grab",
+                        userSelect: "none"
+                      }}
+                    >
                       {[
                         { id: "all", label: "Todas", count: funnelCounts.all, bg: "var(--grad-primary)", border: "#ec4899", color: "#fff" },
                         { id: "ai", label: "🤖 Atendimento por IA", count: funnelCounts.ai, bg: "rgba(0, 219, 140, 0.18)", border: "#00db8c", color: "#00db8c" },
@@ -4196,7 +4328,12 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <button
                             key={f.id}
                             type="button"
-                            onClick={() => setFunnelFilter(f.id as typeof funnelFilter)}
+                            onClick={(e) => {
+                              setFunnelFilter(f.id as typeof funnelFilter);
+                              if (!funnelWrap) {
+                                e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+                              }
+                            }}
                             style={{
                               padding: "7px 11px",
                               borderRadius: "10px",

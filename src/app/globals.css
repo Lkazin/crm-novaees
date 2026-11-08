@@ -110,10 +110,43 @@
 .op-tenant-bar select{min-width:210px;max-width:100%;flex:1}.op-tenant-bar>span{display:flex;align-items:center;gap:7px;color:#72dfbc;font-size:12px}
 .op-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
 .op-stats .op-card{display:flex;flex-direction:column;gap:7px;min-height:118px}.op-stats svg{color:#bc84e9}.op-stats span{font-size:13px;color:#c7b9d7}.op-stats strong{font-size:31px}
-.op-workspace{display:grid;grid-template-columns:340px 1fr;gap:18px;min-height:640px;height:calc(100vh - 160px)}
+.op-workspace{display:grid;grid-template-columns:minmax(340px, 380px) 1fr;gap:18px;min-height:640px;height:calc(100vh - 160px)}
 .op-inbox,.op-thread{padding:16px;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(236,72,153,0.18);border-radius:18px;background:linear-gradient(160deg,#130f22,#0d0b17);box-shadow:0 8px 30px rgba(0,0,0,0.35)}
-.op-funnel-bar{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none;-ms-overflow-style:none;margin-bottom:12px}
-.op-funnel-bar::-webkit-scrollbar{display:none}
+.op-funnel-bar{display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding-bottom:8px;margin-bottom:12px;scrollbar-width:thin;scrollbar-color:rgba(236,72,153,0.45) rgba(255,255,255,0.06);scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
+.op-funnel-bar::-webkit-scrollbar{height:6px}
+.op-funnel-bar::-webkit-scrollbar-track{background:rgba(255,255,255,0.04);border-radius:999px}
+.op-funnel-bar::-webkit-scrollbar-thumb{background:linear-gradient(90deg,#ec4899,#8b5cf6);border-radius:999px}
+.op-funnel-bar::-webkit-scrollbar-thumb:hover{background:#f43f5e}
+.op-funnel-bar.wrapped{flex-wrap:wrap;overflow-x:visible;padding-bottom:0}
+
+/* Barra de rolagem visível para todas as tabelas e áreas horizontais do Master e Cliente */
+div[style*="overflowX: auto"],
+div[style*="overflow-x: auto"],
+div[style*="overflowX: \"auto\""],
+.op-table-wrapper {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(236,72,153,0.45) rgba(255,255,255,0.06);
+}
+div[style*="overflowX: auto"]::-webkit-scrollbar,
+div[style*="overflow-x: auto"]::-webkit-scrollbar,
+div[style*="overflowX: \"auto\""]::-webkit-scrollbar,
+.op-table-wrapper::-webkit-scrollbar {
+  height: 6px;
+}
+div[style*="overflowX: auto"]::-webkit-scrollbar-track,
+div[style*="overflow-x: auto"]::-webkit-scrollbar-track,
+div[style*="overflowX: \"auto\""]::-webkit-scrollbar-track,
+.op-table-wrapper::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.04);
+  border-radius: 999px;
+}
+div[style*="overflowX: auto"]::-webkit-scrollbar-thumb,
+div[style*="overflow-x: auto"]::-webkit-scrollbar-thumb,
+div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
+.op-table-wrapper::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg,#ec4899,#8b5cf6);
+  border-radius: 999px;
+}
 .op-inbox>h2{font-size:18px;margin:0 0 12px;padding:0;color:#fff;font-weight:800}
 .op-search{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(236,72,153,0.22);background:#0c0a15;border-radius:10px;margin-bottom:12px}.op-search input{flex:1;width:100%;border:0;background:transparent;outline:none;color:#fff;font-size:13px}
 .op-list{padding:2px 0;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px}
