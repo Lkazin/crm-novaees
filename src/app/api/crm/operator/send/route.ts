@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { requireTenantFeature } from "@/lib/crm/plans";
+import crypto from "crypto";
+import { requireTenantFeature, getRedis } from "@/lib/crm/plans";
 import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
@@ -92,10 +93,31 @@ export async function POST(request: NextRequest) {
     }
     if (!targetInstance || extractSlotFromInstanceName(targetInstance) > featureGuard.effectivePlan.maxWhatsappConnections) return privateJson({ error: "channel_unavailable_or_locked" }, 403);
 
-    // 5. Send real WhatsApp message via Evolution API
+    // 5. Send real WhatsApp message via Evolution API with Idempotency Guard
+    const rawIdempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";
+    const textHash = crypto.createHash("sha256").update(messageText).digest("hex").slice(0, 16);
+    const idempotencyKey = rawIdempotencyKey || `crm:idempotency:send:${tenantId}:${conversationId}:${textHash}`;
+
+    const redis = getRedis();
+    let acquiredLock = false;
+    try {
+      if (redis.status === "ready") {
+        const lockOk = await redis.set(idempotencyKey, "sending", "EX", 15, "NX");
+        if (lockOk !== "OK") {
+          const currentStatus = await redis.get(idempotencyKey);
+          if (currentStatus === "sent") {
+            return privateJson({ success: true, messageId: "idempotent_duplicate", note: "Mensagem já enviada previamente." });
+          }
+          return privateJson({ error: "send_in_progress", message: "Envio em andamento. Aguarde alguns instantes." }, 409);
+        }
+        acquiredLock = true;
+      }
+    } catch {}
+
     const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
     const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
     if (!evolutionUrl || !evolutionKey) {
+      if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
       return privateJson({ error: "evolution_not_configured" }, 503);
     }
     const cfg: EvolutionSendConfig = {
@@ -104,9 +126,12 @@ export async function POST(request: NextRequest) {
       instance: targetInstance || process.env.EVOLUTION_INSTANCE || "default",
       sendFormat: process.env.EVOLUTION_SEND_FORMAT === "legacy" ? "legacy" : "v2",
     };
+
+    let sendOutcome: { messageId?: string } | void;
     try {
-      await sendText(contactPhone, messageText, cfg, targetInstance);
+      sendOutcome = await sendText(contactPhone, messageText, cfg, targetInstance);
     } catch (sendErr) {
+      if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
       console.error("[operator-send-error] Failed to send via Evolution:", sendErr);
       return privateJson({
         error: "evolution_send_failed",
@@ -114,7 +139,11 @@ export async function POST(request: NextRequest) {
       }, 502);
     }
 
-    // 6. Record message in Supabase crm_messages
+    const externalId = (sendOutcome && typeof sendOutcome === "object" && "messageId" in sendOutcome)
+      ? sendOutcome.messageId
+      : null;
+
+    // 6. Record message in Supabase crm_messages with provider external_id
     const rMsg = await fetch(url + "/rest/v1/crm_messages", {
       method: "POST",
       headers: {
@@ -129,9 +158,14 @@ export async function POST(request: NextRequest) {
         direction: "outbound",
         sender_type: "human",
         body: messageText,
-        delivery_status: "sent"
+        delivery_status: "sent",
+        external_id: externalId
       })
     });
+
+    if (acquiredLock) {
+      try { await redis.set(idempotencyKey, "sent", "EX", 60); } catch {}
+    }
     const savedMsg = rMsg.ok ? (await rMsg.json())?.[0] : null;
 
     // 7. Update conversation: ensure mode is human, assigned to this operator, and status is pending (maps to waiting_client)

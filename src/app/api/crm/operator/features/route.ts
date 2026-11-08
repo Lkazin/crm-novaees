@@ -73,8 +73,8 @@ export async function GET(request: NextRequest) {
     const basicGuard = await requireTenantFeature(tenantId, "basic_indicators");
     if (!basicGuard.allowed) return privateJson({ error: basicGuard.errorCode, state: basicGuard.state, message: basicGuard.message }, basicGuard.statusHttp);
     const [rConvs, rContacts, rChannels, rMemberships, rHandoffs] = await Promise.all([
-      fetch(url + `/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,contact_id,channel_id,assigned_to,mode,status,last_message_at,created_at&order=last_message_at.desc&limit=300`, {
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+      fetch(url + `/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,contact_id,channel_id,assigned_to,mode,status,last_message_at,created_at&order=last_message_at.desc&limit=1500`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, Prefer: "count=exact" },
         cache: "no-store"
       }),
       fetch(url + `/rest/v1/crm_contacts?tenant_id=eq.${tenantId}&select=id,phone,display_name`, {
@@ -96,6 +96,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     const rawConvs = rConvs.ok ? ((await rConvs.json()) as Array<{ id: string; contact_id: string; channel_id: string; assigned_to?: string; mode: string; status: string; last_message_at?: string }>) : [];
+    const exactDbConvsCount = Number(rConvs.headers.get("content-range")?.split("/")?.[1] || 0);
     const contacts = rContacts.ok ? ((await rContacts.json()) as Array<Record<string, unknown>>) : [];
     const channels = rChannels.ok ? ((await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>) : [];
     const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<{ user_id: string; role: string; created_at?: string }>) : [];

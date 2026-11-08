@@ -177,7 +177,7 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
   }
 }
 
-export async function persistOutboundInSupabase(instance: string, phone: string, text: string): Promise<void> {
+export async function persistOutboundInSupabase(instance: string, phone: string, text: string, externalId?: string): Promise<void> {
   if (!isIngestEnabled(instance)) return;
   try {
     const channel = await resolveChannelForInstance(instance);
@@ -200,7 +200,8 @@ export async function persistOutboundInSupabase(instance: string, phone: string,
       direction: "outbound",
       sender_type: "agent",
       body: text,
-      delivery_status: "sent"
+      delivery_status: "sent",
+      external_id: externalId || null
     });
 
     await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", {

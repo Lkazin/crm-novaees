@@ -576,7 +576,11 @@ export default function ClientWorkspace({
         setError("Sessão expirada. Entre novamente.");
         return;
       }
-      if (!response.ok) throw Error(response.status === 403 ? "Empresa não autorizada." : "Falha ao consultar dados da empresa.");
+      if (!response.ok) {
+        if (response.status === 403) throw Error("Empresa não autorizada.");
+        if (response.status === 503) throw Error("Serviço de dados temporariamente indisponível. Clique em tentar novamente.");
+        throw Error("Falha ao consultar dados da empresa.");
+      }
       const json = await response.json() as Data;
 
       // Check if new urgent handoffs arrived
@@ -2045,6 +2049,44 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px"}}
                 >
                   Solicitar Liberação / Upgrade
+                </button>
+              </section>
+            )}
+
+            {/* BANNER DE ERRO DE CONEXÃO / TENTAR NOVAMENTE */}
+            {error && (
+              <section
+                role="alert"
+                style={{
+                  background: "linear-gradient(135deg, rgba(120, 20, 40, 0.9), rgba(40, 10, 20, 0.9))",
+                  border: "1px solid #f43f5e",
+                  borderRadius: "14px",
+                  padding: "14px 20px",
+                  marginBottom: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  boxShadow: "0 8px 25px rgba(244, 63, 94, 0.25)"
+                }}
+              >
+                <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                  <CircleAlert size={20} color="#f43f5e" />
+                  <div>
+                    <strong style={{display: "block", color: "#fff", fontSize: "14px"}}>
+                      Aviso de Conexão com os Dados
+                    </strong>
+                    <span style={{color: "#fca5a5", fontSize: "12px"}}>{error}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setError(""); void fetchData(tenant, false); }}
+                  className="op-primary"
+                  style={{padding: "8px 16px", borderRadius: "8px", fontWeight: 700, fontSize: "12px"}}
+                >
+                  Tentar novamente
                 </button>
               </section>
             )}

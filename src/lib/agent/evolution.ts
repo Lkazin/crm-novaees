@@ -9,7 +9,9 @@ export class EvolutionSendError extends Error {
   }
 }
 
-export async function sendText(number: string, text: string, cfg: EvolutionSendConfig, targetInstance?: string): Promise<void> {
+export type SendResult = { messageId?: string };
+
+export async function sendText(number: string, text: string, cfg: EvolutionSendConfig, targetInstance?: string): Promise<SendResult> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const endpoint = `${cfg.evolutionUrl}/message/sendText/${instance}`;
   // Evolution v2 commonly accepts flat `text`; legacy installations can use textMessage.
@@ -30,6 +32,13 @@ export async function sendText(number: string, text: string, cfg: EvolutionSendC
       console.error(`[evolution-send-error] HTTP ${response.status}`);
       // A timeout or server error may happen after provider acceptance: do not retry/refund automatically.
       throw new EvolutionSendError(`Evolution retornou HTTP ${response.status}`, response.status >= 400 && response.status < 500 && response.status !== 408 ? "rejected" : "uncertain");
+    }
+    try {
+      const data = await response.json();
+      const messageId = data?.key?.id || data?.messageId || data?.id || undefined;
+      return { messageId };
+    } catch {
+      return {};
     }
   } finally {
     clearTimeout(timeout);

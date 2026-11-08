@@ -51,11 +51,13 @@ async function serviceQuery<T>(url: string, serviceKey: string, pathAndQuery: st
       signal: AbortSignal.timeout(7000)
     });
     if (res.ok) return (await res.json()) as T;
+    const errText = await res.text().catch(() => "");
+    throw new Error(`DB_QUERY_FAILED ${res.status}: ${errText.slice(0, 100)}`);
   }
   if (fallbackToken) {
     return await supabaseRows<T>(pathAndQuery, fallbackToken);
   }
-  return [] as unknown as T;
+  throw new Error("DB_SERVICE_KEY_MISSING");
 }
 
 export async function GET(request: NextRequest) {
@@ -87,23 +89,61 @@ export async function GET(request: NextRequest) {
     }
 
     const query = "tenant_id=eq." + encodeURIComponent(selected);
-    const [contacts, rawConversations, messages, tags, contactTags, handoffs, channels, settingsRows] = await Promise.all([
-      serviceQuery<Contact[]>(url, serviceKey, "crm_contacts?select=id,phone,display_name,created_at&" + query + "&order=created_at.desc&limit=100", user.token).catch(() => []),
-      serviceQuery<Conversation[]>(url, serviceKey, "crm_conversations?select=id,contact_id,channel_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token).catch(() => []),
-      serviceQuery<Message[]>(url, serviceKey, "crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token).catch(() => []),
-      serviceQuery<Array<{ id: string; name: string; color: string }>>(url, serviceKey, "crm_tags?select=id,name,color&" + query, user.token).catch(() => []),
-      serviceQuery<Array<{ contact_id: string; tag_id: string }>>(url, serviceKey, "crm_contact_tags?select=contact_id,tag_id&" + query, user.token).catch(() => []),
-      serviceQuery<HandoffRow[]>(url, serviceKey, "crm_handoffs?select=id,conversation_id,requested_by,status,reason,created_at&" + query + "&order=created_at.desc&limit=100", user.token).catch(() => []),
-      serviceQuery<ChannelRow[]>(url, serviceKey, "crm_channels?select=id,instance_name,status&" + query, user.token).catch(() => []),
-      serviceQuery<Array<{ config_jsonb: Record<string, unknown> }>>(url, serviceKey, "crm_tenant_settings?select=config_jsonb&" + query + "&limit=1", user.token).catch(() => []),
+    type TenantSettingsRow = { business_description?: string | null };
+
+    const [
+      contactsRes,
+      conversationsRes,
+      messagesRes,
+      tagsRes,
+      contactTagsRes,
+      handoffsRes,
+      channelsRes,
+      settingsRes,
+    ] = await Promise.allSettled([
+      serviceQuery<Contact[]>(url, serviceKey, "crm_contacts?select=id,phone,display_name,created_at&" + query + "&order=created_at.desc&limit=100", user.token),
+      serviceQuery<Conversation[]>(url, serviceKey, "crm_conversations?select=id,contact_id,channel_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token),
+      serviceQuery<Message[]>(url, serviceKey, "crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token),
+      serviceQuery<Array<{ id: string; name: string; color: string }>>(url, serviceKey, "crm_tags?select=id,name,color&" + query, user.token),
+      serviceQuery<Array<{ contact_id: string; tag_id: string }>>(url, serviceKey, "crm_contact_tags?select=contact_id,tag_id&" + query, user.token),
+      serviceQuery<HandoffRow[]>(url, serviceKey, "crm_handoffs?select=id,conversation_id,requested_by,status,reason,created_at&" + query + "&order=created_at.desc&limit=100", user.token),
+      serviceQuery<ChannelRow[]>(url, serviceKey, "crm_channels?select=id,instance_name,status&" + query, user.token),
+      serviceQuery<Array<TenantSettingsRow>>(url, serviceKey, "crm_tenant_settings?select=business_description&" + query + "&limit=1", user.token),
     ]);
+
+    // If core tables both failed to respond due to DB or network outage, fail-safe with 503 instead of pretending tenant is empty
+    if (contactsRes.status === "rejected" && conversationsRes.status === "rejected") {
+      console.error("[operator-data] Core database queries failed:", contactsRes.reason, conversationsRes.reason);
+      return privateJson({ error: "database_temporarily_unavailable", retryable: true }, 503);
+    }
+
+    const contacts = contactsRes.status === "fulfilled" ? contactsRes.value : [];
+    const rawConversations = conversationsRes.status === "fulfilled" ? conversationsRes.value : [];
+    const messages = messagesRes.status === "fulfilled" ? messagesRes.value : [];
+    const tags = tagsRes.status === "fulfilled" ? tagsRes.value : [];
+    const contactTags = contactTagsRes.status === "fulfilled" ? contactTagsRes.value : [];
+    const handoffs = handoffsRes.status === "fulfilled" ? handoffsRes.value : [];
+    const channels = channelsRes.status === "fulfilled" ? channelsRes.value : [];
+    const settingsRows = settingsRes.status === "fulfilled" ? settingsRes.value : [];
 
     const channelSlotMap = new Map<string, number>();
     for (const ch of channels) {
       channelSlotMap.set(ch.id, extractSlotFromInstanceName(ch.instance_name || ""));
     }
 
-    const tenantSettings = settingsRows?.[0]?.config_jsonb || {};
+    let tenantSettings: Record<string, unknown> = {};
+    const rawSettingsDesc = settingsRows?.[0]?.business_description;
+    if (rawSettingsDesc) {
+      if (typeof rawSettingsDesc === "string" && rawSettingsDesc.trim().startsWith("{")) {
+        try {
+          tenantSettings = JSON.parse(rawSettingsDesc);
+        } catch (err) {
+          console.warn("[operator-data] Failed to parse business_description JSON:", err);
+        }
+      } else if (typeof rawSettingsDesc === "object") {
+        tenantSettings = rawSettingsDesc as Record<string, unknown>;
+      }
+    }
     const persistedConvTags = (tenantSettings.conversationTags as Record<string, string>) || {};
     const persistedConvPriorities = (tenantSettings.conversationPriorities as Record<string, { priority?: string }>) || {};
     const persistedSurveys = Array.isArray(tenantSettings.satisfactionSurveys)
@@ -263,6 +303,7 @@ export async function GET(request: NextRequest) {
         maxOperators: p.maxOperators, maxWhatsappConnections: p.maxWhatsappConnections,
         features: p.features, isTrial: p.id === "crm-trial"
       })),
+      dataHealth: (contactsRes.status === "rejected" || conversationsRes.status === "rejected") ? "degraded" : "healthy",
       contacts,
       conversations,
       messages,

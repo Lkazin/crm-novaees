@@ -2,6 +2,7 @@ import "server-only";
 import { NextRequest } from "next/server";
 import crypto from "crypto";
 import { supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { getRedis } from "@/lib/crm/plans";
 
 export const MASTER_COOKIE_NAME = "nw_master_session";
 // Standardized session lifetime: exactly 12 hours (43200 seconds)
@@ -126,11 +127,80 @@ export function verifyMasterToken(token: string | undefined): { valid: boolean; 
 }
 
 /**
+ * In-memory short-lived cache for verified staff status (30s)
+ * Prevents hammering Supabase while guaranteeing rapid revocation when a staff user is disabled.
+ */
+const staffStatusCache = new Map<string, { enabled: boolean; role: string; expiresAt: number }>();
+
+export function clearStaffStatusCache(userId?: string) {
+  if (userId) {
+    staffStatusCache.delete(userId);
+  } else {
+    staffStatusCache.clear();
+  }
+}
+
+const inMemoryRevokedTokens = new Set<string>();
+
+/**
+ * Revoke a master session token immediately on the server.
+ */
+export async function revokeMasterToken(token: string | undefined): Promise<void> {
+  if (!token) return;
+  try {
+    const parts = token.split(":");
+    const signature = parts[parts.length - 1];
+    if (signature) {
+      inMemoryRevokedTokens.add(signature);
+      try {
+        const redis = getRedis();
+        const curStatus = String(redis.status);
+        if (curStatus === "ready") {
+          await redis.set(`crm:revoked_master:${signature}`, "1", "EX", 30 * 24 * 60 * 60);
+        } else if (process.env.CRM_REDIS_URL && curStatus !== "end") {
+          if (curStatus !== "connecting") await redis.connect().catch(() => {});
+          if (String(redis.status) === "ready") {
+            await redis.set(`crm:revoked_master:${signature}`, "1", "EX", 30 * 24 * 60 * 60);
+          }
+        }
+      } catch {}
+    }
+  } catch (err) {
+    console.warn("[master-auth] Failed to persist token revocation:", err);
+  }
+}
+
+/**
+ * Check if a master session token has been revoked on logout.
+ */
+export async function isMasterTokenRevoked(token: string | undefined): Promise<boolean> {
+  if (!token) return true;
+  try {
+    const parts = token.split(":");
+    const signature = parts[parts.length - 1];
+    if (!signature) return true;
+    if (inMemoryRevokedTokens.has(signature)) return true;
+
+    try {
+      const redis = getRedis();
+      if (redis.status === "ready") {
+        const revoked = await redis.get(`crm:revoked_master:${signature}`);
+        if (revoked === "1") return true;
+      }
+    } catch {}
+  } catch {}
+  return false;
+}
+
+/**
  * Comprehensive Master authorization verification for all admin routes:
  * 1. Checks secure signed HTTP-only cookie (nw_master_session)
- * 2. Checks Bearer token or x-admin-password against environment secret
- * 3. Checks legacy crm_admin_token cookie with deprecation notice
+ * 2. Checks token revocation cache (Redis blacklist)
+ * 3. Revalidates platform_staff status in database (fail-closed if staff disabled or removed)
  * 4. Checks Supabase authenticated user with platform_staff table role
+ * 
+ * Note: Alternative auth methods (x-admin-password, raw bearer header, legacy crm_admin_token)
+ * have been permanently decommissioned for enterprise zero-trust security.
  */
 export async function verifyMasterRequest(request: NextRequest): Promise<{ authorized: boolean; actor: string }> {
   // 1. Check signed HTTP-only session cookie (primary & recommended)
@@ -138,36 +208,61 @@ export async function verifyMasterRequest(request: NextRequest): Promise<{ autho
   if (sessionCookie) {
     const session = verifyMasterToken(sessionCookie);
     if (session.valid && session.actor) {
+      // Check if session token was explicitly revoked on logout
+      const revoked = await isMasterTokenRevoked(sessionCookie);
+      if (revoked) {
+        return { authorized: false, actor: "revoked_session" };
+      }
+
+      // Revalidate staff status if actor is a platform staff user (master_<userId>)
+      if (session.actor.startsWith("master_")) {
+        const userId = session.actor.replace(/^master_/, "").trim();
+        if (userId) {
+          const now = Date.now();
+          const cached = staffStatusCache.get(userId);
+          if (cached && cached.expiresAt > now) {
+            if (!cached.enabled || !["MASTER", "ADMINISTRADOR", "platform_admin"].includes(cached.role)) {
+              return { authorized: false, actor: "disabled_staff" };
+            }
+            return { authorized: true, actor: session.actor };
+          }
+
+          // Query Supabase service role for platform_staff
+          try {
+            const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
+            const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
+            if (url && serviceKey.length >= 30) {
+              const res = await fetch(`${url}/rest/v1/platform_staff?user_id=eq.${encodeURIComponent(userId)}&select=role,enabled&limit=1`, {
+                headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Accept: "application/json" },
+                cache: "no-store",
+                signal: AbortSignal.timeout(5000)
+              });
+              if (res.ok) {
+                const rows = (await res.json()) as Array<{ role: string; enabled: boolean }>;
+                if (rows.length === 1 && rows[0].enabled && ["MASTER", "ADMINISTRADOR", "platform_admin"].includes(rows[0].role)) {
+                  staffStatusCache.set(userId, { enabled: true, role: rows[0].role, expiresAt: now + 30_000 });
+                  return { authorized: true, actor: session.actor };
+                } else {
+                  // Staff is disabled, deleted or role changed: fail-closed!
+                  staffStatusCache.set(userId, { enabled: false, role: rows[0]?.role || "none", expiresAt: now + 60_000 });
+                  return { authorized: false, actor: "disabled_staff" };
+                }
+              }
+            }
+          } catch (err) {
+            console.error("[master-auth] Failed to revalidate platform_staff:", err);
+            // Fail closed on database check failure
+            return { authorized: false, actor: "staff_validation_failed" };
+          }
+        }
+      }
+
+      // Valid signed master_admin session
       return { authorized: true, actor: session.actor };
     }
   }
 
-  // 2. Check direct header (Authorization: Bearer <key> or x-admin-password)
-  const masterPassword = getMasterPassword();
-  const legacyToken = getLegacyAdminToken();
-  const authHeader = request.headers.get("x-admin-password") || request.headers.get("authorization") || "";
-  const cleanKey = authHeader.replace(/^Bearer\s+/i, "").trim();
-
-  if (cleanKey) {
-    if (masterPassword && timingSafeMatch(cleanKey, masterPassword)) {
-      return { authorized: true, actor: "api_master_password" };
-    }
-    if (legacyToken && timingSafeMatch(cleanKey, legacyToken)) {
-      return { authorized: true, actor: "api_service_token" };
-    }
-  }
-
-  // 3. Check legacy crm_admin_token cookie (warn about rotation)
-  const legacyCookie = request.cookies.get("crm_admin_token")?.value;
-  if (legacyCookie) {
-    if ((legacyToken && timingSafeMatch(legacyCookie, legacyToken)) ||
-        (masterPassword && timingSafeMatch(legacyCookie, masterPassword))) {
-      console.warn("[master-auth] Warning: Legacy crm_admin_token cookie used. Session should be upgraded to signed nw_master_session.");
-      return { authorized: true, actor: "legacy_admin_cookie" };
-    }
-  }
-
-  // 4. Check Supabase operator session with platform_staff authorization
+  // 2. Check Supabase operator session with active platform_staff authorization
   try {
     const operator = await verifyOperator();
     if (operator) {

@@ -308,7 +308,7 @@ export async function processWebhook(
     redis?: Redis;
     quota?: AttendanceQuota;
     generate?: typeof generateAnswer;
-    send?: typeof sendText;
+    send?: (...args: Parameters<typeof sendText>) => Promise<{ messageId?: string } | void>;
     maySend?: (incoming: Incoming) => Promise<boolean>;
     getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
     fetchConvContext?: typeof fetchConversationContext;
@@ -352,9 +352,24 @@ export async function processWebhook(
     await new Promise(resolve => setTimeout(resolve, 1400));
 
     try {
-      // 5. Collect all buffered messages for this user
-      const rawList = await redis.lrange(bufferKey, 0, -1);
-      await redis.del(bufferKey);
+      // 5. Collect all buffered messages for this user atomically via Lua script
+      let rawList: string[] = [];
+      try {
+        if (typeof (redis as any).eval === "function") {
+          const evalResult = await (redis as any).eval(
+            "local msgs = redis.call('LRANGE', KEYS[1], 0, -1); redis.call('DEL', KEYS[1]); return msgs;",
+            1,
+            bufferKey
+          );
+          if (Array.isArray(evalResult)) rawList = evalResult;
+        } else {
+          rawList = await redis.lrange(bufferKey, 0, -1);
+          await redis.del(bufferKey);
+        }
+      } catch {
+        rawList = await redis.lrange(bufferKey, 0, -1);
+        await redis.del(bufferKey);
+      }
 
       const items: Array<{ id: string; text: string }> = [];
       for (const item of rawList) {
@@ -493,8 +508,9 @@ export async function processWebhook(
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);
         sendStarted = true;
+        let sendOutcome: { messageId?: string } | void;
         try {
-          await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+          sendOutcome = await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
         } catch (error) {
           rejected = error instanceof EvolutionSendError && error.outcome === "rejected";
           throw error;
@@ -514,7 +530,12 @@ export async function processWebhook(
           await invalidateEffectivePlanCache(tenantId, deps.redis);
         } catch { /* Projection failure never discards durable usage. */ }
         await markItemsDone();
-        try { await persistOutboundInSupabase(incoming.instance, incoming.number, answer); } catch {}
+        try {
+          const externalId = (sendOutcome && typeof sendOutcome === "object" && "messageId" in sendOutcome)
+            ? sendOutcome.messageId
+            : undefined;
+          await persistOutboundInSupabase(incoming.instance, incoming.number, answer, externalId);
+        } catch {}
         return { status: "sent" };
       } finally {
         // Unknown provider outcome stays reserved for reconciliation. Confirmed rejection or
@@ -522,7 +543,16 @@ export async function processWebhook(
         if (!accepted && (!sendStarted || rejected)) await quotaStore.release(input, reservation.token);
       }
     } finally {
-      await redis.del(debounceKey);
+      try {
+        const remaining = await redis.llen(bufferKey);
+        if (remaining > 0) {
+          await redis.expire(debounceKey, 2);
+        } else {
+          await redis.del(debounceKey);
+        }
+      } catch {
+        await redis.del(debounceKey);
+      }
     }
   } catch (err) {
     console.error("[processor-error]", err);

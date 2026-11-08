@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, MASTER_REMEMBER_TTL_SEC, signMasterToken, timingSafeMatch, verifyMasterRequest } from "@/lib/crm/master-auth";
+import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, MASTER_REMEMBER_TTL_SEC, signMasterToken, timingSafeMatch, verifyMasterRequest, revokeMasterToken } from "@/lib/crm/master-auth";
 import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
@@ -116,6 +116,11 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
+  const sessionCookie = request.cookies.get(MASTER_COOKIE_NAME)?.value;
+  if (sessionCookie) {
+    await revokeMasterToken(sessionCookie);
+  }
 
   const response = NextResponse.json({ authenticated: false });
   response.cookies.set({

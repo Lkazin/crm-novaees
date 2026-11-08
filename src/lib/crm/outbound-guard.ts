@@ -35,8 +35,9 @@ export async function outboundAllowed(incoming: Incoming): Promise<boolean> {
       if (!rContact.ok) return false;
       const contacts = (await rContact.json()) as Array<{ id: string }>;
       if (contacts?.[0]?.id) {
+        const channelFilter = channel?.id ? `&channel_id=eq.${encodeURIComponent(channel.id)}` : "";
         const rConv = await fetch(
-          `${url}/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&contact_id=eq.${contacts[0].id}&select=mode,status,assigned_to&limit=1`,
+          `${url}/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&contact_id=eq.${contacts[0].id}${channelFilter}&select=mode,status,assigned_to&limit=1`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` }, cache: "no-store" }
         );
         if (!rConv.ok) return false;
