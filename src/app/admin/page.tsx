@@ -27,7 +27,8 @@ import {
   Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
   Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
-  CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X
+  CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X,
+  PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
 
 type Client = {
@@ -335,6 +336,24 @@ const DEFAULT_PLANS: PlanItem[] = [
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
   const [upgradeRequests, setUpgradeRequests] = useState<UpgradeRequestItem[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("crm_master_sidebar_collapsed");
+      if (saved === "true") setSidebarCollapsed(true);
+    } catch {}
+  }, []);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem("crm_master_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Recharges & PIX Configuration states
   type AdminRecharge = {
@@ -1968,106 +1987,142 @@ export default function AdminCRM() {
   return (
     <div className="nw-layout-shell">
       {/* MENU LATERAL FIXO MASTER (SIDEBAR) */}
-      <aside className="nw-sidebar">
-        <div className="nw-sidebar-brand" style={{display: "flex", alignItems: "center", gap: "12px"}}>
-          <img
-            src="/novaes-crm-logo.jpg"
-            alt="Novaes CRM IA"
-            style={{
-              width: "42px",
-              height: "42px",
-              borderRadius: "10px",
-              objectFit: "cover",
-              border: "1px solid rgba(236, 72, 153, 0.4)",
-              boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)"
-            }}
-          />
-          <div>
-            <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800}}>
-              Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
-            </strong>
-            <small style={{display: "block", fontSize: "10px", color: "#f43f5e", fontWeight: 800, letterSpacing: "0.6px", textTransform: "uppercase"}}>
-              Painel Master
-            </small>
+      <aside className={`nw-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+        <div className="nw-sidebar-brand" style={{display: "flex", alignItems: "center", justifyContent: sidebarCollapsed ? "center" : "space-between", gap: "10px"}}>
+          <div style={{display: "flex", alignItems: "center", gap: "10px", minWidth: 0}}>
+            <img
+              src="/novaes-crm-logo.jpg"
+              alt="Novaes CRM IA"
+              style={{
+                width: "38px",
+                height: "38px",
+                borderRadius: "10px",
+                objectFit: "cover",
+                border: "1px solid rgba(236, 72, 153, 0.4)",
+                boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)",
+                flexShrink: 0
+              }}
+            />
+            <div className="nw-sidebar-brand-text">
+              <strong style={{display: "block", fontSize: "15px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800, whiteSpace: "nowrap"}}>
+                Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
+              </strong>
+              <small style={{display: "block", fontSize: "10px", color: "#f43f5e", fontWeight: 800, letterSpacing: "0.6px", textTransform: "uppercase"}}>
+                Painel Master
+              </small>
+            </div>
           </div>
+          <button
+            type="button"
+            className="nw-sidebar-toggle-btn"
+            title={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
 
         {/* Navegação Master Unificada e Agrupada */}
         <nav className="nw-sidebar-nav" aria-label="Menu do Master">
-          {/* GRUPO 1: ADMINISTRAÇÃO MASTER */}
+          {/* GRUPO 1: GESTÃO DA PLATAFORMA */}
           <div className="nw-sidebar-group-header">
-            <ShieldCheck size={13} style={{ color: "#ec4899" }}/>
-            <span>Administração Master</span>
+            <Building2 size={13} style={{ color: "#ec4899" }}/>
+            <span>Gestão da Plataforma</span>
           </div>
 
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "clients" ? "active" : ""}`}
             aria-current={currentNav === "clients" ? "page" : undefined}
+            title="Lojas & Clientes"
             onClick={() => navigateSection("clients")}
           >
             <Building2 size={18}/>
             <span>Lojas &amp; Clientes</span>
-            <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-              {clients.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "plans" ? "active" : ""}`}
-            aria-current={currentNav === "plans" ? "page" : undefined}
-            onClick={() => navigateSection("plans")}
-          >
-            <CreditCard size={18}/>
-            <span>Planos &amp; Franquias</span>
-            <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-              {plans.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "recharges" ? "active" : ""}`}
-            aria-current={currentNav === "recharges" ? "page" : undefined}
-            onClick={() => navigateSection("recharges")}
-          >
-            <Coins size={18}/>
-            <span>Recargas &amp; PIX</span>
-            {adminRecharges.filter(r => r.status === "pending").length > 0 ? (
-              <span style={{
-                marginLeft: "auto",
-                background: "rgba(245, 158, 11, 0.2)",
-                color: "#fcd34d",
-                border: "1px solid rgba(245, 158, 11, 0.4)",
-                padding: "2px 8px",
-                borderRadius: "10px",
-                fontSize: "11px",
-                fontWeight: 800
-              }}>
-                {adminRecharges.filter(r => r.status === "pending").length} pendente{adminRecharges.filter(r => r.status === "pending").length > 1 ? "s" : ""}
-              </span>
+            {sidebarCollapsed ? (
+              clients.length > 0 && <span className="nw-nav-badge-dot" title={`${clients.length} clientes`} />
             ) : (
-              <span style={{marginLeft: "auto", background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-                {adminRecharges.filter(r => r.status === "paid").length}
+              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {clients.length}
               </span>
             )}
           </button>
 
           <button
             type="button"
+            className={`nw-nav-button ${currentNav === "plans" ? "active" : ""}`}
+            aria-current={currentNav === "plans" ? "page" : undefined}
+            title="Planos & Franquias"
+            onClick={() => navigateSection("plans")}
+          >
+            <CreditCard size={18}/>
+            <span>Planos &amp; Franquias</span>
+            {!sidebarCollapsed && (
+              <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {plans.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "recharges" ? "active" : ""}`}
+            aria-current={currentNav === "recharges" ? "page" : undefined}
+            title="Recargas & PIX"
+            onClick={() => navigateSection("recharges")}
+          >
+            <Coins size={18}/>
+            <span>Recargas &amp; PIX</span>
+            {adminRecharges.filter(r => r.status === "pending").length > 0 ? (
+              sidebarCollapsed ? (
+                <span className="nw-nav-badge-dot" style={{ background: "#f59e0b", boxShadow: "0 0 6px #f59e0b" }} title={`${adminRecharges.filter(r => r.status === "pending").length} pendente(s)`} />
+              ) : (
+                <span style={{
+                  marginLeft: "auto",
+                  background: "rgba(245, 158, 11, 0.2)",
+                  color: "#fcd34d",
+                  border: "1px solid rgba(245, 158, 11, 0.4)",
+                  padding: "2px 8px",
+                  borderRadius: "10px",
+                  fontSize: "11px",
+                  fontWeight: 800
+                }}>
+                  {adminRecharges.filter(r => r.status === "pending").length} pendente{adminRecharges.filter(r => r.status === "pending").length > 1 ? "s" : ""}
+                </span>
+              )
+            ) : !sidebarCollapsed ? (
+              <span style={{marginLeft: "auto", background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {adminRecharges.filter(r => r.status === "paid").length}
+              </span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
             className={`nw-nav-button ${currentNav === "kpis" ? "active" : ""}`}
             aria-current={currentNav === "kpis" ? "page" : undefined}
+            title="Faturamento & Métricas"
             onClick={() => navigateSection("kpis")}
           >
             <DollarSign size={18}/>
             <span>Faturamento &amp; Métricas</span>
           </button>
 
+          {/* DIVISOR DE GRUPO */}
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
+
+          {/* GRUPO 2: SERVIDOR & INTELIGÊNCIA ARTIFICIAL */}
+          <div className="nw-sidebar-group-header">
+            <BrainCircuit size={13} style={{ color: "#a855f7" }}/>
+            <span>Servidor &amp; IA</span>
+          </div>
+
           <button
             type="button"
             className={`nw-nav-button ${currentNav === "providers" ? "active" : ""}`}
             aria-current={currentNav === "providers" ? "page" : undefined}
+            title="Provedores de IA & OmniRoute"
             onClick={() => navigateSection("providers")}
           >
             <BrainCircuit size={18}/>
@@ -2075,37 +2130,28 @@ export default function AdminCRM() {
           </button>
 
           {/* DIVISOR DE GRUPO */}
-          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "14px 4px 10px"}}/>
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
-          {/* GRUPO 2: CRM PRÓPRIO — OPERAÇÃO NOVAESWEB */}
+          {/* GRUPO 3: CRM PRÓPRIO — OPERAÇÃO NOVAESWEB */}
           <div className="nw-sidebar-group-header" style={{ justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <Crown size={13} style={{ color: "#ec4899" }}/>
-              <span style={{ color: "#ec4899" }}>CRM Próprio NovaesWeb</span>
+              <span style={{ color: "#ec4899" }}>CRM NovaesWeb</span>
             </div>
             <span style={{ fontSize: "9px", color: "#34d399", background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.3)", padding: "1px 6px", borderRadius: "6px", fontWeight: 700 }}>
               Ativo
             </span>
           </div>
 
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "active" : ""}`}
-            aria-current={currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "page" : undefined}
-            onClick={() => navigateCrm("atendimentos")}
-          >
-            <Crown size={18}/>
-            <span>CRM NovaesWeb</span>
-          </button>
-
           {/* Funções do CRM Próprio no menu lateral */}
           <button
             type="button"
-            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "atendimentos" ? "active-sub" : ""}`}
-            aria-current={currentNav === "crm" && crmActiveTab === "atendimentos" ? "page" : undefined}
+            className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "active-sub" : ""}`}
+            aria-current={currentNav === "crm" && (!crmActiveTab || crmActiveTab === "atendimentos") ? "page" : undefined}
+            title="Atendimentos & Chat"
             onClick={() => navigateCrm("atendimentos")}
           >
-            <MessageCircle size={15}/>
+            <MessageCircle size={17}/>
             <span>Atendimentos &amp; Chat</span>
           </button>
 
@@ -2113,19 +2159,21 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "whatsapp" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "whatsapp" ? "page" : undefined}
+            title="WhatsApp (Conexões Comerciais)"
             onClick={() => navigateCrm("whatsapp")}
           >
-            <Smartphone size={15}/>
-            <span>WhatsApp (5 Conexões)</span>
+            <Smartphone size={17}/>
+            <span>WhatsApp (Conexões)</span>
           </button>
 
           <button
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "conhecimento" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "conhecimento" ? "page" : undefined}
+            title="IA & Instruções"
             onClick={() => navigateCrm("conhecimento")}
           >
-            <Bot size={15}/>
+            <Bot size={17}/>
             <span>IA &amp; Instruções</span>
           </button>
 
@@ -2133,9 +2181,10 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "artigos" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "artigos" ? "page" : undefined}
+            title="Base de Conhecimento"
             onClick={() => navigateCrm("artigos")}
           >
-            <BookOpen size={15}/>
+            <BookOpen size={17}/>
             <span>Base de Conhecimento</span>
           </button>
 
@@ -2143,9 +2192,10 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "contatos" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "contatos" ? "page" : undefined}
+            title="Contatos & Clientes"
             onClick={() => navigateCrm("contatos")}
           >
-            <Users size={15}/>
+            <Users size={17}/>
             <span>Contatos &amp; Clientes</span>
           </button>
 
@@ -2153,9 +2203,10 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "horarios" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "horarios" ? "page" : undefined}
+            title="Horários de Atendimento"
             onClick={() => navigateCrm("horarios")}
           >
-            <Calendar size={15}/>
+            <Calendar size={17}/>
             <span>Horários de Atendimento</span>
           </button>
 
@@ -2163,9 +2214,10 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "equipe" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "equipe" ? "page" : undefined}
+            title="Equipe & Operadores"
             onClick={() => navigateCrm("equipe")}
           >
-            <UserCheck size={15}/>
+            <UserCheck size={17}/>
             <span>Equipe &amp; Operadores</span>
           </button>
 
@@ -2173,19 +2225,21 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "relatorios" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "relatorios" ? "page" : undefined}
+            title="Relatórios de Atendimento"
             onClick={() => navigateCrm("relatorios")}
           >
-            <BarChart3 size={15}/>
-            <span>Relatórios de Atendimento</span>
+            <BarChart3 size={17}/>
+            <span>Relatórios &amp; CSAT</span>
           </button>
 
           <button
             type="button"
             className={`nw-nav-button nw-subnav-button ${currentNav === "crm" && crmActiveTab === "simulador" ? "active-sub" : ""}`}
             aria-current={currentNav === "crm" && crmActiveTab === "simulador" ? "page" : undefined}
+            title="Simulador de IA"
             onClick={() => navigateCrm("simulador")}
           >
-            <Sparkles size={15}/>
+            <Sparkles size={17}/>
             <span>Simulador de IA</span>
           </button>
         </nav>
@@ -2196,20 +2250,21 @@ export default function AdminCRM() {
             background: "rgba(244, 63, 94, 0.08)",
             border: "1px solid rgba(244, 63, 94, 0.25)",
             borderRadius: "12px",
-            padding: "12px 14px",
+            padding: "10px 12px",
             fontSize: "12px"
           }}>
             <div style={{display: "flex", alignItems: "center", gap: "8px", color: "#f43f5e", fontWeight: 700, marginBottom: "4px"}}>
-              <ShieldCheck size={16}/> Central de Comando
+              <ShieldCheck size={15}/> Central Master
             </div>
             <p style={{margin: 0, color: "#9ca3af", fontSize: "11px", lineHeight: "1.4"}}>
-              Os clientes acessam seus painéis sem permissão de ver esta central.
+              Acesso restrito e irrestrito da administração.
             </p>
           </div>
 
           <button
             type="button"
             onClick={handleMasterLogout}
+            title="Sair do Master"
             style={{
               width: "100%",
               display: "flex",
@@ -2226,7 +2281,7 @@ export default function AdminCRM() {
               cursor: "pointer"
             }}
           >
-            <LogOut size={16}/> Sair do Master
+            <LogOut size={16}/> {!sidebarCollapsed && <span>Sair do Master</span>}
           </button>
         </div>
       </aside>

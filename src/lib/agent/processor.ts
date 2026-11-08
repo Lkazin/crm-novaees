@@ -3,6 +3,7 @@ import { attendanceQuota, type AttendanceQuota, type AttendanceInput } from "@/l
 import type { AgentConfig } from "./config";
 import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
+import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText, EvolutionSendError } from "./evolution";
 import {
@@ -314,9 +315,15 @@ export async function processWebhook(
     fetchConvContext?: typeof fetchConversationContext;
     handoff?: typeof handoffToHuman;
     nowDate?: Date;
+    resolvedIncoming?: Incoming;
   } = {},
 ): Promise<ProcessResult> {
-  const incoming = parseIncoming(payload);
+  const incoming = deps.resolvedIncoming || parseIncoming(payload) || await resolveIncomingMediaMessage(payload, {
+    evolutionUrl: cfg.evolutionUrl,
+    evolutionKey: cfg.evolutionKey,
+    aiUrl: cfg.aiUrl,
+    aiKey: cfg.aiKey
+  });
   if (!incoming) return { status: "ignored", reason: "unsupported_event" };
 
   if (!matchesAllowedNumber(incoming.number, cfg.allowedNumber)) return { status: "ignored", reason: "number_not_allowed" };

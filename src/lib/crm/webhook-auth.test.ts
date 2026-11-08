@@ -13,6 +13,7 @@ function handler() {
   "@/lib/agent/config":{getAgentConfig:()=>({sendEnabled:false})},
   "@/lib/agent/processor":{processWebhook:async()=>({status:"ignored"})},
   "@/lib/agent/parse":{parseIncoming:()=>null},
+  "@/lib/agent/media":{resolveIncomingMediaMessage:async()=>null},
   "@/lib/crm/inbox":{}, "@/lib/crm/supabase-ingest":{}, "@/lib/crm/outbound-guard":{},
   "@/lib/crm/plans":{}, "@/lib/crm/whatsapp-slots":{},
  };

@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { getAgentConfig } from "@/lib/agent/config";
 import { processWebhook } from "@/lib/agent/processor";
 import { parseIncoming } from "@/lib/agent/parse";
+import { resolveIncomingMediaMessage } from "@/lib/agent/media";
 import { captureIncoming } from "@/lib/crm/inbox";
 import { persistIncomingInSupabase, resolveChannelForInstance } from "@/lib/crm/supabase-ingest";
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
@@ -147,15 +148,24 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Always persist incoming customer message in Supabase first so Live Chat works even if AI is disabled
-    const incoming = parseIncoming(payload);
+    const cfg = getAgentConfig();
+    let incoming = parseIncoming(payload);
+    if (!incoming) {
+      incoming = await resolveIncomingMediaMessage(payload, {
+        evolutionUrl: cfg.evolutionUrl,
+        evolutionKey: cfg.evolutionKey,
+        aiUrl: cfg.aiUrl,
+        aiKey: cfg.aiKey,
+      });
+    }
+
     if (incoming) {
       try { await persistIncomingInSupabase(incoming); } catch {}
       try { await captureIncoming(incoming); } catch {}
     }
 
     // 3. Process AI response if configured
-    const cfg = getAgentConfig();
-    const result = await processWebhook(payload, cfg, { maySend: outboundAllowed });
+    const result = await processWebhook(payload, cfg, { maySend: outboundAllowed, resolvedIncoming: incoming || undefined });
     return json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";

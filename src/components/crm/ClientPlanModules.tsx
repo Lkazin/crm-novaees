@@ -66,16 +66,64 @@ export function CommercialPlansComparison({plans,featureStates,currentPlanId,onR
   plans: CommercialPlanItem[]; featureStates: Record<string,FeatureStateItem>; currentPlanId?: string;
   onRequestUpgrade: (plan:string,reason:string)=>void;
 }) {
+  const isPremium = currentPlanId === "crm-premium";
   return <section className="op-card" aria-labelledby="commercial-plans-heading">
-    <h3 id="commercial-plans-heading">Planos e recursos da plataforma</h3>
-    <p>As opções abaixo seguem o catálogo publicado pela NovaesWeb. A mudança depende da aprovação da administração.</p>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "12px" }}>
+      <div>
+        <h3 id="commercial-plans-heading" style={{ margin: 0, fontSize: "18px", fontWeight: 800 }}>Planos Oficiais da Plataforma</h3>
+        <p style={{ margin: "4px 0 0", color: "#aba8bf", fontSize: "13px" }}>
+          Oferecemos apenas dois modelos transparentes: <strong>Teste Grátis (7 Dias)</strong> e o <strong>CRM Premium Definitivo</strong>.
+        </p>
+      </div>
+      {isPremium && (
+        <span style={{
+          padding: "6px 14px",
+          borderRadius: "999px",
+          background: "rgba(0, 219, 140, 0.15)",
+          border: "1px solid rgba(0, 219, 140, 0.45)",
+          color: "#00db8c",
+          fontWeight: 800,
+          fontSize: "12px",
+          display: "flex",
+          alignItems: "center",
+          gap: "6px"
+        }}>
+          ⭐ Você tem o Plano Máximo (CRM Premium)
+        </span>
+      )}
+    </div>
     {!plans.length ? <p role="status">O catálogo de planos está indisponível no momento. Tente novamente antes de solicitar uma mudança.</p> : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,250px),1fr))",gap:16}}>
-      {plans.map(plan => <article key={plan.id} data-testid={`commercial-plan-${plan.id}`} style={{padding:20,border:"1px solid #514163",borderRadius:14,display:"flex",flexDirection:"column",gap:12}}>
-        <h4 style={{fontSize:19,margin:0}}>{plan.name}</h4>
+      {plans.filter(p => p.id === "crm-trial" || p.id === "crm-premium").map(plan => <article key={plan.id} data-testid={`commercial-plan-${plan.id}`} style={{
+        padding: 20,
+        border: plan.id === "crm-premium" ? "2px solid rgba(236, 72, 153, 0.6)" : "1px solid #514163",
+        borderRadius: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        background: plan.id === "crm-premium" ? "rgba(236, 72, 153, 0.05)" : "transparent"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h4 style={{fontSize:19,margin:0}}>{plan.name}</h4>
+          {plan.id === "crm-premium" && (
+            <span style={{ fontSize: "11px", fontWeight: 800, background: "rgba(236,72,153,0.2)", color: "#f472b6", padding: "2px 8px", borderRadius: "999px" }}>
+              RECOMENDADO
+            </span>
+          )}
+        </div>
         <strong style={{fontSize:25}}>{plan.isTrial ? "Grátis" : `R$ ${plan.price}`}<small style={{fontSize:12,fontWeight:400}}>{plan.isTrial ? " por 7 dias" : "/mês"}</small></strong>
-        <p style={{margin:0,fontSize:13}}>{plan.quotaLimit.toLocaleString("pt-BR")} mensagens da IA {plan.isTrial ? "no teste" : "por mês"}<br />{plan.maxWhatsappConnections} WhatsApp(s) · {plan.maxOperators} operador(es)</p>
+        <p style={{margin:0,fontSize:13}}>{plan.quotaLimit.toLocaleString("pt-BR")} mensagens da IA {plan.isTrial ? "no teste" : "por mês"}<br />{plan.maxWhatsappConnections} WhatsApp(s) simultâneos · {plan.maxOperators} operador(es)</p>
         <ul style={{paddingLeft:18,fontSize:12,lineHeight:1.8}}>{Object.values(featureStates).map(feature => <li key={feature.id} style={{color:plan.features.includes(feature.id)?"#e9dcf7":"#b0a3bd"}}>{plan.features.includes(feature.id) ? "✓ " : "🔒 "}{feature.name}</li>)}</ul>
-        {currentPlanId === plan.id ? <strong style={{marginTop:"auto",color:"#85e6b5"}}>Seu plano atual</strong> : plan.isTrial ? <p style={{fontSize:12,marginTop:"auto"}}>Teste inicial de novos clientes. Sem cobrança automática.</p> : <button type="button" className="op-primary" style={{marginTop:"auto"}} onClick={()=>onRequestUpgrade(plan.id,`Interesse no plano ${plan.name}`)}>Solicitar {plan.name}</button>}
+        {currentPlanId === plan.id ? (
+          <div style={{ marginTop: "auto", padding: "8px 12px", borderRadius: "8px", background: "rgba(0,219,140,0.12)", border: "1px solid #00db8c", color: "#85e6b5", textAlign: "center", fontWeight: 700, fontSize: "13px" }}>
+            ✅ Seu plano atual ativo
+          </div>
+        ) : plan.isTrial ? (
+          <p style={{fontSize:12,marginTop:"auto",color:"#8e87a2"}}>Teste inicial para novos clientes. Sem fidelidade.</p>
+        ) : (
+          <button type="button" className="op-primary" style={{marginTop:"auto"}} onClick={()=>onRequestUpgrade(plan.id,`Interesse no plano ${plan.name}`)}>
+            Assinar {plan.name} (R$ {plan.price}/mês)
+          </button>
+        )}
       </article>)}
     </div>}
   </section>;
@@ -364,27 +412,33 @@ export function WhatsappFiveSlotsGrid({
                       🔒 Espaço Bloqueado
                     </button>
                     {planLocked && (
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          onRequestUpgrade(s.minPlanId, `Desbloquear WhatsApp ${s.slot} (${s.minPlanName})`);
-                        }}
-                        className="op-primary"
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: "10px",
-                          fontSize: "12px",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px"
-                        }}
-                      >
-                        🔓 Solicitar {s.minPlanName}
-                      </button>
+                      maxConnections >= 3 ? (
+                        <span style={{ fontSize: "11px", color: "#a59cb8", textAlign: "center", padding: "4px" }}>
+                          Seu plano CRM Premium inclui até 3 WhatsApps simultâneos ativos.
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onRequestUpgrade("crm-premium", `Desbloquear WhatsApp ${s.slot} (CRM Premium)`);
+                          }}
+                          className="op-primary"
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "10px",
+                            fontSize: "12px",
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "6px"
+                          }}
+                        >
+                          🔓 Assinar CRM Premium
+                        </button>
+                      )
                     )}
                   </div>
                 ) : s.status === "connected" ? (

@@ -1788,7 +1788,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 onClick={() => setActiveTab("plano")}
               >
                 <CreditCard size={19}/>
-                <span>Meu Plano</span>
+                <span>Meu Plano &amp; Recargas</span>
                 {data?.plan?.isTrial ? (
                   <span style={{marginLeft: "auto", background: "linear-gradient(90deg, #ec4899, #8b5cf6)", color: "#fff", padding: "2px 7px", borderRadius: "999px", fontSize: "10px", fontWeight: 800}}>
                     7 DIAS
@@ -2364,7 +2364,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     whiteSpace: "nowrap"
                   }}
                 >
-                  <CreditCard size={15} /> Ver Planos & Upgrade
+                  <CreditCard size={15} /> Assinar CRM Premium (R$ 89,90)
                 </button>
               </section>
             )}
