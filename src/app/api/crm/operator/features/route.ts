@@ -285,6 +285,7 @@ export async function GET(request: NextRequest) {
         commercialIndicators,
         premiumAnalytics
       },
+      slotLabels: (dataObj.slotLabels && typeof dataObj.slotLabels === 'object') ? dataObj.slotLabels : {},
       featureStates: effectivePlan.featureStates
     });
   } catch (e) {
@@ -317,7 +318,7 @@ export async function POST(request: NextRequest) {
         return privateJson({ error: "conversation_not_found" }, 404);
       }
     }
-    if (["add_operator", "update_operator", "revoke_operator"].includes(action) &&
+    if (["add_operator", "update_operator", "revoke_operator", "set_slot_label"].includes(action) &&
       !await authorizeCrmTenant(request, tenantId, ["owner", "admin"])) {
       return privateJson({ error: "not_authorized" }, 403);
     }
@@ -605,6 +606,25 @@ export async function POST(request: NextRequest) {
         await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");
         return privateJson({ saved: true, revoked: true, teamOperators });
       }
+    }
+
+    if (action === "set_slot_label") {
+      const slot = Number(body.slot);
+      const label = typeof body.label === "string" ? body.label.trim().slice(0, 50) : "";
+      if (slot >= 1 && slot <= 5) {
+        const slotLabels: Record<string, string> = (typeof dataObj.slotLabels === "object" && dataObj.slotLabels !== null)
+          ? { ...(dataObj.slotLabels as Record<string, string>) }
+          : {};
+        if (label) {
+          slotLabels[String(slot)] = label;
+        } else {
+          delete slotLabels[String(slot)];
+        }
+        dataObj.slotLabels = slotLabels;
+        await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "slotLabels");
+        return privateJson({ saved: true, slotLabels });
+      }
+      return privateJson({ error: "invalid_slot" }, 400);
     }
 
     return privateJson({ error: "invalid_action" }, 400);

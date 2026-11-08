@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
+  HowAttendanceWorksPanel,
   featureAvailable, FeatureUnavailable, commercialPlanId,
   QuickRepliesSection,
   TeamOperatorsSection,
@@ -80,6 +81,7 @@ type Data = {
   escalations?: Record<string, EscalationItem>;
   tags?: TagItem[];
   contactTags?: ContactTagItem[];
+  viewer?: { email: string; role: string };
   note?: string;
 };
 
@@ -350,6 +352,23 @@ export default function ClientWorkspace({
 
   // 5 WhatsApp Slots state (Etapa 5)
   const [whatsappSlots, setWhatsappSlots] = useState<WhatsappSlotItem[]>([]);
+  const [slotLabels, setSlotLabels] = useState<Record<number, string>>({});
+
+  // Salvar nome personalizado de departamento (Vendas, Suporte, Pedidos etc.)
+  const handleSetSlotLabel = useCallback(async (slot: number, label: string) => {
+    setSlotLabels(prev => ({ ...prev, [slot]: label }));
+    try {
+      if (typeof window !== "undefined" && tenant) {
+        localStorage.setItem(`nw_slot_labels_${tenant}`, JSON.stringify({ ...slotLabels, [slot]: label }));
+      }
+      await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "set_slot_label", slot, label })
+      });
+    } catch {}
+  }, [tenant, slotLabels]);
   const [selectedWhatsappSlot, setSelectedWhatsappSlot] = useState<number>(1);
 
   useEffect(() => {
@@ -395,6 +414,13 @@ export default function ClientWorkspace({
   });
 
   const currentTenantObj = useMemo(() => data?.tenants?.find(t => t.id === tenant) ?? null, [data, tenant]);
+  const enrichedWhatsappSlots = useMemo(() => {
+    return whatsappSlots.map(s => ({
+      ...s,
+      customName: slotLabels[s.slot] || s.customName
+    }));
+  }, [whatsappSlots, slotLabels]);
+
   const instanceName = useMemo(() => {
     const slotItem = whatsappSlots.find(s => s.slot === selectedWhatsappSlot);
     if (slotItem?.instanceName) return slotItem.instanceName;
@@ -415,6 +441,9 @@ export default function ClientWorkspace({
         if (Array.isArray(json.teamOperators)) setTeamOperators(json.teamOperators);
         if (json.featureStates) setFeatureStates(json.featureStates);
         setReportsData(json.reports ?? null);
+        if (json.slotLabels && typeof json.slotLabels === "object") {
+          setSlotLabels(json.slotLabels);
+        }
       }
     } catch {} finally {
       setLoadingReports(false);
@@ -1207,13 +1236,13 @@ export default function ClientWorkspace({
     }
   }
 
-  async function handleAddOperator(name: string, email: string, role: string) {
+  async function handleAddOperator(name: string, email: string, role: string, password?: string) {
     try {
       const res = await fetch("/api/crm/operator/features", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenant, action: "add_operator", name, email, role })
+        body: JSON.stringify({ tenantId: tenant, action: "add_operator", name, email, role, password })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, message: json.message || "Falha ao adicionar operador." };
@@ -1222,6 +1251,23 @@ export default function ClientWorkspace({
       return { ok: true };
     } catch {
       return { ok: false, message: "Erro ao adicionar operador." };
+    }
+  }
+
+  async function handleUpdateOperatorRole(operatorId: string, role: string) {
+    try {
+      const res = await fetch("/api/crm/operator/features", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, action: "update_operator", operatorId, role })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: json.message || "Falha ao atualizar a função do atendente." };
+      if (Array.isArray(json.teamOperators)) setTeamOperators(json.teamOperators);
+      return { ok: true, message: "Função atualizada com sucesso!" };
+    } catch {
+      return { ok: false, message: "Erro de conexão ao atualizar a função." };
     }
   }
 
@@ -2136,14 +2182,266 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </section>
             )}
 
-            {/* SEÇÃO 1: CONECTAR WHATSAPP (5 ESPAÇOS) */}
+            {/* SEÇÃO 1: CENTRAL DE ATENDIMENTO & MEUS WHATSAPPS */}
             {activeTab === "whatsapp" && (
               <>
+                {/* 4. CENTRAL DE ATENDIMENTO - RESUMO COMPACTO NA TELA INICIAL */}
+                <section
+                  style={{
+                    background: "linear-gradient(135deg, rgba(26, 17, 43, 0.95), rgba(15, 10, 26, 0.98))",
+                    border: "1px solid rgba(139, 92, 246, 0.35)",
+                    borderRadius: "20px",
+                    padding: "24px",
+                    marginBottom: "24px",
+                    boxShadow: "0 12px 40px rgba(0, 0, 0, 0.45)",
+                    position: "relative",
+                    overflow: "hidden"
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "-60px",
+                      right: "-60px",
+                      width: "200px",
+                      height: "200px",
+                      borderRadius: "50%",
+                      background: "radial-gradient(circle, rgba(236, 72, 153, 0.25) 0%, transparent 70%)",
+                      pointerEvents: "none"
+                    }}
+                  />
+
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px", marginBottom: "20px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                      <div style={{
+                        width: "44px",
+                        height: "44px",
+                        borderRadius: "14px",
+                        background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+                        display: "grid",
+                        placeItems: "center",
+                        boxShadow: "0 4px 16px rgba(236, 72, 153, 0.35)"
+                      }}>
+                        <Sparkles size={22} color="#fff" />
+                      </div>
+                      <div>
+                        <h2 style={{margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff", letterSpacing: "-0.3px"}}>
+                          Central de Atendimento
+                        </h2>
+                        <p style={{margin: "2px 0 0", color: "#aba8bf", fontSize: "13px"}}>
+                          Visão geral em tempo real de conexões, equipe e atendimento da sua empresa
+                        </p>
+                      </div>
+                    </div>
+                    <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                      <span style={{
+                        padding: "5px 12px",
+                        borderRadius: "999px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        background: "rgba(139, 92, 246, 0.15)",
+                        color: "#c4b5fd",
+                        border: "1px solid rgba(139, 92, 246, 0.3)"
+                      }}>
+                        Plano: {data?.plan?.name || "CRM Start"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bento Grid 4 Cards */}
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                    gap: "14px",
+                    marginBottom: "22px"
+                  }}>
+                    {/* 1. WhatsApps Conectados */}
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.03)",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
+                      borderRadius: "14px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                        <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>WhatsApps conectados</span>
+                        <Smartphone size={16} color="#00db8c" />
+                      </div>
+                      <div style={{fontSize: "22px", fontWeight: 800, color: "#fff"}}>
+                        {whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length || (qrState === "open" ? 1 : 0)} de {data?.plan?.maxWhatsappConnections ?? 1}
+                      </div>
+                      <span style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: (whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length > 0 || qrState === "open") ? "#00db8c" : "#f59e0b",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}>
+                        ● {(whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length > 0 || qrState === "open") ? "Conexão comercial ativa" : "Nenhum número conectado"}
+                      </span>
+                    </div>
+
+                    {/* 2. Equipe Cadastrada */}
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.03)",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
+                      borderRadius: "14px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                        <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>Equipe cadastrada</span>
+                        <Users size={16} color="#8b5cf6" />
+                      </div>
+                      <div style={{fontSize: "22px", fontWeight: 800, color: "#fff"}}>
+                        {Math.min(data?.plan?.maxOperators ?? 1, teamOperators.filter(o => o.status === "active").length + 1)} de {data?.plan?.maxOperators ?? 1}
+                      </div>
+                      <span style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: (teamOperators.filter(o => o.status === "active").length + 1) >= (data?.plan?.maxOperators ?? 1) ? "#f59e0b" : "#c4b5fd",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}>
+                        ● {teamOperators.filter(o => o.status === "active").length} atendente(s) + 1 admin
+                      </span>
+                    </div>
+
+                    {/* 3. IA da NovaesWeb */}
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.03)",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
+                      borderRadius: "14px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                        <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>IA da NovaesWeb</span>
+                        <Bot size={16} color="#ec4899" />
+                      </div>
+                      <div style={{fontSize: "16px", fontWeight: 800, color: "#fff", lineHeight: "1.3"}}>
+                        {isSuspended
+                          ? "Atendimento Pausado"
+                          : (whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length > 0 || qrState === "open")
+                            ? "Ativa e Respondendo"
+                            : "Aguardando WhatsApp"}
+                      </div>
+                      <span style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: isSuspended ? "#f43f5e" : (whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length > 0 || qrState === "open") ? "#00db8c" : "#f59e0b",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}>
+                        ● {isSuspended ? "Plano em pausa" : (whatsappSlots.filter(s => s.status === "connected" && s.unlocked).length > 0 || qrState === "open") ? "Assistente virtual operando" : "Conecte para ativar a IA"}
+                      </span>
+                    </div>
+
+                    {/* 4. Conversas Aguardando Humano */}
+                    <div style={{
+                      background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                      border: `1px solid ${pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.35)" : "rgba(255, 255, 255, 0.08)"}`,
+                      borderRadius: "14px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                        <span style={{fontSize: "12px", color: "#aba8bf", fontWeight: 600}}>Aguardando humano</span>
+                        <Inbox size={16} color={pendingHumanList.length > 0 ? "#ef4444" : "#aba8bf"} />
+                      </div>
+                      <div style={{fontSize: "22px", fontWeight: 800, color: pendingHumanList.length > 0 ? "#fca5a5" : "#fff"}}>
+                        {pendingHumanList.length}
+                      </div>
+                      <span style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: pendingHumanList.length > 0 ? "#ef4444" : "#00db8c",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}>
+                        ● {pendingHumanList.length === 0 ? "Tudo em dia" : `${pendingHumanList.length} conversa(s) aguardando`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Ações Rápidas em Destaque */}
+                  <div style={{
+                    display: "flex",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                    paddingTop: "14px",
+                    borderTop: "1px solid rgba(255, 255, 255, 0.08)"
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const el = document.getElementById("meus-whatsapps-area");
+                        if (el) el.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "12px 20px",
+                        borderRadius: "12px",
+                        background: "linear-gradient(135deg, #059669, #10b981)",
+                        color: "#ffffff",
+                        fontWeight: 700,
+                        fontSize: "14px",
+                        border: "none",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 16px rgba(16, 185, 129, 0.35)",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <Smartphone size={17} />
+                      Gerenciar meus WhatsApps
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("equipe")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "12px 20px",
+                        borderRadius: "12px",
+                        background: "linear-gradient(135deg, #7c3aed, #ec4899)",
+                        color: "#ffffff",
+                        fontWeight: 700,
+                        fontSize: "14px",
+                        border: "none",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 16px rgba(124, 58, 237, 0.35)",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <Users size={17} />
+                      Gerenciar minha equipe
+                    </button>
+                  </div>
+                </section>
+
+                <div id="meus-whatsapps-area" />
                 {whatsappSlots.length > 0 && (
                   <WhatsappFiveSlotsGrid
-                    slots={whatsappSlots}
+                    slots={enrichedWhatsappSlots}
                     selectedSlot={selectedWhatsappSlot}
                     maxConnections={data?.plan?.maxWhatsappConnections ?? 0}
+                    onSaveSlotLabel={handleSetSlotLabel}
                     blockedState={isSuspended ? {...featureStates.ai_chat,state:"suspended"} : featureStates.ai_chat}
                     onSelectSlot={slotItem => {
                       if (!slotItem.unlocked || !canUseFeature("ai_chat")) return;
@@ -2169,7 +2467,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         <h2 style={{margin: 0, fontSize: "18px", color: "#fff"}}>
                           Conexão Oficial — Espaço #{selectedWhatsappSlot}
                         </h2>
-                        <small style={{color: "#aba8bf"}}>Instância selecionada: <code>{instanceName}</code></small>
+                        <small style={{color: "#aba8bf"}}>Espaço Comercial #{selectedWhatsappSlot} · Conexão Oficial</small>
                       </div>
                     </div>
                     <span style={{
@@ -2205,7 +2503,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             WhatsApp Conectado e Pronto para Uso
                           </strong>
                           <span style={{color: "#a7f3d0", fontSize: "13px"}}>
-                            {connectedPhone ? `Número conectado: +${connectedPhone}` : "Sessão confirmada pela Evolution API"}
+                            {connectedPhone ? `Número conectado: +${connectedPhone}` : "Conexão comercial confirmada e ativa"}
                             {connectedProfile ? ` · Perfil: ${connectedProfile}` : ""}
                           </span>
                         </div>
@@ -2243,7 +2541,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       disabled={deletingQr || !canUseFeature("ai_chat")}
                       onClick={() => void handleDeleteInstance()}
                       style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 18px", background: "#2e1218", color: "#ff859a", borderColor: "#f43f5e"}}
-                      title="Apagar instância e desconectar número"
+                      title="Desconectar WhatsApp comercial"
                     >
                       <Trash2 size={16}/> {deletingQr ? "Desconectando..." : "Desconectar / Apagar Sessão"}
                     </button>
@@ -2348,32 +2646,32 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     const steps = [
                       {
                         num: 1,
-                        title: "Etapa 1 — Preparando conexão",
-                        desc: "Status: aguardando inicialização da instância.",
+                        title: "Passo 1 — WhatsApp comercial da empresa",
+                        desc: "Iniciando conexão segura para receber mensagens no painel.",
                         st: step1
                       },
                       {
                         num: 2,
-                        title: "Etapa 2 — QR Code gerado",
-                        desc: "Status: aguardando leitura pelo WhatsApp.",
+                        title: "Passo 2 — Ler QR Code na tela",
+                        desc: "Aponte a câmera do WhatsApp no celular da sua empresa.",
                         st: step2
                       },
                       {
                         num: 3,
-                        title: "Etapa 3 — QR Code escaneado",
-                        desc: "Status: aguardando confirmação da conexão.",
+                        title: "Passo 3 — Conectar aparelho no WhatsApp",
+                        desc: "No WhatsApp: Configurações > Aparelhos Conectados > Conectar.",
                         st: step3
                       },
                       {
                         num: 4,
-                        title: "Etapa 4 — Validando sessão",
-                        desc: "Status: verificando se a Evolution API confirmou a conexão.",
+                        title: "Passo 4 — Confirmando sincronização",
+                        desc: "Aguardando confirmação segura do WhatsApp comercial.",
                         st: step4
                       },
                       {
                         num: 5,
-                        title: "Etapa 5 — WhatsApp conectado",
-                        desc: "Status: conexão confirmada e pronta para uso.",
+                        title: "Passo 5 — Conexão oficial ativa",
+                        desc: "Número comercial conectado! A IA e os atendentes já podem operar.",
                         st: step5
                       }
                     ];
@@ -2443,6 +2741,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   })()}
                 </div>
               </section>
+                <div style={{marginTop: "24px"}}>
+                  <HowAttendanceWorksPanel />
+                </div>
               </>
             )}
 
@@ -4203,15 +4504,23 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
             {/* SEÇÃO EQUIPE & OPERADORES (ETAPA 7) */}
             {activeTab === "equipe" && (
-              <TeamOperatorsSection
-                operators={teamOperators}
-                maxOperators={data?.plan?.maxOperators ?? 1}
-                planName={data?.plan?.name || "CRM Start"}
-                isSuspended={isSuspended}
-                onAddOperator={handleAddOperator}
-                onRevokeOperator={handleRevokeOperator}
-                onRequestUpgrade={(targetPlan, reason) => openUpgradeRequest(targetPlan, reason)}
-              />
+              <>
+                <TeamOperatorsSection
+                  operators={teamOperators}
+                  maxOperators={data?.plan?.maxOperators ?? 1}
+                  planName={data?.plan?.name || "CRM Start"}
+                  isSuspended={isSuspended}
+                  ownerEmail={data?.viewer?.role === "owner" ? data.viewer.email : undefined}
+                  ownerName={currentTenantObj?.name ? `${currentTenantObj.name} (Administrador)` : "Proprietário / Titular"}
+                  onAddOperator={handleAddOperator}
+                  onUpdateOperatorRole={handleUpdateOperatorRole}
+                  onRevokeOperator={handleRevokeOperator}
+                  onRequestUpgrade={(targetPlan, reason) => openUpgradeRequest(targetPlan, reason)}
+                />
+                <div style={{marginTop: "24px"}}>
+                  <HowAttendanceWorksPanel />
+                </div>
+              </>
             )}
 
             {/* SEÇÃO INDICADORES & RELATÓRIOS (ETAPA 7) */}

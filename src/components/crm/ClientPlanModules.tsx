@@ -2,15 +2,24 @@
 import React, { useState } from "react";
 import {
   Smartphone, LockKeyhole, CheckCircle2, Sparkles, Users, UserPlus, Trash2,
-  BarChart3, Star, Zap, Plus, ShieldAlert, Wrench, Ban, Check, Send, Filter, Tag
+  BarChart3, Star, Zap, Plus, ShieldAlert, Wrench, Ban, Check, Send, Filter, Tag,
+  Eye, EyeOff, Edit3, HelpCircle, Headphones, MessageSquare, Bot, ArrowRight, Clock, ShieldCheck, Crown
 } from "lucide-react";
 
 export type WhatsappSlotItem = {
-  slot: number; label: string; instanceName: string;
-  unlocked: boolean; minPlanId: string; minPlanName: string;
+  slot: number;
+  label: string;
+  customName?: string;
+  instanceName: string;
+  unlocked: boolean;
+  minPlanId: string;
+  minPlanName: string;
   status: "connected" | "connecting" | "disconnected" | "paused" | "locked";
-  phoneNumber?: string | null; profileName?: string | null;
-  channelId: string | null; pausedByDowngrade: boolean; lockedReason?: string;
+  phoneNumber?: string | null;
+  profileName?: string | null;
+  channelId: string | null;
+  pausedByDowngrade: boolean;
+  lockedReason?: string;
 };
 
 export type QuickReplyItem = {
@@ -73,7 +82,7 @@ export function FeatureUnavailable({feature, onUpgrade}: {feature?:FeatureStateI
 }
 
 // ============================================================================
-// 1. BARRA DE 5 ESPAÇOS DE WHATSAPP (ETAPA 5)
+// 1. BARRA DE 5 ESPAÇOS DE WHATSAPP (CENTRAL MULTI-WHATSAPP COMERCIAL)
 // ============================================================================
 export function WhatsappFiveSlotsGrid({
   slots,
@@ -81,6 +90,7 @@ export function WhatsappFiveSlotsGrid({
   maxConnections,
   onSelectSlot,
   onRequestUpgrade,
+  onSaveSlotLabel,
   blockedState,
 }: {
   blockedState?: FeatureStateItem;
@@ -89,23 +99,36 @@ export function WhatsappFiveSlotsGrid({
   maxConnections: number;
   onSelectSlot: (slot: WhatsappSlotItem) => void;
   onRequestUpgrade: (targetPlan: string, reason: string) => void;
+  onSaveSlotLabel?: (slot: number, label: string) => void;
 }) {
   const connectedCount = slots.filter(s => s.status === "connected" && s.unlocked).length;
+  const [editingSlot, setEditingSlot] = useState<number | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+
+  const handleStartEdit = (slot: number, currentName?: string) => {
+    setEditingSlot(slot);
+    setEditingLabel(currentName || "");
+  };
+
+  const handleSaveEdit = (slot: number) => {
+    onSaveSlotLabel?.(slot, editingLabel.trim());
+    setEditingSlot(null);
+  };
 
   return (
     <div className="op-card" style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "12px" }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
-            <Smartphone size={19} color="#ec4899" /> Central Multi-WhatsApp — 5 Espaços da Empresa
+          <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+            <Smartphone size={20} color="#ec4899" /> Meus WhatsApps — Números Comerciais da Empresa
           </h3>
-          <small style={{ color: "#aba8bf", fontSize: "12px" }}>
-            Seu plano libera até <strong>{maxConnections} de 5 espaços</strong> simultâneos. Selecione um espaço liberado abaixo para conectar ou gerenciar o QR Code.
+          <small style={{ color: "#c2bed4", fontSize: "13px", marginTop: "2px", display: "block" }}>
+            Aqui ficam os números oficiais por onde seus clientes enviam mensagens. Seu plano libera <strong>{maxConnections} de 5 números simultâneos</strong>.
           </small>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{
-            padding: "5px 12px",
+            padding: "6px 14px",
             borderRadius: "999px",
             fontSize: "12px",
             fontWeight: 800,
@@ -113,12 +136,12 @@ export function WhatsappFiveSlotsGrid({
             border: "1px solid rgba(236, 72, 153, 0.45)",
             color: "#f472b6"
           }}>
-            {connectedCount} conectado(s) · {maxConnections}/5 liberados no plano
+            {connectedCount} de {maxConnections} conectado(s) · {maxConnections} de 5 liberados
           </span>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "14px" }}>
         {slots.map(s => {
           const isSelected = selectedSlot === s.slot;
           const isLocked = !s.unlocked || s.slot > maxConnections || (blockedState && blockedState.state !== "allowed");
@@ -126,24 +149,26 @@ export function WhatsappFiveSlotsGrid({
           const isPausedDowngrade = s.pausedByDowngrade;
 
           const statusColor = isLocked
-            ? "#6b7280"
+            ? "#9ca3af"
             : isPausedDowngrade
             ? "#f59e0b"
             : (s.status === "connected")
             ? "#00db8c"
             : s.status === "connecting"
-            ? "#a855f7"
+            ? "#c084fc"
             : "#9ca3af";
 
           const statusText = isLocked
-            ? `🔒 Bloqueado (${s.minPlanName})`
+            ? `🔒 Bloqueado no plano (${s.minPlanName})`
             : isPausedDowngrade
             ? "⏸️ Pausado por downgrade"
             : (s.status === "connected")
-            ? "● Conectado"
+            ? "● Conectado e Ativo"
             : s.status === "connecting"
-            ? "◐ Aguardando QR Code"
-            : "○ Disponível p/ conectar";
+            ? "◐ Aguardando Leitura do QR Code"
+            : "○ Pronto para Conectar";
+
+          const displayName = s.customName || (s.slot === 1 ? "Atendimento Geral" : `Departamento ${s.slot}`);
 
           return (
             <div
@@ -152,11 +177,14 @@ export function WhatsappFiveSlotsGrid({
               data-locked={Boolean(isLocked)}
               role="group"
               aria-label={`${s.label}: ${isLocked ? "bloqueado" : "liberado"}`}
+              onClick={() => {
+                if (!isLocked) onSelectSlot(s);
+              }}
               style={{
-                padding: "14px",
-                borderRadius: "14px",
+                padding: "16px",
+                borderRadius: "16px",
                 background: isSelected
-                  ? "linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(139, 92, 246, 0.18))"
+                  ? "linear-gradient(135deg, rgba(236, 72, 153, 0.22), rgba(139, 92, 246, 0.2))"
                   : isLocked
                   ? "rgba(15, 13, 26, 0.65)"
                   : "rgba(255, 255, 255, 0.03)",
@@ -167,76 +195,192 @@ export function WhatsappFiveSlotsGrid({
                   : (s.status === "connected")
                   ? "1px solid rgba(0, 219, 140, 0.45)"
                   : "1px solid rgba(255, 255, 255, 0.08)",
-                cursor: "pointer",
+                cursor: isLocked ? "default" : "pointer",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
-                gap: "10px",
-                opacity: isLocked ? 0.78 : 1,
-                transition: "all 0.18s ease"
+                gap: "12px",
+                opacity: isLocked ? 0.72 : 1,
+                transition: "all 0.2s ease",
+                boxShadow: isSelected ? "0 0 20px rgba(236, 72, 153, 0.25)" : "none"
               }}
             >
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                {/* Top Badge: WhatsApp X */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
                   <span style={{
                     fontSize: "11px",
                     fontWeight: 800,
-                    padding: "2px 8px",
+                    padding: "3px 10px",
                     borderRadius: "999px",
                     background: isLocked ? "rgba(107,114,128,0.2)" : "rgba(236,72,153,0.2)",
                     color: isLocked ? "#9ca3af" : "#f472b6"
                   }}>
-                    Espaço #{s.slot}
+                    WhatsApp {s.slot}
                   </span>
                   {isLocked ? (
-                    <LockKeyhole size={15} color="#f59e0b" />
+                    <LockKeyhole size={16} color="#f59e0b" />
                   ) : (s.status === "connected") ? (
-                    <CheckCircle2 size={16} color="#00db8c" />
+                    <CheckCircle2 size={17} color="#00db8c" />
                   ) : (
-                    <Smartphone size={15} color="#aba8bf" />
+                    <Smartphone size={16} color="#aba8bf" />
                   )}
                 </div>
 
-                <strong style={{ color: "#fff", fontSize: "14px", display: "block" }}>
-                  {s.label}
-                </strong>
-                <small style={{ color: "#8e87a2", fontSize: "11px", display: "block", marginTop: "2px", wordBreak: "break-all" }}>
-                  {s.phoneNumber ? `+${s.phoneNumber}` : `Instância: ${s.instanceName}`}
-                </small>
+                {/* Nome do Departamento / Setor */}
+                {editingSlot === s.slot ? (
+                  <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }} onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      value={editingLabel}
+                      autoFocus
+                      placeholder="Ex: Vendas, Suporte..."
+                      onChange={e => setEditingLabel(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(s.slot); }}
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: "6px",
+                        background: "#161325",
+                        border: "1px solid #8b5cf6",
+                        color: "#fff",
+                        fontSize: "13px",
+                        width: "100%"
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveEdit(s.slot)}
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: "6px",
+                        background: "#ec4899",
+                        border: "none",
+                        color: "#fff",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        cursor: "pointer"
+                      }}
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", marginBottom: "2px" }}>
+                    <strong style={{ color: "#fff", fontSize: "15px", display: "block" }}>
+                      {displayName}
+                    </strong>
+                    {!isLocked && onSaveSlotLabel && (
+                      <button
+                        type="button"
+                        title="Editar nome deste WhatsApp"
+                        onClick={e => {
+                          e.stopPropagation();
+                          handleStartEdit(s.slot, s.customName);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#8e87a2",
+                          cursor: "pointer",
+                          padding: "2px"
+                        }}
+                      >
+                        <Edit3 size={13} />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Número de Telefone Conectado */}
+                <div style={{ marginTop: "4px" }}>
+                  {s.phoneNumber ? (
+                    <span style={{ color: "#a7f3d0", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                      <Smartphone size={13} color="#00db8c" /> +{s.phoneNumber}
+                    </span>
+                  ) : (
+                    <small style={{ color: "#8e87a2", fontSize: "12px", display: "block" }}>
+                      Nenhum número conectado
+                    </small>
+                  )}
+                  {s.profileName && (
+                    <small style={{ color: "#c2bed4", fontSize: "11px", display: "block", marginTop: "1px" }}>
+                      {s.profileName}
+                    </small>
+                  )}
+                </div>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
-                <span style={{ fontSize: "11px", fontWeight: 700, color: statusColor }}>
+              {/* Status e Ação */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: statusColor }}>
                   {statusText}
                 </span>
 
                 {isPausedDowngrade && (
-                  <small style={{ fontSize: "10px", color: "#fde68a", lineHeight: 1.3 }}>
-                    Histórico e conversas 100% preservados. Faça upgrade para reativar este número.
+                  <small style={{ fontSize: "11px", color: "#fde68a", lineHeight: 1.3 }}>
+                    Histórico 100% preservado. Faça upgrade para reativar este número.
                   </small>
                 )}
 
-                <button type="button" className="op-refresh" disabled={Boolean(isLocked)} aria-label={`Selecionar ${s.label}`} onClick={()=>onSelectSlot(s)}>{isLocked ? "Conexão bloqueada" : "Gerenciar espaço"}</button>
-                {planLocked && (
+                {isLocked ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <button
+                      type="button"
+                      className="op-refresh"
+                      disabled
+                      style={{ opacity: 0.5, cursor: "not-allowed", fontSize: "12px" }}
+                    >
+                      🔒 Espaço Bloqueado
+                    </button>
+                    {planLocked && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          onRequestUpgrade(s.minPlanId, `Desbloquear WhatsApp ${s.slot} (${s.minPlanName})`);
+                        }}
+                        className="op-primary"
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: "10px",
+                          fontSize: "12px",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px"
+                        }}
+                      >
+                        🔓 Solicitar {s.minPlanName}
+                      </button>
+                    )}
+                  </div>
+                ) : s.status === "connected" ? (
                   <button
                     type="button"
+                    className="op-refresh"
+                    aria-label={`Gerenciar WhatsApp ${s.slot}`}
                     onClick={e => {
                       e.stopPropagation();
-                      onRequestUpgrade(s.minPlanId, `Desbloquear ${s.label} (${s.minPlanName})`);
+                      onSelectSlot(s);
                     }}
-                    style={{
-                      marginTop: "2px",
-                      padding: "6px 10px",
-                      borderRadius: "8px",
-                      border: "1px solid rgba(236, 72, 153, 0.5)",
-                      background: "rgba(236, 72, 153, 0.15)",
-                      color: "#f472b6",
-                      fontSize: "11px",
-                      fontWeight: 800,
-                      cursor: "pointer"
-                    }}
+                    style={{ fontSize: "12px", fontWeight: 700 }}
                   >
-                    🔓 Solicitar {s.minPlanName}
+                    Gerenciar Conexão
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="op-primary"
+                    aria-label={`Conectar WhatsApp ${s.slot}`}
+                    onClick={e => {
+                      e.stopPropagation();
+                      onSelectSlot(s);
+                    }}
+                    style={{ fontSize: "12px", fontWeight: 800, padding: "8px 14px" }}
+                  >
+                    Conectar WhatsApp
                   </button>
                 )}
               </div>
@@ -404,14 +548,17 @@ export function QuickRepliesSection({
 }
 
 // ============================================================================
-// 3. ABA DE EQUIPE E OPERADORES (ETAPA 7)
+// 3. ABA DE EQUIPE E OPERADORES (MINHA EQUIPE)
 // ============================================================================
 export function TeamOperatorsSection({
   operators,
   maxOperators,
   planName,
   isSuspended,
+  ownerEmail,
+  ownerName,
   onAddOperator,
+  onUpdateOperatorRole,
   onRevokeOperator,
   onRequestUpgrade,
 }: {
@@ -419,68 +566,161 @@ export function TeamOperatorsSection({
   maxOperators: number;
   planName: string;
   isSuspended: boolean;
-  onAddOperator: (name: string, email: string, role: string) => Promise<{ ok: boolean; message?: string }>;
+  ownerEmail?: string;
+  ownerName?: string;
+  onAddOperator: (name: string, email: string, role: string, password?: string) => Promise<{ ok: boolean; message?: string }>;
+  onUpdateOperatorRole?: (operatorId: string, role: string) => Promise<{ ok: boolean; message?: string }>;
   onRevokeOperator: (operatorId: string) => Promise<void>;
   onRequestUpgrade: (targetPlan: string, reason: string) => void;
 }) {
+  const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState("agent");
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
 
+  // Edit Role Modal state
+  const [editRoleModalOpen, setEditRoleModalOpen] = useState(false);
+  const [selectedOpToEdit, setSelectedOpToEdit] = useState<TeamOperatorItem | null>(null);
+  const [newRole, setNewRole] = useState("agent");
+  const [updatingRole, setUpdatingRole] = useState(false);
+
   const activeOperators = operators.filter(o => o.status === "active");
-  const limitReached = activeOperators.length >= maxOperators;
+  // Total seats used includes owner (1) + active employee operators
+  const totalUsed = activeOperators.length + 1;
+  const limitReached = totalUsed >= maxOperators;
+
+  const handleGeneratePassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+    let gen = "";
+    for (let i = 0; i < 10; i++) {
+      gen += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setPassword(gen);
+    setShowPassword(true);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setNotice("");
     setErr("");
     if (limitReached) {
-      setErr(`Limite de ${maxOperators} operador(es) atingido no plano ${planName}.`);
+      setErr(`Limite de ${maxOperators} acesso(s) atingido no plano ${planName}.`);
+      return;
+    }
+    if (password.length < 6) {
+      setErr("Defina uma senha com no mínimo 6 caracteres para o atendente.");
       return;
     }
     setSubmitting(true);
     try {
-      const res = await onAddOperator(name.trim(), email.trim(), role);
+      const res = await onAddOperator(name.trim(), email.trim(), role, password);
       if (res.ok) {
         setName("");
         setEmail("");
+        setPassword("");
         setRole("agent");
-        setNotice("Operador cadastrado com sucesso na equipe!");
+        setModalOpen(false);
+        setNotice("Atendente convidado com sucesso! O acesso exclusivo foi criado.");
       } else {
-        setErr(res.message || "Não foi possível cadastrar o operador.");
+        setErr(res.message || "Não foi possível cadastrar o atendente.");
       }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleSaveRole = async () => {
+    if (!selectedOpToEdit || !onUpdateOperatorRole) return;
+    setUpdatingRole(true);
+    try {
+      const res = await onUpdateOperatorRole(selectedOpToEdit.id, newRole);
+      if (res.ok) {
+        setEditRoleModalOpen(false);
+        setSelectedOpToEdit(null);
+        setNotice("Função do atendente atualizada com sucesso!");
+      } else {
+        setErr(res.message || "Falha ao atualizar função do atendente.");
+      }
+    } finally {
+      setUpdatingRole(false);
+    }
+  };
+
   return (
-    <section className="op-card" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)" }}>
-            <Users size={22} color="#fff" />
+    <section className="op-card" style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
+      {/* Cabeçalho Minha Equipe */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "0 0 16px rgba(236, 72, 153, 0.35)" }}>
+            <Users size={24} color="#fff" />
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: "19px", color: "#fff" }}>Equipe & Operadores de Atendimento</h2>
-            <small style={{ color: "#c2bed4" }}>
-              Gerencie os atendentes humanos com acesso ao CRM da sua empresa (Isolamento Multiempresa).
+            <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
+              Minha Equipe — {totalUsed} de {maxOperators} acessos utilizados
+            </h2>
+            <small style={{ color: "#c2bed4", fontSize: "13px", display: "block", marginTop: "2px" }}>
+              Gerencie quem pode atender clientes e assumir conversas na sua empresa.
             </small>
           </div>
         </div>
-        <span style={{
-          padding: "6px 14px",
-          borderRadius: "999px",
-          fontSize: "12px",
-          fontWeight: 800,
-          background: limitReached ? "rgba(245, 158, 11, 0.16)" : "rgba(0, 219, 140, 0.16)",
-          color: limitReached ? "#fcd34d" : "#00db8c",
-          border: `1px solid ${limitReached ? "#f59e0b" : "#00db8c"}`
-        }}>
-          {activeOperators.length} / {maxOperators} operador(es) ativos ({planName})
+
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{
+            padding: "6px 14px",
+            borderRadius: "999px",
+            fontSize: "12px",
+            fontWeight: 800,
+            background: limitReached ? "rgba(245, 158, 11, 0.16)" : "rgba(0, 219, 140, 0.16)",
+            color: limitReached ? "#fcd34d" : "#00db8c",
+            border: `1px solid ${limitReached ? "#f59e0b" : "#00db8c"}`
+          }}>
+            {totalUsed} / {maxOperators} vagas ocupadas ({planName})
+          </span>
+
+          <button
+            type="button"
+            disabled={limitReached || isSuspended}
+            onClick={() => {
+              setNotice("");
+              setErr("");
+              setModalOpen(true);
+            }}
+            className="op-primary"
+            style={{
+              padding: "10px 18px",
+              borderRadius: "10px",
+              fontWeight: 800,
+              fontSize: "13px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              opacity: limitReached ? 0.6 : 1,
+              cursor: limitReached ? "not-allowed" : "pointer"
+            }}
+          >
+            <UserPlus size={16} /> Convidar Atendente
+          </button>
+        </div>
+      </div>
+
+      {/* Explicação Clara da Equipe */}
+      <div style={{
+        padding: "14px 18px",
+        borderRadius: "14px",
+        background: "rgba(139, 92, 246, 0.1)",
+        border: "1px solid rgba(139, 92, 246, 0.3)",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px"
+      }}>
+        <HelpCircle size={22} color="#c084fc" style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: "13px", color: "#e9d5ff", lineHeight: 1.5 }}>
+          <strong>O que são operadores?</strong> Os operadores são pessoas da sua empresa que podem acessar o painel e atender clientes. <strong>Eles não precisam conectar o WhatsApp pessoal.</strong> Todas as respostas são enviadas pelo WhatsApp comercial da sua empresa de forma centralizada.
         </span>
       </div>
 
@@ -495,27 +735,27 @@ export function TeamOperatorsSection({
         </div>
       )}
 
-      {/* Formulário ou Bloqueio por Limite de Plano */}
-      {limitReached ? (
+      {/* Alerta de Limite de Plano Atingido */}
+      {limitReached && (
         <div style={{
-          padding: "18px",
+          padding: "18px 22px",
           borderRadius: "14px",
-          background: "linear-gradient(135deg, rgba(60, 20, 80, 0.45), rgba(30, 12, 45, 0.65))",
+          background: "linear-gradient(135deg, rgba(60, 20, 80, 0.5), rgba(30, 12, 45, 0.7))",
           border: "1px dashed #ec4899",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           flexWrap: "wrap",
-          gap: "12px"
+          gap: "14px"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <LockKeyhole size={24} color="#ec4899" />
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <LockKeyhole size={26} color="#ec4899" style={{ flexShrink: 0 }} />
             <div>
               <strong style={{ color: "#fff", fontSize: "15px", display: "block" }}>
-                Limite de {maxOperators} operador(es) do plano {planName} atingido
+                Limite de {maxOperators} acesso(s) do plano {planName} atingido
               </strong>
               <span style={{ color: "#d1c8e6", fontSize: "13px" }}>
-                Faça upgrade para o CRM Business (até 3 operadores) ou CRM Premium (até 5 operadores) para adicionar mais membros.
+                O titular da conta conta como 1 acesso. Para adicionar mais funcionários à sua equipe, solicite o upgrade para o CRM Business (até 3 operadores) ou CRM Premium (até 5 operadores).
               </span>
             </div>
           </div>
@@ -528,107 +768,502 @@ export function TeamOperatorsSection({
             🔓 Solicitar Upgrade de Equipe
           </button>
         </div>
-      ) : (
-        <form onSubmit={e => void handleSubmit(e)} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid #372f4d", borderRadius: "14px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          <h3 style={{ margin: 0, fontSize: "15px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
-            <UserPlus size={17} color="#ec4899" /> Adicionar Operador à Equipe
-          </h3>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
-            <input
-              type="text"
-              required
-              placeholder="Nome completo do atendente"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              style={{ padding: "10px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
-            />
-            <input
-              type="email"
-              required
-              placeholder="E-mail do operador"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              style={{ padding: "10px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
-            />
-            <select
-              value={role}
-              onChange={e => setRole(e.target.value)}
-              style={{ padding: "10px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
-            >
-              <option value="agent">Atendente Comercial (Operador)</option>
-              <option value="admin">Supervisor / Administrador</option>
-              <option value="viewer">Visualizador (Somente Leitura)</option>
-            </select>
-          </div>
-          <div>
-            <button
-              type="submit"
-              disabled={submitting || isSuspended}
-              className="op-primary"
-              style={{ padding: "10px 20px", borderRadius: "10px", fontWeight: 700, fontSize: "13px" }}
-            >
-              {submitting ? "Adicionando..." : "+ Cadastrar Operador"}
-            </button>
-          </div>
-        </form>
       )}
 
-      {/* Lista de Operadores */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      {/* Grid de Membros da Equipe */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <h4 style={{ margin: "4px 0 0", fontSize: "15px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+          <Users size={16} color="#ec4899" /> Membros com Acesso ({totalUsed})
+        </h4>
+
+        {/* 1. CARTÃO DO ADMINISTRADOR PRINCIPAL (PROPRIETÁRIO) */}
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "16px 20px",
+          borderRadius: "14px",
+          background: "linear-gradient(135deg, rgba(236, 72, 153, 0.12), rgba(139, 92, 246, 0.1))",
+          border: "1px solid rgba(236, 72, 153, 0.4)",
+          flexWrap: "wrap",
+          gap: "12px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <div style={{
+              width: "42px", height: "42px", borderRadius: "50%",
+              background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+              display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: "15px"
+            }}>
+              👑
+            </div>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <strong style={{ color: "#fff", fontSize: "15px" }}>
+                  {ownerName || "Administrador Principal"}
+                </strong>
+                <span style={{
+                  background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                  color: "#fff",
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  padding: "2px 8px",
+                  borderRadius: "999px"
+                }}>
+                  👑 Administrador Principal / Titular
+                </span>
+              </div>
+              <small style={{ color: "#c2bed4", fontSize: "12px", display: "block", marginTop: "2px" }}>
+                {ownerEmail || "Acesso titular com gerenciamento total de WhatsApps, equipe e cobrança"}
+              </small>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              fontSize: "11px",
+              padding: "4px 10px",
+              borderRadius: "999px",
+              fontWeight: 800,
+              background: "rgba(0, 219, 140, 0.15)",
+              color: "#00db8c",
+              border: "1px solid rgba(0, 219, 140, 0.3)"
+            }}>
+              ● Acesso Total (Ativo)
+            </span>
+          </div>
+        </div>
+
+        {/* 2. CARTÕES DOS ATENDENTES CONVIDADOS */}
         {operators.length === 0 ? (
-          <div style={{ padding: "30px", textAlign: "center", color: "#8e87a2", fontSize: "13px" }}>
-            Você opera atualmente com o acesso titular da loja ({maxOperators} vaga(s) disponíveis no plano).
+          <div style={{
+            padding: "30px 20px",
+            textAlign: "center",
+            background: "rgba(255,255,255,0.02)",
+            borderRadius: "14px",
+            border: "1px dashed #372f4d",
+            color: "#8e87a2",
+            fontSize: "13px"
+          }}>
+            Nenhum atendente adicional convidado. Você opera atualmente com o acesso titular ({maxOperators - 1} vaga(s) disponível(eis) no plano {planName}).
           </div>
         ) : (
-          operators.map(op => (
-            <div
-              key={op.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "14px 16px",
-                borderRadius: "12px",
-                background: op.status === "active" ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.25)",
-                border: `1px solid ${op.status === "active" ? "#372f4d" : "#262138"}`,
-                opacity: op.status === "active" ? 1 : 0.6,
-                flexWrap: "wrap",
-                gap: "10px"
-              }}
-            >
-              <div>
-                <strong style={{ color: "#fff", fontSize: "14px", display: "block" }}>
-                  {op.name} <span style={{ fontSize: "11px", color: "#c084fc", fontWeight: 700 }}>({op.role === "admin" ? "Supervisor" : op.role === "viewer" ? "Leitura" : "Atendente"})</span>
-                </strong>
-                <small style={{ color: "#9ca3af", fontSize: "12px" }}>{op.email}</small>
+          operators.map(op => {
+            const initials = op.name ? op.name.slice(0, 2).toUpperCase() : "AT";
+            const roleLabel = op.role === "admin"
+              ? "Supervisor / Administrador"
+              : op.role === "viewer"
+              ? "Visualizador (Somente Leitura)"
+              : "Atendente Comercial";
+
+            return (
+              <div
+                key={op.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "14px 18px",
+                  borderRadius: "14px",
+                  background: op.status === "active" ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.3)",
+                  border: `1px solid ${op.status === "active" ? "#372f4d" : "#262138"}`,
+                  opacity: op.status === "active" ? 1 : 0.65,
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  transition: "all 0.2s ease"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                  <div style={{
+                    width: "40px", height: "40px", borderRadius: "50%",
+                    background: op.status === "active" ? "rgba(139, 92, 246, 0.25)" : "rgba(107, 114, 128, 0.2)",
+                    color: op.status === "active" ? "#c4b5fd" : "#9ca3af",
+                    display: "grid", placeItems: "center", fontWeight: 800, fontSize: "14px"
+                  }}>
+                    {initials}
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <strong style={{ color: "#fff", fontSize: "15px" }}>
+                        {op.name}
+                      </strong>
+                      <span style={{
+                        fontSize: "11px",
+                        color: op.role === "admin" ? "#f472b6" : op.role === "viewer" ? "#9ca3af" : "#c084fc",
+                        background: "rgba(255,255,255,0.06)",
+                        padding: "2px 8px",
+                        borderRadius: "6px",
+                        fontWeight: 700
+                      }}>
+                        {roleLabel}
+                      </span>
+                    </div>
+                    <small style={{ color: "#9ca3af", fontSize: "12px", display: "block", marginTop: "2px" }}>
+                      {op.email}
+                    </small>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{
+                    fontSize: "11px",
+                    padding: "3px 10px",
+                    borderRadius: "999px",
+                    fontWeight: 700,
+                    background: op.status === "active" ? "rgba(0,219,140,0.15)" : "rgba(239,68,68,0.15)",
+                    color: op.status === "active" ? "#00db8c" : "#f87171"
+                  }}>
+                    {op.status === "active" ? "● Ativo" : "Acesso Revogado"}
+                  </span>
+
+                  {op.status === "active" && onUpdateOperatorRole && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedOpToEdit(op);
+                        setNewRole(op.role);
+                        setEditRoleModalOpen(true);
+                      }}
+                      className="op-refresh"
+                      style={{ padding: "6px 12px", fontSize: "12px" }}
+                    >
+                      Alterar Função
+                    </button>
+                  )}
+
+                  {op.status === "active" && (
+                    <button
+                      type="button"
+                      onClick={() => void onRevokeOperator(op.id)}
+                      className="op-refresh"
+                      style={{ padding: "6px 12px", fontSize: "12px", color: "#fca5a5", borderColor: "#ef4444" }}
+                    >
+                      Revogar Acesso
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span style={{
-                  fontSize: "11px",
-                  padding: "3px 10px",
-                  borderRadius: "999px",
-                  fontWeight: 700,
-                  background: op.status === "active" ? "rgba(0,219,140,0.15)" : "rgba(239,68,68,0.15)",
-                  color: op.status === "active" ? "#00db8c" : "#f87171"
-                }}>
-                  {op.status === "active" ? "● Ativo" : "Revogado"}
-                </span>
-                {op.status === "active" && (
-                  <button
-                    type="button"
-                    onClick={() => void onRevokeOperator(op.id)}
-                    className="op-refresh"
-                    style={{ padding: "6px 12px", fontSize: "12px", color: "#fca5a5", borderColor: "#ef4444" }}
-                  >
-                    Revogar Acesso
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
+
+      {/* MODAL: CONVIDAR ATENDENTE */}
+      {modalOpen && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)",
+          display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
+        }}>
+          <div className="op-card" style={{ maxWidth: "480px", width: "100%", background: "#161327", border: "1px solid #4a3c68", borderRadius: "18px", padding: "26px", display: "flex", flexDirection: "column", gap: "18px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px" }}>
+              <div style={{ width: "40px", height: "40px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center" }}>
+                <UserPlus size={20} color="#fff" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "18px", color: "#fff" }}>Convidar Atendente para a Equipe</h3>
+                <small style={{ color: "#c2bed4" }}>Crie um login seguro para o funcionário acessar o CRM.</small>
+              </div>
+            </div>
+
+            <div style={{
+              padding: "12px 14px",
+              borderRadius: "10px",
+              background: "rgba(139, 92, 246, 0.12)",
+              border: "1px solid rgba(139, 92, 246, 0.3)",
+              fontSize: "12px",
+              color: "#e9d5ff",
+              lineHeight: 1.4
+            }}>
+              🔒 <strong>Segurança do Acesso:</strong> O funcionário terá seu próprio login autenticado para atender no CRM da sua empresa. Ele não terá acesso à sua conta de administrador nem precisará de WhatsApp pessoal.
+            </div>
+
+            <form onSubmit={e => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#c2bed4", marginBottom: "4px" }}>
+                  Nome Completo do Atendente
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: João da Silva"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", background: "#120e20", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#c2bed4", marginBottom: "4px" }}>
+                  E-mail de Acesso do Atendente
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="joao@suaempresa.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", background: "#120e20", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: "#c2bed4" }}>
+                    Senha Inicial de Acesso
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGeneratePassword}
+                    style={{ background: "none", border: "none", color: "#ec4899", fontSize: "11px", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}
+                  >
+                    ⚡ Gerar Senha Segura
+                  </button>
+                </div>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    placeholder="Mínimo 6 caracteres"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    style={{ width: "100%", padding: "10px 40px 10px 14px", borderRadius: "10px", background: "#120e20", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#8e87a2", cursor: "pointer" }}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <small style={{ color: "#8e87a2", fontSize: "11px", marginTop: "4px", display: "block" }}>
+                  O atendente poderá alterar esta senha posteriormente no painel dele.
+                </small>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#c2bed4", marginBottom: "4px" }}>
+                  Função no Atendimento
+                </label>
+                <select
+                  value={role}
+                  onChange={e => setRole(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", background: "#120e20", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
+                >
+                  <option value="agent">Atendente Comercial (Atende conversas e assume clientes)</option>
+                  <option value="admin">Supervisor (Pode visualizar todas as conversas e relatórios)</option>
+                  <option value="viewer">Visualizador (Somente leitura, não envia mensagens)</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="op-refresh"
+                  style={{ padding: "10px 18px", borderRadius: "10px", fontSize: "13px" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="op-primary"
+                  style={{ padding: "10px 22px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
+                >
+                  {submitting ? "Criando Acesso..." : "Confirmar e Convidar"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR FUNÇÃO DO ATENDENTE */}
+      {editRoleModalOpen && selectedOpToEdit && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)",
+          display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
+        }}>
+          <div className="op-card" style={{ maxWidth: "420px", width: "100%", background: "#161327", border: "1px solid #4a3c68", borderRadius: "18px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+            <h3 style={{ margin: 0, fontSize: "17px", color: "#fff" }}>
+              Alterar Função — {selectedOpToEdit.name}
+            </h3>
+            <p style={{ margin: 0, fontSize: "13px", color: "#c2bed4" }}>
+              Selecione o nível de permissão deste atendente no painel da sua loja:
+            </p>
+
+            <select
+              value={newRole}
+              onChange={e => setNewRole(e.target.value)}
+              style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", background: "#120e20", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
+            >
+              <option value="agent">Atendente Comercial (Atende conversas e assume clientes)</option>
+              <option value="admin">Supervisor (Pode visualizar todas as conversas e relatórios)</option>
+              <option value="viewer">Visualizador (Somente leitura)</option>
+            </select>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
+              <button
+                type="button"
+                onClick={() => setEditRoleModalOpen(false)}
+                className="op-refresh"
+                style={{ padding: "8px 16px", borderRadius: "8px", fontSize: "13px" }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={updatingRole}
+                onClick={handleSaveRole}
+                className="op-primary"
+                style={{ padding: "8px 18px", borderRadius: "8px", fontWeight: 800, fontSize: "13px" }}
+              >
+                {updatingRole ? "Salvando..." : "Salvar Alteração"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+// ============================================================================
+// 3.B. PAINEL EDUCATIVO: COMO FUNCIONA O ATENDIMENTO
+// ============================================================================
+export function HowAttendanceWorksPanel() {
+  return (
+    <div className="op-card" style={{
+      background: "linear-gradient(135deg, rgba(30, 20, 50, 0.75), rgba(16, 12, 30, 0.95))",
+      border: "1px solid rgba(139, 92, 246, 0.3)",
+      borderRadius: "18px",
+      padding: "22px 24px",
+      display: "flex",
+      flexDirection: "column",
+      gap: "18px",
+      marginBottom: "20px"
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "12px" }}>
+        <Sparkles size={20} color="#c084fc" />
+        <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 800, color: "#fff" }}>
+          Como Funciona o Atendimento no Novaes CRM IA
+        </h3>
+      </div>
+
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+        gap: "14px"
+      }}>
+        {/* Etapa 1 */}
+        <div style={{
+          padding: "16px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              width: "28px", height: "28px", borderRadius: "50%",
+              background: "rgba(236, 72, 153, 0.2)", color: "#ec4899",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: "13px"
+            }}>1</span>
+            <strong style={{ color: "#fff", fontSize: "14px" }}>Cliente envia mensagem</strong>
+          </div>
+          <p style={{ margin: 0, fontSize: "12px", color: "#aba8bf", lineHeight: 1.5 }}>
+            A mensagem chega em qualquer um dos números de <strong>WhatsApp comercial</strong> da sua empresa conectados ao painel.
+          </p>
+        </div>
+
+        {/* Etapa 2 */}
+        <div style={{
+          padding: "16px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              width: "28px", height: "28px", borderRadius: "50%",
+              background: "rgba(0, 219, 140, 0.2)", color: "#00db8c",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: "13px"
+            }}>2</span>
+            <strong style={{ color: "#fff", fontSize: "14px" }}>IA da NovaesWeb atende</strong>
+          </div>
+          <p style={{ margin: 0, fontSize: "12px", color: "#aba8bf", lineHeight: 1.5 }}>
+            A IA responde na hora com as informações, catálogo e horários do seu negócio 24 horas por dia.
+          </p>
+        </div>
+
+        {/* Etapa 3 */}
+        <div style={{
+          padding: "16px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              width: "28px", height: "28px", borderRadius: "50%",
+              background: "rgba(139, 92, 246, 0.2)", color: "#c4b5fd",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: "13px"
+            }}>3</span>
+            <strong style={{ color: "#fff", fontSize: "14px" }}>Funcionário assume</strong>
+          </div>
+          <p style={{ margin: 0, fontSize: "12px", color: "#aba8bf", lineHeight: 1.5 }}>
+            Se o cliente solicitar humano ou houver assunto delicado, a IA pausa e notifica sua equipe no painel.
+          </p>
+        </div>
+
+        {/* Etapa 4 */}
+        <div style={{
+          padding: "16px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              width: "28px", height: "28px", borderRadius: "50%",
+              background: "rgba(245, 158, 11, 0.2)", color: "#fcd34d",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: "13px"
+            }}>4</span>
+            <strong style={{ color: "#fff", fontSize: "14px" }}>Responde pelo WhatsApp da loja</strong>
+          </div>
+          <p style={{ margin: 0, fontSize: "12px", color: "#aba8bf", lineHeight: 1.5 }}>
+            O atendente conversa pelo painel usando o WhatsApp oficial da empresa, sem precisar do celular pessoal!
+          </p>
+        </div>
+      </div>
+
+      <div style={{
+        padding: "12px 18px",
+        borderRadius: "12px",
+        background: "rgba(139, 92, 246, 0.12)",
+        border: "1px solid rgba(139, 92, 246, 0.3)",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px"
+      }}>
+        <Smartphone size={18} color="#c084fc" style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: "13px", color: "#e9d5ff", lineHeight: 1.5 }}>
+          <strong>Acesso Flexível e Centralizado:</strong> Um atendente pode trabalhar com conversas de diferentes números de WhatsApp da mesma empresa. Os operadores <strong>não precisam</strong> de um chip ou celular exclusivo.
+        </span>
+      </div>
+    </div>
   );
 }
 

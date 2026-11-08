@@ -263,7 +263,8 @@ export async function GET(request: NextRequest) {
       messages,
       escalations,
       tags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? tags : [],
-      contactTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? contactTags : []
+      contactTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? contactTags : [],
+      viewer: { email: access.isMaster ? "" : access.operatorEmail, role: access.isMaster ? "master" : (access.memberships.find(m => m.tenant_id === selected)?.role ?? "") }
     });
   } catch {
     return privateJson({ error: "crm_data_unavailable" }, 503);
