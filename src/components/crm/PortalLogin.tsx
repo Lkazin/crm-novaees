@@ -7,18 +7,23 @@ import {
   Bot,
   Building2,
   CheckCheck,
+  CheckCircle2,
   Crown,
   Eye,
   EyeOff,
+  Headphones,
   LockKeyhole,
   Mail,
   MessageCircle,
+  Radio,
+  Server,
   ShieldCheck,
   Sparkles,
   Users,
   Zap
 } from "lucide-react";
 import styles from "./PortalLogin.module.css";
+import LightningBackground from "./LightningBackground";
 
 export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
   const master = scope === "master";
@@ -103,291 +108,401 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
 
   return (
     <main className={`${styles.scene} ${master ? styles.master : styles.client}`} data-login-scope={scope}>
-      {/* Luzes de fundo atmosféricas para o cliente */}
-      {!master && (
-        <>
-          <div className={styles.ambientGlowPrimary} aria-hidden="true" />
-          <div className={styles.ambientGlowSecondary} aria-hidden="true" />
-        </>
-      )}
+      {/* =================================================================== */}
+      {/* FUNDO VIVO: LUZES ROXAS, ROSAS E VERMELHAS COM REDE NEURAL (CANVAS) */}
+      {/* =================================================================== */}
+      <LightningBackground />
 
-      {/* PAINEL LATERAL ESQUERDO: APRESENTAÇÃO E LOGO */}
-      <section className={styles.story} aria-label={master ? "Administração da plataforma" : "Atendimento da sua empresa"}>
-        {master && (
-          <svg className={styles.networkArt} viewBox="0 0 700 900" fill="none" aria-hidden="true">
-            <circle cx="350" cy="470" r="260" stroke="currentColor" />
-            <circle cx="350" cy="470" r="190" stroke="currentColor" />
-            <path d="M0 470H700M350 120V900M90 210L610 730M90 730L610 210" stroke="currentColor" />
-            <circle cx="350" cy="210" r="9" fill="currentColor" />
-            <circle cx="610" cy="470" r="9" fill="currentColor" />
-            <circle cx="90" cy="470" r="9" fill="currentColor" />
-          </svg>
-        )}
-
-        <div className={styles.storyContent}>
-          {/* Logo da Novaes CRM IA no topo */}
-          {!master ? (
-            <Link href="/" className={styles.brandLogoContainer} aria-label="Novaes CRM IA">
+      {/* ÁREA PRINCIPAL DIVIDIDA EM 2 COLUNAS */}
+      <div className={styles.mainContainer}>
+        {/* COLUNA ESQUERDA: APRESENTAÇÃO, LOGO E O QUE FAZEMOS */}
+        <section className={styles.story} aria-label={master ? "Administração da plataforma" : "Atendimento da sua empresa"}>
+          <div className={styles.storyContent}>
+            {/* LOGO OFICIAL */}
+            <Link href={master ? "/novaescrmadm" : "/"} className={styles.brandLogoContainer} aria-label={master ? "Novaes CRM IA Master" : "Novaes CRM IA"}>
               <img
                 src="/novaes-crm-ia-logo.jpg"
-                alt="Novaes CRM IA - CRM Inteligente da NovaesWeb"
+                alt={master ? "Novaes CRM IA - Central Master" : "Novaes CRM IA - CRM Inteligente da NovaesWeb"}
                 className={styles.brandHeroLogo}
               />
             </Link>
-          ) : (
-            <Link href="/novaescrmadm" className={styles.brand} aria-label="NovaesWeb CRM IA">
-              <span className={styles.brandMark}>N</span>
-              <span>
-                NovaesWeb <small>CRM IA</small>
-              </span>
-            </Link>
-          )}
 
-          <div className={styles.storyHeaderCompact}>
-            <span className={styles.scopeBadge}>
-              {master ? <Crown size={14} /> : <Sparkles size={13} className={styles.badgeSparkle} />}
-              {master ? "PAINEL MASTER" : "PORTAL DO CLIENTE"}
-            </span>
-
-            <h1>
-              {master ? (
-                <>
-                  Toda a operação.
-                  <br />
-                  Uma central de gestão.
-                </>
-              ) : (
-                <>
-                  Boas conversas.
-                  <br />
-                  <span className={styles.gradientText}>Seu negócio mais perto.</span>
-                </>
-              )}
-            </h1>
-
-            <p>
-              {master
-                ? "Clientes, planos, franquias e provedores de IA sob o controle da NovaesWeb."
-                : "Atendimento inteligente no WhatsApp com IA personalizada, transbordo para equipe e controle de vendas em tempo real."}
-            </p>
-          </div>
-
-          {master && (
-            <div className={styles.controlArt} role="img" aria-label="Ilustração da central Master com empresas, planos e IA">
-              <span><Building2 size={19} />Empresas</span>
-              <span><Crown size={19} />Planos e franquias</span>
-              <span><MessageCircle size={19} />Provedores de IA</span>
-              <strong><ShieldCheck size={20} />Central Master</strong>
-            </div>
-          )}
-
-          {!master && (
-            <div className={styles.chatArt} role="img" aria-label="Demonstração do atendimento inteligente por WhatsApp">
-              <div className={styles.chatHeader}>
-                <div className={styles.avatarWrap}>
-                  <span className={styles.avatar}><Bot size={18} /></span>
-                  <span className={styles.statusPulse} aria-hidden="true" />
-                </div>
-                <div className={styles.chatHeaderInfo}>
-                  <span className={styles.chatHeaderTitle}>
-                    WhatsApp Conectado <small className={styles.liveBadge}>IA Ativa</small>
-                  </span>
-                  <span className={styles.chatHeaderSub}>Resposta instantânea 24h</span>
-                </div>
-                <span className={styles.onlinePill}>Online</span>
-              </div>
-
-              <div className={styles.bubble}>
-                Olá! Gostaria de saber os horários e se entregam hoje? 😊
-                <span className={styles.bubbleTime}>14:32</span>
-              </div>
-
-              <div className={`${styles.bubble} ${styles.reply}`}>
-                Opa! Com certeza! 🛵 Atendemos até as 23h com entrega rápida. Quer ver o cardápio ou falar com a equipe?
-                <span className={styles.replyFooter}>
-                  <span className={styles.bubbleTime}>14:32</span>
-                  <CheckCheck size={14} />
+            {/* TEXTOS PRINCIPAIS */}
+            <div className={styles.storyHeaderCompact}>
+              <div className={styles.badgesRow}>
+                <span className={master ? styles.scopeBadgeMaster : styles.scopeBadge}>
+                  {master ? <Crown size={14} /> : <Sparkles size={13} className={styles.badgeSparkle} />}
+                  {master ? "CENTRAL DE COMANDO MASTER" : "PORTAL DO CLIENTE"}
+                </span>
+                <span className={styles.liveServerBadge}>
+                  <Radio size={12} className={styles.radioPulse} /> {master ? "Nuvem Master Ativa 24/7" : "Sistema Operacional 24/7"}
                 </span>
               </div>
 
-              <div className={styles.chatMetaChips}>
-                <span className={styles.metaChip}><Sparkles size={11} /> Lead Qualificado</span>
-                <span className={styles.metaChip}><Zap size={11} /> Resposta em 1.1s</span>
-                <span className={styles.metaChip}><Users size={11} /> Equipe ao Vivo</span>
-              </div>
-            </div>
-          )}
-
-          <div className={styles.storyFooter}>
-            <ShieldCheck size={15} />
-            {master ? "Ambiente administrativo exclusivo NovaesWeb" : "Ambiente seguro e exclusivo para a sua empresa"}
-          </div>
-        </div>
-      </section>
-
-      {/* PAINEL DIREITO: FORMULÁRIO DE ACESSO */}
-      <section className={styles.access} aria-labelledby="portal-login-title">
-        <div className={styles.formWrap}>
-          {/* Logo exibida no topo do form em telas mobile */}
-          {!master && (
-            <div className={styles.mobileLogoWrap}>
-              <img
-                src="/novaes-crm-ia-logo.jpg"
-                alt="Novaes CRM IA"
-                className={styles.mobileHeroLogo}
-              />
-            </div>
-          )}
-
-          <div className={styles.formHeaderRow}>
-            <div className={styles.formIcon}>
-              {master ? <Crown size={24} /> : <LockKeyhole size={22} />}
-            </div>
-            <div>
-              <p className={styles.eyebrow}>
-                {master ? "ADMINISTRAÇÃO NOVAESWEB" : "ACESSO EMPRESARIAL"}
-              </p>
-              <h2 id="portal-login-title">
-                {recover ? "Recuperar acesso" : master ? "Acesso ao Painel Master" : "Acesse seu Painel"}
-              </h2>
-            </div>
-          </div>
-
-          <p className={styles.intro}>
-            {recover
-              ? "Informe o e-mail cadastrado da sua empresa para redefinir sua senha."
-              : master
-                ? "Entre com as credenciais da administração da plataforma."
-                : "Entre com o e-mail e a senha fornecidos para gerenciar o WhatsApp da sua empresa."}
-          </p>
-
-          {checking ? (
-            <div className={styles.checkingState} role="status">
-              <span className={styles.spinner} />
-              <span>Verificando seu acesso...</span>
-            </div>
-          ) : (
-            <form onSubmit={event => void submit(event)} className={styles.form}>
-              <label htmlFor={emailId}>E-mail{master ? " do administrador" : " da sua empresa"}</label>
-              <div className={styles.inputWrapper}>
-                <Mail size={17} className={styles.inputFieldIcon} />
-                <input
-                  id={emailId}
-                  name="email"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  maxLength={254}
-                  placeholder={master ? "E-mail do administrador" : "seu@email.com"}
-                  value={email}
-                  onChange={event => setEmail(event.target.value)}
-                />
-              </div>
-
-              {!recover && (
-                <>
-                  <label htmlFor={passwordId}>Senha de acesso</label>
-                  <div className={styles.inputWrapper}>
-                    <LockKeyhole size={17} className={styles.inputFieldIcon} />
-                    <input
-                      id={passwordId}
-                      name="password"
-                      type={visible ? "text" : "password"}
-                      autoComplete="current-password"
-                      required
-                      maxLength={256}
-                      placeholder="Sua senha"
-                      value={password}
-                      onChange={event => setPassword(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className={styles.toggleVisibilityBtn}
-                      onClick={() => setVisible(value => !value)}
-                      aria-label={visible ? "Ocultar senha" : "Exibir senha"}
-                      aria-pressed={visible}
-                    >
-                      {visible ? <EyeOff size={17} /> : <Eye size={17} />}
-                    </button>
-                  </div>
-
-                  <div className={styles.options}>
-                    <label className={styles.rememberOption}>
-                      <input
-                        type="checkbox"
-                        checked={rememberMe}
-                        onChange={event => setRememberMe(event.target.checked)}
-                      />
-                      <span>Manter-me conectado</span>
-                    </label>
-                    <button
-                      type="button"
-                      className={styles.recoverLink}
-                      onClick={() => {
-                        setRecover(true);
-                        setError("");
-                        setNotice("");
-                      }}
-                    >
-                      Esqueceu a senha?
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {error && <p role="alert" className={styles.error}>{error}</p>}
-              {notice && <p role="status" className={styles.success}>{notice}</p>}
-
-              <button className={styles.submit} type="submit" disabled={loading}>
-                {loading ? (
+              <h1>
+                {master ? (
                   <>
-                    <span className={styles.spinnerSm} />
-                    <span>Aguarde...</span>
-                  </>
-                ) : recover ? (
-                  <>
-                    <span>Enviar instruções</span>
-                    <ArrowRight size={17} />
-                  </>
-                ) : master ? (
-                  <>
-                    <span>Entrar no Painel Master</span>
-                    <ArrowRight size={17} />
+                    Controle Global da Operação.
+                    <br />
+                    <span className={styles.gradientTextGold}>Plataforma Multi-Empresa.</span>
                   </>
                 ) : (
                   <>
-                    <span>Entrar na minha empresa</span>
-                    <ArrowRight size={17} />
+                    Atendimento Inteligente.
+                    <br />
+                    <span className={styles.gradientText}>Venda mais pelo WhatsApp.</span>
                   </>
                 )}
-              </button>
+              </h1>
 
-              {recover && (
-                <button
-                  type="button"
-                  className={styles.back}
-                  onClick={() => {
-                    setRecover(false);
-                    setError("");
-                    setNotice("");
-                  }}
-                >
-                  Voltar para o login
+              <p>
+                {master
+                  ? "Governança centralizada de clientes, provedores de inteligência artificial, franquias comerciais de WhatsApp e faturamento em tempo real."
+                  : "Acelere seu negócio com inteligência artificial humanizada, transbordo para atendentes em 1 clique e gestão completa da sua equipe."}
+              </p>
+            </div>
+
+            {master && (
+              <>
+                {/* O QUE FAZEMOS NA CENTRAL MASTER */}
+                <div className={styles.masterCapabilitiesGrid} role="region" aria-label="O que fazemos na Central Master">
+                  <div className={styles.capabilityCard}>
+                    <div className={styles.capabilityIconWrap}>
+                      <Building2 size={19} className={styles.capIconPurple} />
+                    </div>
+                    <div className={styles.capabilityText}>
+                      <strong>Gestão Multi-Empresa</strong>
+                      <span>Isolamento total de inquilinos, limite de instâncias e status em tempo real.</span>
+                    </div>
+                  </div>
+
+                  <div className={styles.capabilityCard}>
+                    <div className={styles.capabilityIconWrap}>
+                      <Sparkles size={19} className={styles.capIconPink} />
+                    </div>
+                    <div className={styles.capabilityText}>
+                      <strong>Orquestrador de IA</strong>
+                      <span>Roteamento de OpenAI, Gemini, Groq e DeepSeek com failover e sem alucinações.</span>
+                    </div>
+                  </div>
+
+                  <div className={styles.capabilityCard}>
+                    <div className={styles.capabilityIconWrap}>
+                      <Zap size={19} className={styles.capIconRed} />
+                    </div>
+                    <div className={styles.capabilityText}>
+                      <strong>WhatsApp Multi-Instância</strong>
+                      <span>Até 5 conexões por empresa, transbordo humano instantâneo e controle de fila ao vivo.</span>
+                    </div>
+                  </div>
+
+                  <div className={styles.capabilityCard}>
+                    <div className={styles.capabilityIconWrap}>
+                      <ShieldCheck size={19} className={styles.capIconGreen} />
+                    </div>
+                    <div className={styles.capabilityText}>
+                      <strong>Planos, PIX & Franquias</strong>
+                      <span>Aprovação manual de recargas, governança de mensagens e gestão de planos.</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.statsHighlightsRow}>
+                  <div className={styles.statPillItem}>
+                    <Server size={14} className={styles.statIconGreen} />
+                    <span><strong>99.9%</strong> Alta Disponibilidade</span>
+                  </div>
+                  <div className={styles.statPillItem}>
+                    <ShieldCheck size={14} className={styles.statIconBlue} />
+                    <span><strong>Isolamento</strong> Multi-Tenant</span>
+                  </div>
+                  <div className={styles.statPillItem}>
+                    <CheckCircle2 size={14} className={styles.statIconPink} />
+                    <span><strong>Conformidade</strong> LGPD</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {!master && (
+              <>
+                {/* SIMULAÇÃO DE ATENDIMENTO AO VIVO */}
+                <div className={styles.chatArt} role="img" aria-label="Demonstração do atendimento inteligente por WhatsApp">
+                  <div className={styles.chatHeader}>
+                    <div className={styles.avatarWrap}>
+                      <span className={styles.avatar}><Bot size={19} /></span>
+                      <span className={styles.statusPulse} aria-hidden="true" />
+                    </div>
+                    <div className={styles.chatHeaderInfo}>
+                      <span className={styles.chatHeaderTitle}>
+                        NovaesWeb IA <small className={styles.liveBadge}>WhatsApp Oficial</small>
+                      </span>
+                      <span className={styles.chatHeaderSub}>IA Ativa • Respostas Instantâneas</span>
+                    </div>
+                    <span className={styles.onlinePill}>Online</span>
+                  </div>
+
+                  {/* Mensagem do Cliente com texto ampliado */}
+                  <div className={styles.bubble}>
+                    <span className={styles.bubbleSender}>Cliente</span>
+                    Olá! Gostaria de conhecer os planos de entrega e saber se vocês atendem hoje? 😊
+                    <span className={styles.bubbleTime}>14:32</span>
+                  </div>
+
+                  {/* Resposta da IA com texto ampliado e gradiente */}
+                  <div className={`${styles.bubble} ${styles.reply}`}>
+                    <span className={styles.bubbleSender}>NovaesWeb IA</span>
+                    Opa! Com certeza! 🛵 Atendemos hoje até as 23h com entrega rápida e planos especiais para sua empresa! Quer que eu te envie o cardápio oficial ou prefere falar com um atendente da equipe?
+                    <span className={styles.replyFooter}>
+                      <span className={styles.bubbleTime}>14:32</span>
+                      <CheckCheck size={15} />
+                    </span>
+                  </div>
+
+                  {/* Chips Informativos de Alta Conversão */}
+                  <div className={styles.chatMetaChips}>
+                    <span className={styles.metaChip}><Sparkles size={12} /> Lead Qualificado 🔥</span>
+                    <span className={styles.metaChip}><Zap size={12} /> Resposta em 1.1s</span>
+                    <span className={styles.metaChip}><Users size={12} /> Equipe Integrada</span>
+                    <span className={styles.metaChip}><CheckCircle2 size={12} /> Fila ao Vivo</span>
+                  </div>
+                </div>
+
+                {/* Destaques rápidos de valor */}
+                <div className={styles.statsHighlightsRow}>
+                  <div className={styles.statPillItem}>
+                    <Zap size={14} className={styles.statIconPink} />
+                    <span><strong>1.1s</strong> Tempo Médio</span>
+                  </div>
+                  <div className={styles.statPillItem}>
+                    <Server size={14} className={styles.statIconGreen} />
+                    <span><strong>99.9%</strong> Disponibilidade</span>
+                  </div>
+                  <div className={styles.statPillItem}>
+                    <ShieldCheck size={14} className={styles.statIconBlue} />
+                    <span><strong>SSL 256-bit</strong> Isolamento</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* COLUNA DIREITA: FORMULÁRIO DE LOGIN COM VISUAL AMPLIADO */}
+        <section className={styles.access} aria-labelledby="portal-login-title">
+          <div className={styles.formWrap}>
+            {/* Logo em telas menores */}
+            {!master && (
+              <div className={styles.mobileLogoWrap}>
+                <img
+                  src="/novaes-crm-ia-logo.jpg"
+                  alt="Novaes CRM IA"
+                  className={styles.mobileHeroLogo}
+                />
+              </div>
+            )}
+
+            <div className={styles.formHeaderRow}>
+              <div className={styles.formIcon}>
+                {master ? <Crown size={26} /> : <LockKeyhole size={24} />}
+              </div>
+              <div className={styles.formHeaderTexts}>
+                <p className={styles.eyebrow}>
+                  {master ? "ADMINISTRAÇÃO CENTRAL NOVAESWEB" : "ÁREA EXCLUSIVA DA SUA EMPRESA"}
+                </p>
+                <h2 id="portal-login-title" className={styles.portalTitleLarge}>
+                  {recover ? (
+                    "Recuperar Acesso"
+                  ) : master ? (
+                    <>
+                      Portal <span className={styles.gradientTextGold}>Master</span>
+                    </>
+                  ) : (
+                    <>
+                      Portal do <span className={styles.gradientText}>Cliente</span>
+                    </>
+                  )}
+                </h2>
+              </div>
+            </div>
+
+            <p className={styles.intro}>
+              {recover
+                ? "Informe o e-mail cadastrado para receber as instruções de recuperação."
+                : master
+                  ? "Entre com as credenciais de superadministrador para gerenciar toda a plataforma e as empresas integradas."
+                  : "Entre com o e-mail e a senha fornecidos para gerenciar o WhatsApp e os atendimentos da sua empresa."}
+            </p>
+
+            {checking ? (
+              <div className={styles.checkingState} role="status">
+                <span className={styles.spinner} />
+                <span>Verificando suas credenciais...</span>
+              </div>
+            ) : (
+              <form onSubmit={event => void submit(event)} className={styles.form}>
+                <label htmlFor={emailId}>E-mail{master ? " do administrador" : " da sua empresa"}</label>
+                <div className={styles.inputWrapper}>
+                  <Mail size={19} className={styles.inputFieldIcon} />
+                  <input
+                    id={emailId}
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    required
+                    maxLength={254}
+                    placeholder={master ? "E-mail do administrador" : "seu@email.com"}
+                    value={email}
+                    onChange={event => setEmail(event.target.value)}
+                  />
+                </div>
+
+                {!recover && (
+                  <>
+                    <label htmlFor={passwordId}>Senha de acesso</label>
+                    <div className={styles.inputWrapper}>
+                      <LockKeyhole size={19} className={styles.inputFieldIcon} />
+                      <input
+                        id={passwordId}
+                        name="password"
+                        type={visible ? "text" : "password"}
+                        autoComplete="current-password"
+                        required
+                        maxLength={256}
+                        placeholder="Sua senha de acesso"
+                        value={password}
+                        onChange={event => setPassword(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className={styles.toggleVisibilityBtn}
+                        onClick={() => setVisible(value => !value)}
+                        aria-label={visible ? "Ocultar senha" : "Exibir senha"}
+                        aria-pressed={visible}
+                      >
+                        {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+
+                    <div className={styles.options}>
+                      <label className={styles.rememberOption}>
+                        <input
+                          type="checkbox"
+                          checked={rememberMe}
+                          onChange={event => setRememberMe(event.target.checked)}
+                        />
+                        <span>Manter-me conectado</span>
+                      </label>
+                      <button
+                        type="button"
+                        className={styles.recoverLink}
+                        onClick={() => {
+                          setRecover(true);
+                          setError("");
+                          setNotice("");
+                        }}
+                      >
+                        Esqueceu a senha?
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {error && <p role="alert" className={styles.error}>{error}</p>}
+                {notice && <p role="status" className={styles.success}>{notice}</p>}
+
+                <button className={styles.submit} type="submit" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <span className={styles.spinnerSm} />
+                      <span>Conectando...</span>
+                    </>
+                  ) : recover ? (
+                    <>
+                      <span>Enviar instruções de redefinição</span>
+                      <ArrowRight size={19} />
+                    </>
+                  ) : master ? (
+                    <>
+                      <span>Acessar Portal Master</span>
+                      <ArrowRight size={19} />
+                    </>
+                  ) : (
+                    <>
+                      <span>Acessar Portal do Cliente</span>
+                      <ArrowRight size={19} />
+                    </>
+                  )}
                 </button>
-              )}
-            </form>
-          )}
 
-          <div className={styles.security}>
-            <ShieldCheck size={15} />
-            <span>
-              {master
-                ? "Este painel administra a plataforma. O acesso dos clientes acontece em um portal separado."
-                : "Ambiente protegido por criptografia de ponta a ponta. Sua equipe 100% segura."}
+                {recover && (
+                  <button
+                    type="button"
+                    className={styles.back}
+                    onClick={() => {
+                      setRecover(false);
+                      setError("");
+                      setNotice("");
+                    }}
+                  >
+                    Voltar para a tela de login
+                  </button>
+                )}
+              </form>
+            )}
+
+            <div className={styles.security}>
+              <ShieldCheck size={16} />
+              <span>
+                {master
+                  ? "Acesso exclusivo à administração NovaesWeb. Conexão criptografada, auditada e com isolamento multi-tenant."
+                  : "Ambiente criptografado com isolamento de dados. Sua empresa com total privacidade."}
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* =================================================================== */}
+      {/* RODAPÉ ESTRUTURADO COM INFORMAÇÕES IMPORTANTES                     */}
+      {/* =================================================================== */}
+      <footer className={styles.globalFooter} role="contentinfo">
+        <div className={styles.footerContainer}>
+          <div className={styles.footerBadges}>
+            <span className={styles.footerItem}>
+              <ShieldCheck size={13} className={styles.footerIconPink} />
+              <span>Criptografia SSL AES-256</span>
+            </span>
+            <span className={styles.footerDot}>•</span>
+            <span className={styles.footerItem}>
+              <Server size={13} className={styles.footerIconGreen} />
+              <span>Nuvem de Alta Disponibilidade (99.9%)</span>
+            </span>
+            <span className={styles.footerDot}>•</span>
+            <span className={styles.footerItem}>
+              <CheckCircle2 size={13} className={styles.footerIconBlue} />
+              <span>Conformidade LGPD</span>
+            </span>
+          </div>
+
+          <div className={styles.footerLinks}>
+            <a
+              href="https://wa.me/5551991189293?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20acesso%20ao%20NovaesWeb%20CRM%20IA"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.footerHelpLink}
+              title="Falar com o suporte NovaesWeb pelo WhatsApp"
+            >
+              <Headphones size={13} />
+              <span>Dúvidas com o acesso? Fale no WhatsApp</span>
+            </a>
+            <span className={styles.footerDot}>•</span>
+            <span className={styles.footerCopyright}>
+              © 2026 NovaesWeb CRM IA — Todos os direitos reservados.
             </span>
           </div>
         </div>
-      </section>
+      </footer>
     </main>
   );
 }
