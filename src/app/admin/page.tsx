@@ -5,8 +5,10 @@ import dynamic from "next/dynamic";
 const ProvidersWorkspace = dynamic(() => import("@/components/crm/ProvidersWorkspace"), {
   loading: () => <p role="status">Carregando provedores de IA...</p>,
 });
+import { MasterAdminSkeleton, ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
+
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
-  loading: () => <p role="status">Carregando CRM NovaesWeb...</p>,
+  loading: () => <ClientWorkspaceSkeleton embedded />,
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
@@ -1239,6 +1241,11 @@ export default function AdminCRM() {
       setResetting(false);
     }
   };
+
+  // Skeleton Loading when checking session or logging into Master panel
+  if (loading && authenticated) {
+    return <MasterAdminSkeleton />;
+  }
 
   // Login Screen if not authenticated
   if (!authenticated) {
@@ -2843,7 +2850,7 @@ export default function AdminCRM() {
                     <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Loja</label>
                     <input
                       type="text"
-                      placeholder="Ex: Pizzaria Forno & Sabor"
+                      placeholder="Ex: Studio Digital & Consultoria"
                       value={storeName}
                       onChange={e => setStoreName(e.target.value)}
                       required
@@ -2855,7 +2862,7 @@ export default function AdminCRM() {
                     <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login do Cliente</label>
                     <input
                       type="email"
-                      placeholder="cliente@pizzaria.com.br"
+                      placeholder="contato@empresa.com.br"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
                       required

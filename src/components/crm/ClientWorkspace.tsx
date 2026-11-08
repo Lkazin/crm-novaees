@@ -1,4 +1,5 @@
 "use client";
+import { ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
@@ -290,7 +291,7 @@ export default function ClientWorkspace({
     closeTime: "23:30",
     days: ["ter", "qua", "qui", "sex", "sab", "dom"],
     sendClosedMessage: true,
-    closedMessage: "Olá! Nosso horário de atendimento é de terça a domingo, das 18h às 23h30. Deixe sua mensagem e responderemos assim que abrirmos! 😊",
+    closedMessage: "Olá! Nosso horário de atendimento é de segunda a sexta, das 08h30 às 18h30. Deixe sua mensagem e responderemos assim que abrirmos! 😊",
     schedule: DEFAULT_DAY_SCHEDULE
   });
   const isHoursDirtyRef = useRef(false);
@@ -319,7 +320,7 @@ export default function ClientWorkspace({
   }>>([
     {
       role: "assistant",
-      content: "Olá! Sou a NovaesWeb IA configurada para a sua loja. Faça uma pergunta sobre seus produtos, cardápio ou horários para testar como eu converso com seus clientes!",
+      content: "Olá! Sou a assistente de IA configurada para o atendimento do seu negócio. Faça uma pergunta sobre nossos serviços ou horários para testar como converso com seus clientes!",
       time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
     }
   ]);
@@ -1626,11 +1627,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   return (
     <div className={embedded ? styles.workspace : "nw-layout-shell"}>
-      {checking ? (
-        <section className="op-card op-centered" style={{margin: "120px auto", maxWidth: "420px", textAlign: "center"}}>
-          <RefreshCw size={36} className="spin" style={{margin: "0 auto 14px", color: "#ec4899"}}/>
-          <h1 style={{fontSize: "20px"}}>Verificando acesso seguro...</h1>
-        </section>
+      {checking || (loading && !data) ? (
+        <ClientWorkspaceSkeleton embedded={embedded} />
       ) : !authenticated && embedded ? (
         <section className="op-card" role="alert" style={{padding: "24px"}}>
           {error || "Não foi possível acessar o CRM NovaesWeb. Entre novamente no painel Master."}
@@ -3218,7 +3216,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             type="text"
                             value={wizardData.storeName}
                             onChange={e => setWizardData(prev => ({ ...prev, storeName: e.target.value }))}
-                            placeholder="Ex.: Bella Pizza Express"
+                            placeholder="Ex.: Agência Digital ou Loja Virtual"
                             style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
                           />
                         </div>
@@ -3271,10 +3269,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           value={wizardData.productsPrices}
                           onChange={e => setWizardData(prev => ({ ...prev, productsPrices: e.target.value }))}
                           placeholder="Ex.:
-- Pizza Calabresa Grande: R$ 49,90 | Média: R$ 39,90
-- Pizza 4 Queijos Grande: R$ 54,90
-- Coca-Cola 2L: R$ 12,00
-- Borda de Catupiry ou Cheddar: R$ 8,00"
+- Consultoria Estratégica: R$ 450,00
+- Desenvolvimento de Site / Loja Virtual: A partir de R$ 990,00
+- Gestão de Tráfego e Campanhas: R$ 600,00/mês
+- Atendimento IA WhatsApp: A partir de R$ 89,90/mês"
                           style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
                         />
                       </div>
@@ -3291,7 +3289,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             type="text"
                             value={wizardData.hoursDelivery}
                             onChange={e => setWizardData(prev => ({ ...prev, hoursDelivery: e.target.value }))}
-                            placeholder="Ex.: Terça a Domingo, das 18h00 às 23h30 (Segunda-feira fechado)"
+                            placeholder="Ex.: Segunda a Sexta, das 08h30 às 18h30 (Sábado sob agendamento)"
                             style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
                           />
                         </div>
@@ -3325,9 +3323,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           value={wizardData.faqs}
                           onChange={e => setWizardData(prev => ({ ...prev, faqs: e.target.value }))}
                           placeholder="Ex.:
-- Quanto tempo demora a entrega? Leva de 40 a 55 minutos.
-- Qual a taxa de entrega? R$ 5,00 para o Centro e R$ 8,00 para bairros vizinhos.
-- Quais formas de pagamento? Aceitamos Pix (chave: financeiro@bellapizza.com), Cartão e Dinheiro na entrega."
+- Qual o prazo de entrega dos projetos? De 7 a 15 dias úteis.
+- Como funciona o suporte? Atendimento direto pelo WhatsApp comercial.
+- Quais formas de pagamento? Pix com desconto, Cartão em até 12x e Boleto Bancário."
                           style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
                         />
                       </div>
@@ -3437,7 +3435,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "14px"}}
                         value={agentLabel}
                         onChange={e => { isAiDirtyRef.current = true; setAgentLabel(e.target.value); }}
-                        placeholder="Ex.: Bia - Atendente da Bella Pizza"
+                        placeholder="Ex.: Alex - Consultor de Atendimento"
                       />
                     </div>
 
@@ -3462,7 +3460,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "95px", fontSize: "14px", lineHeight: "1.5"}}
                       value={instructions}
                       onChange={e => { isAiDirtyRef.current = true; setInstructions(e.target.value); }}
-                      placeholder="Ex.: Você é a atendente virtual da Bella Pizza no WhatsApp. Responda com simpatia, use emojis leves, ajude o cliente a escolher a pizza e incentive o pedido. Seja rápida e clara."
+                      placeholder="Ex.: Você é o especialista de atendimento no WhatsApp. Responda com profissionalismo e simpatia, tire dúvidas sobre serviços e conduza ao agendamento ou fechamento. Seja rápido e claro."
                     />
                   </div>
 
@@ -3551,7 +3549,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   }}>
                     {miniSimHistory.length === 0 ? (
                       <div style={{textAlign: "center", color: "#857f9d", fontSize: "13px", padding: "30px 0"}}>
-                        💬 Digite uma pergunta abaixo (ex.: <em>&quot;Quanto custa a pizza grande?&quot;</em> ou <em>&quot;Qual o horário de vocês?&quot;</em>) para testar sua assistente virtual.
+                        💬 Digite uma pergunta abaixo (ex.: <em>&quot;Quais serviços vocês oferecem?&quot;</em> ou <em>&quot;Qual o horário de atendimento?&quot;</em>) para testar sua assistente virtual.
                       </div>
                     ) : (
                       miniSimHistory.map((msg, idx) => (
@@ -3651,9 +3649,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <button
                       type="button"
                       className="preset-badge"
-                      onClick={() => void handleSendSimulator("Quanto custa a pizza grande e quais os sabores?")}
+                      onClick={() => void handleSendSimulator("Quais são os serviços e soluções que vocês oferecem?")}
                     >
-                      🍕 Quanto custa a pizza grande?
+                      💼 Quais serviços vocês oferecem?
                     </button>
                     <button
                       type="button"
@@ -3665,9 +3663,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <button
                       type="button"
                       className="preset-badge"
-                      onClick={() => void handleSendSimulator("Vocês fazem entrega no Centro e aceitam Pix?")}
+                      onClick={() => void handleSendSimulator("Quais as formas de pagamento aceitas e aceitam Pix?")}
                     >
-                      🛵 Entrega no Centro e aceita Pix?
+                      💳 Formas de pagamento / Pix?
                     </button>
                     <button
                       type="button"
@@ -3680,9 +3678,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       type="button"
                       className="preset-badge"
                       style={{borderColor: "rgba(239, 68, 68, 0.5)", color: "#fca5a5"}}
-                      onClick={() => void handleSendSimulator("Meu pedido está 2 horas atrasado, absurdo, quero cancelamento imediato!")}
+                      onClick={() => void handleSendSimulator("Preciso de suporte com meu atendimento, podem me ajudar?")}
                     >
-                      🚨 Reclamação: Pedido atrasado / Cancelar
+                      🚨 Solicitar Suporte Urgente
                     </button>
                   </div>
                 </div>

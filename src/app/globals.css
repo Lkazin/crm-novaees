@@ -547,3 +547,25 @@
   font-weight: 700 !important;
   border-color: rgba(236, 72, 153, 0.45) !important;
 }
+
+/* Skeleton Loading Shimmer */
+.nw-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(236, 72, 153, 0.10) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: nw-skeleton-shimmer 1.6s ease-in-out infinite;
+  display: block;
+}
+
+@keyframes nw-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

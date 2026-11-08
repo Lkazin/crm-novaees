@@ -39,7 +39,7 @@ export default function ProvidersWorkspace() {
 
   // Test form state
   const [testModel, setTestModel] = useState("auto/best-chat");
-  const [question, setQuestion] = useState("Olá! Qual é o horário de atendimento da pizzaria e quais sabores de pizza vocês têm?");
+  const [question, setQuestion] = useState("Olá! Gostaria de saber mais informações sobre os serviços, metodologia e prazos de entrega.");
   const [testing, setTesting] = useState(false);
   const [testOutput, setTestOutput] = useState<TestResult | null>(null);
 
