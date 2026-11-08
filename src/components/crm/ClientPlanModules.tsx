@@ -674,11 +674,12 @@ export function TeamOperatorsSection({
   const [newRole, setNewRole] = useState("agent");
   const [updatingRole, setUpdatingRole] = useState(false);
 
-  const activeOperators = operators.filter(o => o.status === "active");
-  // Total seats used includes owner (1) + active employee operators
-  // Team operators used (excluding titular). maxOperators represents total seats (titular + team) or direct team limit
-  const teamLimit = Math.max(1, maxOperators > 1 ? maxOperators - 1 : 1);
-  const totalUsed = activeOperators.length;
+  // Separa atendentes convidados do titular
+  const employeeOperators = operators.filter(o => (o.role as string) !== "owner");
+  const activeEmployeeOperators = employeeOperators.filter(o => o.status === "active");
+  // Total de vagas de equipe: se maxOperators >= 3, são 2 vagas de atendentes (+ 1 titular).
+  const teamLimit = Math.max(1, maxOperators > 1 ? maxOperators - 1 : maxOperators);
+  const totalUsed = activeEmployeeOperators.length;
   const limitReached = totalUsed >= teamLimit;
 
   const handleGeneratePassword = () => {
@@ -842,18 +843,22 @@ export function TeamOperatorsSection({
                 Limite de {teamLimit} operador(es) da equipe atingido ({planName})
               </strong>
               <span style={{ color: "#d1c8e6", fontSize: "13px" }}>
-                O plano CRM Premium permite até 2 operadores humanos na sua equipe simultaneamente além do titular da conta.
+                {planName.toLowerCase().includes("premium")
+                  ? `Sua equipe atingiu o limite de ${teamLimit} operadores adicionais permitidos no plano CRM Premium (+ 1 titular da conta).`
+                  : `O plano ${planName} permite até ${teamLimit} operadores na sua equipe além do titular da conta.`}
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => onRequestUpgrade("CRM Premium", "Expandir limite de operadores da equipe")}
-            className="op-primary"
-            style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
-          >
-            🔓 Solicitar Upgrade de Equipe
-          </button>
+          {!planName.toLowerCase().includes("premium") && (
+            <button
+              type="button"
+              onClick={() => onRequestUpgrade("CRM Premium", "Expandir limite de operadores da equipe")}
+              className="op-primary"
+              style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
+            >
+              🔓 Solicitar Upgrade de Equipe
+            </button>
+          )}
         </div>
       )}
 
@@ -921,7 +926,7 @@ export function TeamOperatorsSection({
         </div>
 
         {/* 2. CARTÕES DOS ATENDENTES CONVIDADOS */}
-        {operators.length === 0 ? (
+        {employeeOperators.length === 0 ? (
           <div style={{
             padding: "30px 20px",
             textAlign: "center",
@@ -931,10 +936,10 @@ export function TeamOperatorsSection({
             color: "#8e87a2",
             fontSize: "13px"
           }}>
-            Nenhum atendente adicional convidado. Você opera atualmente com o acesso titular ({maxOperators - 1} vaga(s) disponível(eis) no plano {planName}).
+            Nenhum atendente adicional convidado. Você opera atualmente com o acesso titular ({teamLimit - totalUsed} vaga(s) disponível(eis) no plano {planName}).
           </div>
         ) : (
-          operators.map(op => {
+          employeeOperators.map(op => {
             const initials = op.name ? op.name.slice(0, 2).toUpperCase() : "AT";
             const roleLabel = op.role === "admin"
               ? "Supervisor / Administrador"

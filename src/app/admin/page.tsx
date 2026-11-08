@@ -6,15 +6,19 @@ const ProvidersWorkspace = dynamic(() => import("@/components/crm/ProvidersWorks
   loading: () => <p role="status">Carregando provedores de IA...</p>,
 });
 import { MasterAdminSkeleton, ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
+import { WhatsAppRadarSection } from "@/components/crm/WhatsAppRadarSection";
+import { BroadcastManagerSection } from "@/components/crm/BroadcastManagerSection";
 
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
   loading: () => <ClientWorkspaceSkeleton embedded />,
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
+  radar: { title: "Radar de WhatsApp (Tempo Real)", description: "Monitore a integridade e o status de conexão de todas as instâncias de WhatsApp de todos os clientes." },
+  broadcast: { title: "Comunicados & Avisos Globais", description: "Transmita alertas e comunicados oficiais no topo do painel de todos os lojistas em tempo real." },
   plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de mensagens da IA." },
   kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
   providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
@@ -28,7 +32,7 @@ import {
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
   Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
   CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, Radio, Megaphone, Download, Activity
 } from "lucide-react";
 
 type Client = {
@@ -43,6 +47,7 @@ type Client = {
   whatsappStatus?: string;
   connectedWhatsappCount?: number;
   maxWhatsappConnections?: number;
+  whatsappSlots?: Array<{ slot: number; instanceName: string; status: string; phone?: string; unlocked: boolean; pausedByDowngrade?: boolean }>;
   operatorsCount?: number;
   maxOperators?: number;
   isMasterOwnTenant?: boolean;
@@ -202,7 +207,7 @@ const DEFAULT_PLANS: PlanItem[] = [
     name: "Teste Grátis (7 Dias)",
     price: "0,00",
     quotaLimit: 100,
-    maxOperators: 2,
+    maxOperators: 3,
     maxWhatsAppConnections: 3,
     isActive: true,
     description: "Avaliação gratuita de 7 dias com todos os recursos Premium liberados para teste.",
@@ -241,7 +246,7 @@ const DEFAULT_PLANS: PlanItem[] = [
     name: "CRM Premium",
     price: "89,90",
     quotaLimit: 1200,
-    maxOperators: 2,
+    maxOperators: 3,
     maxWhatsAppConnections: 5,
     isPopular: true,
     isActive: true,
@@ -766,6 +771,84 @@ export default function AdminCRM() {
     }
     return counts;
   }, [plans, clients, clientCountsMap]);
+
+  // Exportação CSV de Lojas e Clientes (Excel compatível com UTF-8 BOM)
+  const handleExportClientsCSV = () => {
+    const headers = [
+      "ID",
+      "Nome da Loja",
+      "E-mail de Acesso",
+      "Plano Atual",
+      "Mensalidade (R$)",
+      "Status da Loja",
+      "Status Pagamento",
+      "Data de Vencimento",
+      "Bloqueado",
+      "Mensagens IA Usadas",
+      "Limite Mensagens IA",
+      "WhatsApps Conectados",
+      "Limite WhatsApps",
+      "Operadores de Equipe"
+    ];
+    const rows = clients.map(c => [
+      `"${c.id}"`,
+      `"${c.name.replace(/"/g, '""')}"`,
+      `"${(c.email || "").replace(/"/g, '""')}"`,
+      `"${(c.plan?.name || "").replace(/"/g, '""')}"`,
+      `"${c.plan?.price || "0,00"}"`,
+      `"${c.status || "active"}"`,
+      `"${c.plan?.status || "pending"}"`,
+      `"${c.plan?.dueDate || ""}"`,
+      c.plan?.isOverdue || c.plan?.autoBlock ? "Sim" : "Não",
+      c.plan?.quotaUsed ?? 0,
+      c.plan?.quotaLimit ?? 0,
+      c.connectedWhatsappCount ?? 0,
+      c.maxWhatsappConnections ?? 1,
+      c.operatorsCount ?? 1
+    ]);
+    const csvContent = [headers.join(";"), ...rows.map(r => r.join(";"))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `clientes_novaesweb_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Exportação CSV de Histórico Financeiro e Recargas
+  const handleExportRechargesCSV = () => {
+    const headers = [
+      "ID Recarga",
+      "ID Loja",
+      "Nome da Loja",
+      "E-mail",
+      "Mensagens Adicionadas",
+      "Valor (R$)",
+      "Status",
+      "Data da Compra"
+    ];
+    const rows = adminRecharges.map(r => [
+      `"${r.id}"`,
+      `"${r.tenantId}"`,
+      `"${(r.tenantName || "").replace(/"/g, '""')}"`,
+      `"${(r.tenantEmail || "").replace(/"/g, '""')}"`,
+      r.messagesAdded,
+      `"${(r.pricePaid ?? 0).toFixed(2).replace(".", ",")}"`,
+      `"${r.status === "paid" ? "Aprovado / Pago" : r.status === "pending" ? "Pendente Conferência" : "Rejeitado"}"`,
+      `"${r.purchasedAt || ""}"`
+    ]);
+    const csvContent = [headers.join(";"), ...rows.map(r => r.join(";"))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `recargas_financeiro_novaesweb_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Filtered clients
   const filteredClients = useMemo(() => {
@@ -2109,6 +2192,41 @@ export default function AdminCRM() {
             <span>Faturamento &amp; Métricas</span>
           </button>
 
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "radar" ? "active" : ""}`}
+            aria-current={currentNav === "radar" ? "page" : undefined}
+            title="Radar WhatsApp (Tempo Real)"
+            onClick={() => navigateSection("radar")}
+          >
+            <Radio size={18}/>
+            <span>Radar WhatsApp</span>
+            {!sidebarCollapsed && (
+              <span style={{
+                marginLeft: "auto",
+                background: "rgba(0, 219, 140, 0.15)",
+                color: "#00db8c",
+                padding: "2px 8px",
+                borderRadius: "10px",
+                fontSize: "11px",
+                fontWeight: 700
+              }}>
+                Ao Vivo
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "broadcast" ? "active" : ""}`}
+            aria-current={currentNav === "broadcast" ? "page" : undefined}
+            title="Avisos & Transmissão Global"
+            onClick={() => navigateSection("broadcast")}
+          >
+            <Megaphone size={18}/>
+            <span>Avisos Globais</span>
+          </button>
+
           {/* DIVISOR DE GRUPO */}
           <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
@@ -2320,6 +2438,15 @@ export default function AdminCRM() {
                   </button>
                   <button
                     type="button"
+                    onClick={handleExportRechargesCSV}
+                    className="op-refresh"
+                    style={{padding: "10px 16px", borderRadius: "10px", display: "flex", alignItems: "center", gap: "8px", fontWeight: 700}}
+                    title="Exportar histórico de recargas financeiras em CSV"
+                  >
+                    <Download size={16}/> Exportar CSV
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void fetchRecharges()}
                     className="op-refresh"
                     style={{padding: "10px 14px", borderRadius: "10px"}}
@@ -2350,15 +2477,35 @@ export default function AdminCRM() {
               </>
             )}
             {currentNav === "clients" && (
+              <>
+                <button
+                  className="op-primary"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700, borderRadius: "10px"}}
+                  onClick={() => setFormOpen(!formOpen)}
+                >
+                  <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Novo Cliente"}
+                </button>
+                <button
+                  className="op-refresh"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 16px"}}
+                  onClick={handleExportClientsCSV}
+                  title="Exportar base completa de clientes em formato CSV (Excel)"
+                >
+                  <Download size={16}/> Exportar CSV
+                </button>
+              </>
+            )}
+            {currentNav === "kpis" && (
               <button
-                className="op-primary"
-                style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700, borderRadius: "10px"}}
-                onClick={() => setFormOpen(!formOpen)}
+                className="op-refresh"
+                style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 16px"}}
+                onClick={handleExportClientsCSV}
+                title="Exportar métricas de clientes em formato CSV (Excel)"
               >
-                <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Novo Cliente"}
+                <Download size={16}/> Exportar Métricas (CSV)
               </button>
             )}
-            {["clients", "plans", "kpis"].includes(currentNav) && (
+            {["clients", "plans", "kpis", "radar"].includes(currentNav) && (
               <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); }} disabled={loading}>
                 <RefreshCw size={16}/> Atualizar
               </button>
@@ -2388,6 +2535,27 @@ export default function AdminCRM() {
             initialTenant="novaesweb"
             activeTabOverride={crmActiveTab}
             onTabChange={setCrmActiveTab}
+          />
+        )}
+        {currentNav === "radar" && (
+          <WhatsAppRadarSection
+            clients={clients.map(c => ({
+              id: c.id,
+              name: c.name,
+              email: c.email,
+              planName: c.plan?.name,
+              isTrial: c.plan?.isTrial,
+              whatsappSlots: c.whatsappSlots,
+              instanceName: c.instanceName,
+              whatsappStatus: c.whatsappStatus
+            }))}
+            onRefresh={() => { void fetchClients(); }}
+          />
+        )}
+        {currentNav === "broadcast" && (
+          <BroadcastManagerSection
+            onNotice={(msg) => setNotice(msg)}
+            onError={(err) => setError(err)}
           />
         )}
 

@@ -1666,6 +1666,9 @@ export async function getEffectiveTenantPlan(
   const allowance = pendingUpdate && now < parsePlanEffectiveDate(pendingUpdate.effectiveAt) ? tierCeiling : matchedPlan;
   baseFeatures = normalizeFeatureIds(baseFeatures).filter(feature => allowance.features.includes(feature));
   baseMaxOperators = Math.min(baseMaxOperators, allowance.maxOperators, tierCeiling.maxOperators);
+  if (matchedPlan.id === "crm-premium" || isTrial) {
+    baseMaxOperators = Math.max(baseMaxOperators, matchedPlan.maxOperators || 3);
+  }
   baseMaxWhatsapp = Math.min(baseMaxWhatsapp, allowance.maxWhatsappConnections, tierCeiling.maxWhatsappConnections);
   validateCommercialPlan({ id: matchedPlan.id, name: matchedPlan.name, quotaLimit: baseQuota, maxOperators: baseMaxOperators, maxWhatsappConnections: baseMaxWhatsapp, features: baseFeatures });
 

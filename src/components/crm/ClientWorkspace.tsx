@@ -11,7 +11,7 @@ import {
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, Copy, MessageCircle, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
@@ -485,6 +485,54 @@ export default function ClientWorkspace({
     humanHandoffRules: "",
     tone: "amigavel"
   });
+
+  // AI Conversation Summary state
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [conversationSummary, setConversationSummary] = useState<string | null>(null);
+  const [summaryCopied, setSummaryCopied] = useState(false);
+
+  // Live Chat View Mode (List vs Visual Kanban)
+  const [chatViewMode, setChatViewMode] = useState<"list" | "kanban">("list");
+
+  // Global Broadcast Banner state (Master announcement)
+  const [broadcastBanner, setBroadcastBanner] = useState<{ active: boolean; title?: string; message?: string; type?: "info" | "warning" | "success" | "alert" } | null>(null);
+  const [dismissedBroadcast, setDismissedBroadcast] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/crm/admin/broadcast")
+      .then(r => r.json())
+      .then(res => {
+        if (res?.ok && res.broadcast?.active) {
+          setBroadcastBanner(res.broadcast);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSummarizeConversation = useCallback(async (conversationId: string) => {
+    if (!tenant || !conversationId) return;
+    setSummaryLoading(true);
+    setSummaryOpen(true);
+    try {
+      const res = await fetch("/api/crm/operator/summary", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, conversationId })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setConversationSummary(json.summary || "Resumo não disponível para esta conversa.");
+      } else {
+        setConversationSummary("Não foi possível gerar o resumo da conversa no momento.");
+      }
+    } catch {
+      setConversationSummary("Falha de conexão ao gerar resumo.");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [tenant]);
 
   const currentTenantObj = useMemo(() => data?.tenants?.find(t => t.id === tenant) ?? null, [data, tenant]);
   const enrichedWhatsappSlots = useMemo(() => {
@@ -2187,6 +2235,63 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 </button>
               </div>
             </div>
+
+            {/* BANNER DE TRANSMISSÃO GLOBAL (MASTER -> CLIENTE) */}
+            {broadcastBanner?.active && !dismissedBroadcast && (
+              <div style={{
+                background: broadcastBanner.type === "alert"
+                  ? "linear-gradient(90deg, rgba(239, 68, 68, 0.25), rgba(185, 28, 28, 0.18))"
+                  : broadcastBanner.type === "warning"
+                  ? "linear-gradient(90deg, rgba(245, 158, 11, 0.25), rgba(217, 119, 6, 0.18))"
+                  : broadcastBanner.type === "success"
+                  ? "linear-gradient(90deg, rgba(16, 185, 129, 0.25), rgba(5, 150, 105, 0.18))"
+                  : "linear-gradient(90deg, rgba(59, 130, 246, 0.25), rgba(37, 99, 235, 0.18))",
+                border: `1px solid ${
+                  broadcastBanner.type === "alert" ? "#ef4444" : broadcastBanner.type === "warning" ? "#f59e0b" : broadcastBanner.type === "success" ? "#10b981" : "#3b82f6"
+                }`,
+                padding: "12px 18px",
+                borderRadius: "12px",
+                marginBottom: "20px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "14px",
+                boxShadow: "0 4px 18px rgba(0,0,0,0.25)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <span style={{ fontSize: "20px" }}>
+                    {broadcastBanner.type === "alert" ? "🚨" : broadcastBanner.type === "warning" ? "⚠️" : broadcastBanner.type === "success" ? "🎉" : "📢"}
+                  </span>
+                  <div>
+                    {broadcastBanner.title && (
+                      <strong style={{ fontSize: "14px", color: "#fff", display: "block" }}>
+                        {broadcastBanner.title}
+                      </strong>
+                    )}
+                    <span style={{ fontSize: "13px", color: "#e2e8f0" }}>
+                      {broadcastBanner.message}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedBroadcast(true)}
+                  style={{
+                    background: "rgba(255, 255, 255, 0.12)",
+                    border: "none",
+                    color: "#fff",
+                    borderRadius: "6px",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    flexShrink: 0
+                  }}
+                >
+                  ✕ Dispensar
+                </button>
+              </div>
+            )}
 
             {/* CARD DE RESULTADO COMERCIAL & VALOR GERADO PELA IA */}
             <section style={{
@@ -4447,7 +4552,222 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   onBuyRecharge={() => setRechargeModalOpen(true)}
                 />
 
-                <section className="op-workspace" style={{minHeight: "640px"}}>
+                {/* TOOLBAR SUPERIOR DO ATENDIMENTO: SELETOR LISTA / KANBAN */}
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "14px",
+                  flexWrap: "wrap",
+                  gap: "10px"
+                }}>
+                  <div style={{ display: "inline-flex", background: "rgba(255,255,255,0.06)", padding: "3px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)" }}>
+                    <button
+                      type="button"
+                      onClick={() => setChatViewMode("list")}
+                      style={{
+                        background: chatViewMode === "list" ? "var(--grad-primary)" : "transparent",
+                        color: chatViewMode === "list" ? "#fff" : "#aba8bf",
+                        border: "none",
+                        padding: "6px 14px",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <MessageCircle size={14} />
+                      <span>Chat ao Vivo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatViewMode("kanban")}
+                      style={{
+                        background: chatViewMode === "kanban" ? "var(--grad-primary)" : "transparent",
+                        color: chatViewMode === "kanban" ? "#fff" : "#aba8bf",
+                        border: "none",
+                        padding: "6px 14px",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <LayoutGrid size={14} />
+                      <span>Funil Kanban</span>
+                    </button>
+                  </div>
+
+                  <span style={{ fontSize: "12px", color: "#aba8bf", fontWeight: 600 }}>
+                    {conversations.length} conversas registradas no WhatsApp
+                  </span>
+                </div>
+
+                {chatViewMode === "kanban" ? (
+                  /* KANBAN FUNNEL BOARD */
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                    gap: "14px",
+                    alignItems: "flex-start",
+                    overflowX: "auto",
+                    paddingBottom: "16px"
+                  }}>
+                    {[
+                      { id: "ai", title: "Atendimento IA", emoji: "🤖", color: "#00db8c", bg: "rgba(0, 219, 140, 0.12)", border: "#00db8c" },
+                      { id: "waiting_human", title: "Aguardando Atendente", emoji: "🚨", color: "#fca5a5", bg: "rgba(239, 68, 68, 0.18)", border: "#ef4444" },
+                      { id: "human", title: "Atendimento Humano", emoji: "👤", color: "#fcd34d", bg: "rgba(245, 158, 11, 0.15)", border: "#f59e0b" },
+                      { id: "waiting_client", title: "Aguardando Cliente", emoji: "⏳", color: "#7dd3fc", bg: "rgba(14, 165, 233, 0.15)", border: "#0ea5e9" },
+                      { id: "closed", title: "Finalizados", emoji: "✅", color: "#d1d5db", bg: "rgba(107, 114, 128, 0.15)", border: "#6b7280" }
+                    ].map(col => {
+                      const colConvs = conversations.filter(c => getEffectiveStage(c) === col.id);
+                      return (
+                        <div
+                          key={col.id}
+                          style={{
+                            background: "rgba(22, 18, 38, 0.85)",
+                            border: `1px solid ${col.border}40`,
+                            borderRadius: "14px",
+                            padding: "14px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "10px",
+                            minHeight: "480px"
+                          }}
+                        >
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            paddingBottom: "10px",
+                            borderBottom: "1px solid rgba(255,255,255,0.08)"
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                              <span style={{ fontSize: "16px" }}>{col.emoji}</span>
+                              <strong style={{ fontSize: "13px", color: "#fff" }}>{col.title}</strong>
+                            </div>
+                            <span style={{
+                              background: col.bg,
+                              color: col.color,
+                              border: `1px solid ${col.border}`,
+                              padding: "2px 8px",
+                              borderRadius: "12px",
+                              fontSize: "11px",
+                              fontWeight: 800
+                            }}>
+                              {colConvs.length}
+                            </span>
+                          </div>
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", maxHeight: "600px" }}>
+                            {colConvs.length === 0 ? (
+                              <div style={{ textAlign: "center", padding: "30px 10px", color: "#6b6480", fontSize: "12px" }}>
+                                Nenhuma conversa nesta etapa
+                              </div>
+                            ) : (
+                              colConvs.map(c => {
+                                const contact = byContact.get(c.contact_id);
+                                const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
+                                const contactTag = contactTagId ? tagMap.get(contactTagId) : undefined;
+                                const convMsgs = messages
+                                  .filter(m => m.conversation_id === c.id)
+                                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                                const lastMsg = convMsgs[0];
+
+                                return (
+                                  <div
+                                    key={c.id}
+                                    style={{
+                                      background: "rgba(10, 8, 20, 0.9)",
+                                      border: "1px solid rgba(255,255,255,0.08)",
+                                      borderRadius: "10px",
+                                      padding: "12px",
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: "8px",
+                                      cursor: "pointer",
+                                      transition: "all 0.15s ease"
+                                    }}
+                                    onClick={() => {
+                                      setSelected(c.id);
+                                      setChatViewMode("list");
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+                                      <strong style={{ color: "#fff", fontSize: "13px" }}>
+                                        {contact?.display_name || contact?.phone || "Lead WhatsApp"}
+                                      </strong>
+                                      {contactTag && (
+                                        <span style={{
+                                          fontSize: "10px",
+                                          padding: "1px 6px",
+                                          borderRadius: "6px",
+                                          fontWeight: 700,
+                                          background: "rgba(236,72,153,0.15)",
+                                          border: "1px solid rgba(236,72,153,0.3)",
+                                          color: "#f472b6"
+                                        }}>
+                                          {contactTag.name}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {contact?.phone && (
+                                      <span style={{ fontSize: "11px", color: "#aba8bf", fontVariantNumeric: "tabular-nums" }}>
+                                        +{contact.phone}
+                                      </span>
+                                    )}
+
+                                    {lastMsg && (
+                                      <p style={{
+                                        margin: 0,
+                                        fontSize: "11px",
+                                        color: "#8c879b",
+                                        lineHeight: "1.4",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        display: "-webkit-box",
+                                        WebkitLineClamp: 2,
+                                        WebkitBoxOrient: "vertical"
+                                      }}>
+                                        {lastMsg.direction === "outbound" ? "Você: " : ""}{lastMsg.body}
+                                      </p>
+                                    )}
+
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px", gap: "6px" }}>
+                                      <span style={{ fontSize: "10px", color: "#6b6480" }}>
+                                        {lastMsg ? new Date(lastMsg.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}
+                                      </span>
+                                      <span style={{
+                                        fontSize: "11px",
+                                        color: "#ec4899",
+                                        fontWeight: 700,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "3px"
+                                      }}>
+                                        Abrir Chat →
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <section className="op-workspace" style={{minHeight: "640px"}}>
                   {/* Coluna Esquerda: Lista de Conversas */}
                   <aside className={`op-card op-inbox ${mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
                     <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", gap: "8px", flexWrap: "wrap"}}>
@@ -5129,6 +5449,28 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   <Bot size={15}/> {claiming ? "Reativando..." : "Devolver atendimento para IA"}
                                 </button>
                               )}
+
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                style={{
+                                  background: "rgba(168, 85, 247, 0.18)",
+                                  color: "#d8b4fe",
+                                  borderColor: "#a855f7",
+                                  fontWeight: 700,
+                                  fontSize: "12px",
+                                  padding: "7px 13px",
+                                  borderRadius: "9px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px"
+                                }}
+                                disabled={summaryLoading || loading}
+                                onClick={() => void handleSummarizeConversation(current.id)}
+                                title="Gerar resumo inteligente em tópicos desta conversa com IA"
+                              >
+                                <Sparkles size={15}/> {summaryLoading ? "Resumindo..." : "⚡ Resumir com IA"}
+                              </button>
                             </div>
                           </div>
 
@@ -5297,6 +5639,84 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             </form>
                           )}
                         </div>
+
+                        {/* RESUMO INTELIGENTE DA CONVERSA COM IA */}
+                        {summaryOpen && (
+                          <div style={{
+                            background: "linear-gradient(135deg, rgba(168, 85, 247, 0.16) 0%, rgba(59, 130, 246, 0.1) 100%)",
+                            border: "1px solid rgba(168, 85, 247, 0.45)",
+                            borderRadius: "12px",
+                            padding: "14px 16px",
+                            margin: "12px 0 0",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px",
+                            boxShadow: "0 4px 16px rgba(168, 85, 247, 0.15)"
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <Sparkles size={16} color="#d8b4fe" />
+                                <strong style={{ color: "#f3e8ff", fontSize: "13px" }}>Resumo Inteligente da Conversa (IA)</strong>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                {conversationSummary && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(conversationSummary);
+                                      setSummaryCopied(true);
+                                      setTimeout(() => setSummaryCopied(false), 2000);
+                                    }}
+                                    style={{
+                                      background: "rgba(255, 255, 255, 0.1)",
+                                      border: "1px solid rgba(255, 255, 255, 0.18)",
+                                      color: summaryCopied ? "#34d399" : "#e9d5ff",
+                                      padding: "3px 8px",
+                                      borderRadius: "6px",
+                                      fontSize: "11px",
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: "4px"
+                                    }}
+                                  >
+                                    {summaryCopied ? <Check size={12} /> : <Copy size={12} />}
+                                    <span>{summaryCopied ? "Copiado!" : "Copiar"}</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setSummaryOpen(false)}
+                                  style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "#aba8bf",
+                                    fontSize: "16px",
+                                    cursor: "pointer",
+                                    padding: "0 4px",
+                                    lineHeight: 1
+                                  }}
+                                  title="Fechar Resumo"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                            <div style={{
+                              fontSize: "12px",
+                              lineHeight: "1.6",
+                              color: "#e2e8f0",
+                              whiteSpace: "pre-line",
+                              background: "rgba(0,0,0,0.25)",
+                              padding: "10px 12px",
+                              borderRadius: "8px",
+                              border: "1px solid rgba(255,255,255,0.06)"
+                            }}>
+                              {summaryLoading ? "Analisando histórico e gerando tópicos com inteligência artificial..." : conversationSummary || "Sem resumo disponível."}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ALERTA DE TRANSFERÊNCIA PARA HUMANO / AGUARDANDO ATENDENTE */}
                         {(getEffectiveStage(current) === "waiting_human" || current.status === "urgent") && (
@@ -5472,6 +5892,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     )}
                   </article>
                 </section>
+                )}
               </>
             )}
 
@@ -5480,7 +5901,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               <>
                 <TeamOperatorsSection
                   operators={teamOperators}
-                  maxOperators={data?.plan?.maxOperators ?? 1}
+                  maxOperators={data?.plan?.maxOperators ?? 3}
                   planName={data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "CRM Premium")}
                   isSuspended={isSuspended}
                   ownerEmail={data?.viewer?.role === "owner" ? data.viewer.email : undefined}

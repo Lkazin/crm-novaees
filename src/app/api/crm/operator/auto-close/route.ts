@@ -64,3 +64,4 @@ export async function GET(request: NextRequest) {
 
   return privateJson({ error: "tenant_required" }, 400);
 }
+
