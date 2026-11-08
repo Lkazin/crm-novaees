@@ -1441,6 +1441,7 @@ export function UpgradeRequestModal({
   initialNotes,
   currentPlanName,
   plans,
+  pixConfig,
   onClose,
   onSubmitUpgrade,
 }: {
@@ -1449,6 +1450,13 @@ export function UpgradeRequestModal({
   initialNotes: string;
   currentPlanName: string;
   plans: CommercialPlanItem[];
+  pixConfig?: {
+    keyType?: string;
+    pixKey?: string;
+    beneficiaryName?: string;
+    bankName?: string;
+    instructions?: string;
+  };
   onClose: () => void;
   onSubmitUpgrade: (requestedPlan: string, notes: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
@@ -1457,16 +1465,32 @@ export function UpgradeRequestModal({
   const [sending, setSending] = useState(false);
   const [doneMsg, setDoneMsg] = useState("");
   const [submitError, setSubmitError] = useState("");
+  const [copiedPix, setCopiedPix] = useState(false);
 
   React.useEffect(() => {
     if (open) {
       setSelectedPlan(commercialPlanId(initialPlan || "CRM Premium"));
       setNotes(initialNotes || "");
       setDoneMsg("");
+      setCopiedPix(false);
     }
   }, [open, initialPlan, initialNotes]);
 
   if (!open) return null;
+
+  const chosenPlan = plans.find(p => p.id === selectedPlan) || plans.find(p => !p.isTrial);
+  const activePixKey = pixConfig?.pixKey || "58.742.894/0001-40";
+  const activeBeneficiary = pixConfig?.beneficiaryName || "NovaesWeb Soluções Digitais";
+  const activeBank = pixConfig?.bankName || "Banco Inter / NuBank";
+
+  const handleCopyPix = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(activePixKey).then(() => {
+        setCopiedPix(true);
+        setTimeout(() => setCopiedPix(false), 2500);
+      }).catch(() => {});
+    }
+  };
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1475,7 +1499,7 @@ export function UpgradeRequestModal({
     try {
       const res = await onSubmitUpgrade(selectedPlan, notes);
       if (res.ok) {
-        setDoneMsg(res.message || "Solicitação de upgrade registrada com sucesso no Painel Master da NovaesWeb!");
+        setDoneMsg(res.message || "Solicitação de upgrade registrada com sucesso! Aguarde a conferência do PIX pelo administrador Master para ativação.");
       } else setSubmitError(res.message || "Não foi possível enviar a solicitação.");
     } finally {
       setSending(false);
@@ -1494,10 +1518,10 @@ export function UpgradeRequestModal({
       placeItems: "center",
       padding: "16px"
     }}>
-      <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "500px", width: "100%", background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.4)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
+      <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "520px", width: "100%", background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.4)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0, fontSize: "18px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
-            <Sparkles size={20} color="#ec4899" /> Solicitar Upgrade de Plano
+            <Sparkles size={20} color="#ec4899" /> Solicitar Upgrade para CRM Premium
           </h3>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "18px", cursor: "pointer" }}>✕</button>
         </div>
@@ -1505,8 +1529,11 @@ export function UpgradeRequestModal({
         {submitError && <p role="alert">{submitError}</p>}
         {doneMsg ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            <div style={{ padding: "14px", borderRadius: "12px", background: "rgba(0,219,140,0.15)", border: "1px solid #00db8c", color: "#d1fae5", fontSize: "14px" }}>
-              ✅ {doneMsg}
+            <div style={{ padding: "16px", borderRadius: "12px", background: "rgba(0,219,140,0.15)", border: "1px solid #00db8c", color: "#d1fae5", fontSize: "14px", lineHeight: 1.5 }}>
+              ✅ <strong>{doneMsg}</strong>
+              <p style={{ margin: "8px 0 0", fontSize: "12.5px", color: "#a7f3d0" }}>
+                Seus dados continuam 100% preservados. O administrador Master verificará o comprovante e ativará seu CRM Premium no painel.
+              </p>
             </div>
             <button type="button" onClick={onClose} className="op-primary" style={{ padding: "10px", borderRadius: "10px", fontWeight: 700 }}>
               Fechar
@@ -1515,7 +1542,7 @@ export function UpgradeRequestModal({
         ) : (
           <form onSubmit={e => void handleConfirm(e)} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <p style={{ margin: 0, fontSize: "13px", color: "#c2bed4" }}>
-              Plano atual: <strong>{currentPlanName}</strong>. Escolha o novo plano desejado para enviar a solicitação diretamente à administração da NovaesWeb:
+              Plano atual: <strong>{currentPlanName}</strong>. Faça o upgrade para continuar atendendo e vendendo no WhatsApp com inteligência artificial:
             </p>
 
             <label style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>
@@ -1530,13 +1557,65 @@ export function UpgradeRequestModal({
               </select>
             </label>
 
+            {/* Box de Pagamento PIX e Instruções do Master */}
+            <div style={{
+              background: "rgba(139, 92, 246, 0.08)",
+              border: "1px solid rgba(139, 92, 246, 0.35)",
+              borderRadius: "14px",
+              padding: "16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px"
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: "#fff" }}>
+                  Valor da Mensalidade: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {chosenPlan?.price || "89,90"}/mês</strong>
+                </span>
+                <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px", background: "rgba(236,72,153,0.2)", color: "#f472b6", fontWeight: 700 }}>
+                  Aprovação pelo Master
+                </span>
+              </div>
+
+              <div style={{ background: "#110e1e", borderRadius: "10px", padding: "10px 14px", border: "1px dashed rgba(255,255,255,0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                <div>
+                  <small style={{ color: "#a59cb8", fontSize: "11px", display: "block" }}>Chave PIX (Oficial):</small>
+                  <strong style={{ color: "#e2e8f0", fontSize: "13px", letterSpacing: "0.5px" }}>{activePixKey}</strong>
+                  <small style={{ color: "#857f9d", fontSize: "11px", display: "block", marginTop: "2px" }}>{activeBeneficiary} · {activeBank}</small>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyPix}
+                  style={{
+                    background: copiedPix ? "#00db8c" : "linear-gradient(135deg, #ec4899, #8b5cf6)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "8px 12px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    transition: "all 0.2s ease"
+                  }}
+                >
+                  <Copy size={13} /> {copiedPix ? "Copiado!" : "Copiar Chave"}
+                </button>
+              </div>
+
+              <p style={{ margin: 0, fontSize: "12px", color: "#b9b4cc", lineHeight: 1.4 }}>
+                ℹ️ <strong>Como funciona a liberação:</strong> Realize o PIX de R$ {chosenPlan?.price || "89,90"} e confirme a solicitação abaixo. O administrador Master irá conferir o recebimento no banco e liberar sua conta Premium imediatamente.
+              </p>
+            </div>
+
             <label style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>
-              Observação ou necessidade da loja (opcional)
+              Nome de quem realizou o PIX ou comprovante (opcional)
               <textarea
-                rows={3}
+                rows={2}
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
-                placeholder="Ex.: Preciso liberar mais números de WhatsApp e etiquetas comerciais..."
+                placeholder="Ex.: PIX realizado por João Silva / Comprovante enviado via WhatsApp"
                 style={{ width: "100%", marginTop: "6px", padding: "10px 12px", borderRadius: "10px", background: "#141124", border: "1px solid #443c5e", color: "#fff", fontSize: "13px" }}
               />
             </label>
@@ -1544,7 +1623,7 @@ export function UpgradeRequestModal({
             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
               <button type="button" onClick={onClose} className="op-refresh">Cancelar</button>
               <button type="submit" disabled={sending || !plans.some(plan => !plan.isTrial && plan.id === selectedPlan && plan.name !== currentPlanName)} className="op-primary" style={{ padding: "10px 20px", borderRadius: "10px", fontWeight: 800 }}>
-                {sending ? "Enviando..." : "Confirmar Solicitação de Upgrade"}
+                {sending ? "Enviando..." : "Confirmar Pagamento e Solicitar Ativação"}
               </button>
             </div>
           </form>

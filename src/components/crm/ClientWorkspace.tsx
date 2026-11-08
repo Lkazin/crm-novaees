@@ -1956,14 +1956,14 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       {suspensionReason === "payment_overdue"
                         ? "Mensalidade do Plano Pendente — Respostas Automáticas em Pausa"
                         : suspensionReason === "trial_expired" || suspensionReason === "trial_quota_exhausted"
-                        ? "Período de Teste Grátis Encerrado — Dados 100% Preservados"
+                        ? "Período de Teste Grátis Encerrado — Seus Dados Estão 100% Salvos"
                         : "Acesso Administrativo Temporariamente Pausado"}
                     </h2>
-                    <p style={{margin: "4px 0 0", color: "#ffccd5", fontSize: "14px"}}>
+                    <p style={{margin: "4px 0 0", color: "#ffccd5", fontSize: "14px", lineHeight: 1.5}}>
                       {data?.publicSuspensionReason || data?.plan?.publicSuspensionReason || (
                         suspensionReason === "payment_overdue"
                           ? "A data de vencimento da mensalidade expirou. Regularize seu pagamento para que a IA continue respondendo no WhatsApp."
-                          : "Entre em contato com o suporte NovaesWeb ou solicite um plano comercial para reativação imediata."
+                          : "Seu teste grátis encerrou. Para a IA continuar atendendo e vendendo 24h por dia no seu WhatsApp, assine o plano CRM Premium (R$ 89,90/mês)."
                       )}
                     </p>
                   </div>
@@ -1972,9 +1972,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   type="button"
                   onClick={() => openUpgradeRequest("CRM Premium", "Reativar conta / Assinar CRM Premium (R$ 89,90)")}
                   className="op-primary"
-                  style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px"}}
+                  style={{padding: "12px 22px", borderRadius: "10px", fontWeight: 800, fontSize: "14px", background: "linear-gradient(135deg, #ec4899, #8b5cf6)", border: "none", boxShadow: "0 4px 15px rgba(236,72,153,0.4)"}}
                 >
-                  Solicitar Liberação / Upgrade
+                  Fazer Upgrade para CRM Premium (R$ 89,90)
                 </button>
               </section>
             )}
@@ -4984,6 +4984,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               initialNotes={upgradeModal.reason}
               currentPlanName={data?.plan?.name || "Plano indisponível"}
               plans={data?.commercialPlans ?? []}
+              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as any}
               onClose={() => setUpgradeModal(prev => ({ ...prev, open: false }))}
               onSubmitUpgrade={handleSubmitUpgradeRequest}
             />
