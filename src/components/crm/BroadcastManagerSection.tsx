@@ -296,3 +296,4 @@ export function BroadcastManagerSection({ onNotice, onError }: BroadcastManagerS
     </div>
   );
 }
+

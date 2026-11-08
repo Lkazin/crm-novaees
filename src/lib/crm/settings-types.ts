@@ -16,11 +16,19 @@ export type StoredTenantPlan = Record<string, unknown> & {
   monthlyQuotaUsed?: Record<string, number>;
 };
 
+export const DEFAULT_AUTOCLOSE_MESSAGE =
+  "Como não tivemos mais retorno por aqui, estamos finalizando este atendimento para manter nossa fila organizada. Se precisar de algo ou tiver qualquer dúvida, basta mandar uma nova mensagem a qualquer momento! Tenha um ótimo dia! 😊";
+
+export const DEFAULT_AUTOCLOSE_SURVEY_MESSAGE =
+  "Para avaliarmos nosso atendimento, como você classifica a experiência de hoje de 1 a 5 estrelas? Responda com uma nota de 1 a 5! ⭐";
+
 export type AutoCloseSettings = {
   enabled: boolean;
   timeoutMinutes: number;
   message: string;
   includeWaitingClient?: boolean;
+  sendSurvey?: boolean;
+  surveyMessage?: string;
 };
 
 export type StoredTenantConfig = Record<string, unknown> & {

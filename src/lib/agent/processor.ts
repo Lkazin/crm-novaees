@@ -457,7 +457,7 @@ export async function processWebhook(
           } catch {}
         }
 
-        const escalationReply = escalation.customerReply || "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa.";
+        const escalationReply = escalation.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
         await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
         await markItemsDone();
         try {
@@ -493,8 +493,9 @@ export async function processWebhook(
         return { status: "disabled", reason: "session_message_cap_handoff" };
       }
 
-      // 11. Attach conversation history to context
+      // 11. Attach conversation history and continuity state to context
       context.history = convContext.history;
+      context.isReturningAfterClosed = convContext.isReturningAfterClosed;
 
       if (deps.maySend && !(await deps.maySend(incoming))) {
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };

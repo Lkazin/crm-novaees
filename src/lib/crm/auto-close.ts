@@ -1,8 +1,12 @@
+import "server-only";
 import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
-import type { AutoCloseSettings } from "./settings-types";
+import {
+  DEFAULT_AUTOCLOSE_MESSAGE,
+  DEFAULT_AUTOCLOSE_SURVEY_MESSAGE,
+  type AutoCloseSettings
+} from "./settings-types";
 
-export const DEFAULT_AUTOCLOSE_MESSAGE =
-  "Como não tivemos mais retorno por aqui, estamos finalizando este atendimento para manter nossa fila organizada. Se precisar de algo ou tiver qualquer dúvida, basta mandar uma nova mensagem a qualquer momento! Tenha um ótimo dia! 😊";
+export { DEFAULT_AUTOCLOSE_MESSAGE, DEFAULT_AUTOCLOSE_SURVEY_MESSAGE };
 
 export type AutoCloseItemResult = {
   conversationId: string;
@@ -32,6 +36,8 @@ export type AutoCloseDeps = {
   saveOutboundMessage?: (tenantId: string, conversationId: string, text: string) => Promise<void>;
   updateConversationStatus?: (conversationId: string, status: string, mode: string) => Promise<void>;
   closeHandoffs?: (conversationId: string) => Promise<void>;
+  checkSurveySent?: (conversationId: string) => Promise<boolean>;
+  markSurveySent?: (conversationId: string) => Promise<void>;
   fetchAllActiveTenants?: () => Promise<Array<{ id: string; name: string }>>;
   now?: () => Date;
 };
@@ -89,7 +95,9 @@ export const defaultAutoCloseDeps: AutoCloseDeps = {
         enabled: Boolean(ac.enabled),
         timeoutMinutes: typeof ac.timeoutMinutes === "number" && ac.timeoutMinutes >= 5 ? Math.floor(ac.timeoutMinutes) : 30,
         message: typeof ac.message === "string" && ac.message.trim() ? ac.message : DEFAULT_AUTOCLOSE_MESSAGE,
-        includeWaitingClient: ac.includeWaitingClient !== false
+        includeWaitingClient: ac.includeWaitingClient !== false,
+        sendSurvey: Boolean(ac.sendSurvey),
+        surveyMessage: typeof ac.surveyMessage === "string" && ac.surveyMessage.trim() ? ac.surveyMessage : DEFAULT_AUTOCLOSE_SURVEY_MESSAGE
       };
     } catch {
       return null;
@@ -172,6 +180,33 @@ export const defaultAutoCloseDeps: AutoCloseDeps = {
     } catch {}
   },
 
+  checkSurveySent: async (conversationId: string) => {
+    try {
+      const redisUrl = process.env.CRM_REDIS_URL;
+      if (!redisUrl) return false;
+      const { default: Redis } = await import("ioredis");
+      const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+      await r.connect();
+      const exists = await r.exists(`crm:survey_sent:${conversationId}`);
+      r.disconnect();
+      return exists === 1;
+    } catch {
+      return false;
+    }
+  },
+
+  markSurveySent: async (conversationId: string) => {
+    try {
+      const redisUrl = process.env.CRM_REDIS_URL;
+      if (!redisUrl) return;
+      const { default: Redis } = await import("ioredis");
+      const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+      await r.connect();
+      await r.set(`crm:survey_sent:${conversationId}`, "1", "EX", 86400 * 3);
+      r.disconnect();
+    } catch {}
+  },
+
   fetchAllActiveTenants: async () => {
     try {
       return await supabaseFetch<Array<{ id: string; name: string }>>("crm_tenants?status=eq.active&select=id,name");
@@ -196,6 +231,8 @@ export async function runAutoCloseForTenant(
   const saveMsg = deps.saveOutboundMessage ?? defaultAutoCloseDeps.saveOutboundMessage!;
   const updateStatus = deps.updateConversationStatus ?? defaultAutoCloseDeps.updateConversationStatus!;
   const closeHandoffs = deps.closeHandoffs ?? defaultAutoCloseDeps.closeHandoffs!;
+  const checkSurvey = deps.checkSurveySent ?? defaultAutoCloseDeps.checkSurveySent!;
+  const markSurvey = deps.markSurveySent ?? defaultAutoCloseDeps.markSurveySent!;
   const getNow = deps.now ?? defaultAutoCloseDeps.now!;
 
   const settings = await getSettings(tenantId);
@@ -249,6 +286,21 @@ export async function runAutoCloseForTenant(
       if (sendRes.ok) {
         messageSent = true;
         await saveMsg(tenantId, conv.id, settings.message);
+
+        // Send CSAT survey only if enabled, avoiding duplicates
+        if (settings.sendSurvey) {
+          try {
+            const alreadySent = await checkSurvey(conv.id);
+            if (!alreadySent) {
+              const surveyText = settings.surveyMessage || DEFAULT_AUTOCLOSE_SURVEY_MESSAGE;
+              const surveyRes = await sendWhatsapp(phone, surveyText, instance);
+              if (surveyRes.ok) {
+                await saveMsg(tenantId, conv.id, surveyText);
+                await markSurvey(conv.id);
+              }
+            }
+          } catch {}
+        }
       } else {
         sendError = sendRes.error;
       }

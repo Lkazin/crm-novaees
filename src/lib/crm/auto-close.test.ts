@@ -154,3 +154,61 @@ test("reabertura: conversa fechada/resolved deve reabrir em modo ai ao receber n
   assert.equal(patchPayload.mode, "ai");
   assert.equal(patchPayload.assigned_to, null);
 });
+
+test("Etapa 6: runAutoCloseForTenant envia pesquisa de satisfação sem duplicar", async () => {
+  const fakeNow = new Date("2026-11-08T15:00:00Z");
+  const sentMessages: string[] = [];
+  const markedSurveys: string[] = [];
+  let surveyAlreadySent = false;
+
+  const deps: AutoCloseDeps = {
+    now: () => fakeNow,
+    fetchTenantSettings: async () => ({
+      enabled: true,
+      timeoutMinutes: 20,
+      message: "Atendimento encerrado por inatividade.",
+      includeWaitingClient: true,
+      sendSurvey: true,
+      surveyMessage: "Avalie nosso atendimento de 1 a 5 estrelas! ⭐"
+    }),
+    fetchActiveChannels: async () => [{ id: "ch1", instance_name: "inst-survey" }],
+    fetchExpiredConversations: async () => [
+      { id: "conv-survey-1", contact_id: "ct-survey", channel_id: "ch1", mode: "ai", status: "open", last_message_at: "2026-11-08T14:30:00Z" }
+    ],
+    fetchContactPhone: async () => "5511988887777",
+    sendWhatsappMessage: async (_phone, text) => {
+      sentMessages.push(text);
+      return { ok: true };
+    },
+    saveOutboundMessage: async () => {},
+    updateConversationStatus: async () => {},
+    closeHandoffs: async () => {},
+    checkSurveySent: async () => surveyAlreadySent,
+    markSurveySent: async id => {
+      markedSurveys.push(id);
+      surveyAlreadySent = true;
+    }
+  };
+
+  // Primeira execução: deve enviar a mensagem de encerramento E a pesquisa
+  const res1 = await runAutoCloseForTenant("tenant-survey", deps);
+  assert.equal(res1.closedCount, 1);
+  assert.equal(sentMessages.length, 2);
+  assert.equal(sentMessages[0], "Atendimento encerrado por inatividade.");
+  assert.equal(sentMessages[1], "Avalie nosso atendimento de 1 a 5 estrelas! ⭐");
+  assert.equal(markedSurveys.includes("conv-survey-1"), true);
+
+  // Segunda execução simulada (mesma conversa já avaliada): não pode duplicar a pesquisa
+  const sentMessages2: string[] = [];
+  const deps2: AutoCloseDeps = {
+    ...deps,
+    sendWhatsappMessage: async (_phone, text) => {
+      sentMessages2.push(text);
+      return { ok: true };
+    }
+  };
+
+  await runAutoCloseForTenant("tenant-survey", deps2);
+  assert.equal(sentMessages2.length, 1); // apenas a mensagem de encerramento, SEM pesquisa duplicada
+  assert.equal(sentMessages2[0], "Atendimento encerrado por inatividade.");
+});

@@ -301,7 +301,7 @@ test("6.3.a Solicitação de atendimento humano ('Quero falar com uma pessoa.') 
   assert.equal(esc.category, "human_request");
   assert.equal(
     esc.customerReply,
-    "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa."
+    "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você."
   );
 
   // Outras variações reais de pedido de atendente humano
@@ -356,7 +356,7 @@ test("6.3.a Solicitação de atendimento humano ('Quero falar com uma pessoa.') 
   assert.equal(aiCalled, false, "A IA não deve gerar resposta quando o cliente pede humano");
   assert.equal(
     sentReply,
-    "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa."
+    "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você."
   );
 });
 

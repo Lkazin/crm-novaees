@@ -446,3 +446,4 @@ export function WhatsAppRadarSection({ clients, onRefresh }: WhatsAppRadarSectio
     </div>
   );
 }
+

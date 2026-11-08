@@ -131,7 +131,7 @@ export function detectCustomerEscalation(text: string): EscalationResult {
       sentiment: "neutral",
       reason: "Solicitação de Atendente Humano",
       customerReply:
-        "Claro! 😊 Vou solicitar atendimento da nossa equipe para continuar sua conversa."
+        "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você."
     };
   }
 

@@ -165,10 +165,21 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-    if (conversation.status === "resolved" || conversation.status === "closed") {
+    const wasClosed = conversation.status === "resolved" || conversation.status === "closed";
+    if (wasClosed) {
       patchPayload.status = "open";
       patchPayload.mode = "ai";
       patchPayload.assigned_to = null;
+      try {
+        const redisUrl = process.env.CRM_REDIS_URL;
+        if (redisUrl) {
+          const { default: Redis } = await import("ioredis");
+          const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+          await r.connect();
+          await r.set(`crm:reopened_after_closed:${t}:${incoming.number}`, "1", "EX", 180);
+          r.disconnect();
+        }
+      } catch {}
     } else if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
       patchPayload.status = "open";
     }
@@ -224,10 +235,11 @@ export type ConversationContext = {
   status?: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   isFirstInteraction: boolean;
+  isReturningAfterClosed?: boolean;
 };
 
 export async function fetchConversationContext(instance: string, phone: string, limit = 10): Promise<ConversationContext> {
-  const fallback: ConversationContext = { mode: "ai", history: [], isFirstInteraction: true };
+  const fallback: ConversationContext = { mode: "ai", history: [], isFirstInteraction: true, isReturningAfterClosed: false };
   if (!isIngestEnabled(instance)) return fallback;
 
   try {
@@ -252,8 +264,45 @@ export async function fetchConversationContext(instance: string, phone: string, 
     const rawMsgs = await db<DbMsg[]>("crm_messages",
       "?conversation_id=eq." + conversation.id + "&select=direction,sender_type,body,created_at&order=created_at.desc&limit=" + limit, "GET");
 
+    let isReturningAfterClosed = false;
+
+    // Check Redis reopened flag
+    try {
+      const redisUrl = process.env.CRM_REDIS_URL;
+      if (redisUrl) {
+        const { default: Redis } = await import("ioredis");
+        const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+        await r.connect();
+        const flagged = await r.get(`crm:reopened_after_closed:${t}:${phone}`);
+        if (flagged) {
+          isReturningAfterClosed = true;
+          await r.del(`crm:reopened_after_closed:${t}:${phone}`);
+        }
+        r.disconnect();
+      }
+    } catch {}
+
+    if (conversation.status === "resolved" || conversation.status === "closed") {
+      isReturningAfterClosed = true;
+    }
+
+    if (!isReturningAfterClosed && rawMsgs && rawMsgs.length >= 2) {
+      const prevOutbound = rawMsgs.slice(1).find(m => m.direction === "outbound" || m.sender_type === "agent");
+      if (prevOutbound && prevOutbound.body) {
+        const bodyLower = prevOutbound.body.toLowerCase();
+        if (
+          bodyLower.includes("finalizando este atendimento") ||
+          bodyLower.includes("como não tivemos mais retorno") ||
+          bodyLower.includes("atendimento finalizado") ||
+          bodyLower.includes("atendimento encerrado")
+        ) {
+          isReturningAfterClosed = true;
+        }
+      }
+    }
+
     if (!rawMsgs || rawMsgs.length === 0) {
-      return { conversationId: conversation.id, channelStatus: channel.status, mode, status, history: [], isFirstInteraction: true };
+      return { conversationId: conversation.id, channelStatus: channel.status, mode, status, history: [], isFirstInteraction: true, isReturningAfterClosed };
     }
 
     const history = rawMsgs.reverse().map(m => ({
@@ -267,7 +316,8 @@ export async function fetchConversationContext(instance: string, phone: string, 
       mode,
       status,
       history,
-      isFirstInteraction: history.length <= 1
+      isFirstInteraction: history.length <= 1,
+      isReturningAfterClosed
     };
   } catch (err) {
     console.error("[supabase-fetch-context] Error:", err);

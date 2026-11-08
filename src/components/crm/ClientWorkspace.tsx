@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
 import KnowledgeWorkspace from "./KnowledgeWorkspace";
-import { DEFAULT_AUTOCLOSE_MESSAGE } from "@/lib/crm/auto-close";
+import { DEFAULT_AUTOCLOSE_MESSAGE } from "@/lib/crm/settings-types";
 import type { AutoCloseSettings } from "@/lib/crm/settings-types";
 import {
   Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
