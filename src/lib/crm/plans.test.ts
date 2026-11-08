@@ -41,13 +41,13 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
     assert.ok(legacyBusiness.features.includes("satisfaction_survey"));
   });
 
-  it("deve definir Teste Grátis (7 dias) com 100 atendimentos, 3 WhatsApps, 2 operadores e todas as funcionalidades Premium liberadas", () => {
+  it("deve definir Teste Grátis (7 dias) com 50 atendimentos, 3 WhatsApps, 2 operadores de equipe e todas as funcionalidades Premium liberadas", () => {
     assert.equal(TRIAL_PLAN.id, "crm-trial");
     assert.equal(TRIAL_PLAN.price, "0,00");
-    assert.equal(TRIAL_PLAN.quotaLimit, 100);
+    assert.equal(TRIAL_PLAN.quotaLimit, 50);
     assert.equal(TRIAL_PLAN.durationDays, 7);
     assert.equal(TRIAL_PLAN.maxWhatsappConnections, 3);
-    assert.equal(TRIAL_PLAN.maxOperators, 2);
+    assert.equal(TRIAL_PLAN.maxOperators, 3);
     assert.ok(TRIAL_PLAN.features.includes("business_hours"));
     assert.ok(TRIAL_PLAN.features.includes("commercial_tags"));
     assert.ok(TRIAL_PLAN.features.includes("conversation_priority"));
@@ -96,7 +96,7 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
     assert.equal(premium.price, "89,90");
     assert.equal(premium.quotaLimit, 1200);
     assert.equal(premium.maxWhatsappConnections, 3);
-    assert.equal(premium.maxOperators, 2);
+    assert.equal(premium.maxOperators, 3);
     assert.ok(premium.features.includes("advanced_reports"));
     assert.ok(premium.features.includes("satisfaction_analytics"));
     assert.ok(premium.features.includes("operator_indicators"));
@@ -219,11 +219,11 @@ describe("Catálogo publicado e nomes comerciais", () => {
     assert.equal(normalized.maxOperators, 3);
     assert.deepEqual(normalized.features, ["ai_chat"]);
   });
-  it("mantém o teste grátis sem cobrança e com franquia de 100", () => {
+  it("mantém o teste grátis sem cobrança e com franquia de 50", () => {
     const normalized = normalizeCatalogPlan({...TRIAL_PLAN, name:"Plano Plus", price:"99,90", quotaLimit:999});
     assert.equal(normalized.name, TRIAL_PLAN.name);
     assert.equal(normalized.price, "0,00");
-    assert.equal(normalized.quotaLimit, 100);
+    assert.equal(normalized.quotaLimit, 50);
   });
   it("identifica o plano necessário pelo catálogo publicado quando o Master move um recurso", () => {
     const published = DEFAULT_PLANS.map(p => ({...p, features:p.id === "crm-premium" ? p.features : p.features.filter(f => f !== "quick_replies")}));

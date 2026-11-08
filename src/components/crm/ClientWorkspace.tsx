@@ -419,6 +419,10 @@ export default function ClientWorkspace({
 
   // Guided Setup Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [templateLoadedMsg, setTemplateLoadedMsg] = useState("");
+  const [miniSimQuestion, setMiniSimQuestion] = useState("");
+  const [miniSimLoading, setMiniSimLoading] = useState(false);
+  const [miniSimHistory, setMiniSimHistory] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardData, setWizardData] = useState({
     storeName: "",
@@ -1328,6 +1332,103 @@ export default function ClientWorkspace({
   }
 
   // Generate AI Store Knowledge from Wizard
+  const handleSelectNicheTemplate = (nicheKey: string) => {
+    const templates: Record<string, { storeName?: string; productsPrices: string; hoursDelivery: string; address: string; faqs: string; humanHandoffRules: string; tone: string; name: string }> = {
+      delivery: {
+        name: "Delivery / Restaurante / Pizzaria",
+        productsPrices: "Cardápio Principal:\n- Pizza Grande (8 fatias): R$ 49,90 (Calabresa, Muçarela, Frango c/ Catupiry, Quatro Queijos)\n- Pizza Doce: R$ 39,90 (Chocolate, Romeu e Julieta)\n- Refrigerante 2L: R$ 12,00\n- Borda recheada grátis de Terça a Quinta!",
+        hoursDelivery: "Terça a Domingo das 18h às 23h30. Tempo de entrega: 35 a 50 minutos. Taxa fixa: R$ 7,00.",
+        address: "Rua das Flores, 120 - Centro. Fazemos entregas em toda a cidade e retirada no balcão.",
+        faqs: "P: Quais formas de pagamento?\nR: PIX, Cartão de Crédito/Débito e Dinheiro na entrega.\n\nP: Qual o tempo de entrega?\nR: De 35 a 50 minutos em média.",
+        humanHandoffRules: "Se o cliente quiser cancelar um pedido já em preparo ou relatar algum problema na entrega, transfira para atendente humano.",
+        tone: "amigavel"
+      },
+      clinica: {
+        name: "Clínica / Consultório / Saúde",
+        productsPrices: "Serviços e Consultas:\n- Consulta Clínica Geral: R$ 150,00\n- Avaliação Odontológica / Check-up: Gratuita na primeira visita\n- Limpeza e Profilaxia: R$ 120,00\n- Exames laboratoriais de rotina.",
+        hoursDelivery: "Segunda a Sexta das 08h às 18h e Sábados das 08h às 12h. Atendimento com hora marcada.",
+        address: "Av. Principal, 1500 - Sala 42. Estacionamento conveniado no local.",
+        faqs: "P: Atendem convênio médico?\nR: Atendemos particular com recibo para reembolso e os principais convênios.\n\nP: Como agendar?\nR: Basta nos informar seu nome, melhor dia e período (manhã ou tarde).",
+        humanHandoffRules: "Em casos de urgência médica, dor aguda ou agendamento de cirurgias, transfira para atendente humano imediatamente.",
+        tone: "formal"
+      },
+      servicos: {
+        name: "Prestação de Serviços / Assistência",
+        productsPrices: "Nossos Serviços:\n- Orçamento no local: Sem taxa de deslocamento para nossa região\n- Manutenção preventiva e corretiva com garantia de 90 dias\n- Pacotes mensais para empresas e residências.",
+        hoursDelivery: "Segunda a Sexta das 08h às 18h. Plantão de emergência via WhatsApp.",
+        address: "Atendemos a domicílio em toda a região metropolitana.",
+        faqs: "P: Vocês dão garantia?\nR: Sim, todos os nossos serviços têm garantia de 90 dias com nota fiscal.\n\nP: Como funciona o orçamento?\nR: Você pode nos enviar uma foto ou descrição do problema por aqui mesmo.",
+        humanHandoffRules: "Quando o cliente solicitar proposta formal para empresa ou fechar contrato, passe para um atendente responsável.",
+        tone: "amigavel"
+      },
+      varejo: {
+        name: "Loja / Varejo / Moda & Acessórios",
+        productsPrices: "Coleção Atual:\n- Peças e Acessórios a partir de R$ 39,90\n- Parcelamento em até 6x sem juros no cartão\n- 5% de desconto no PIX.",
+        hoursDelivery: "Segunda a Sábado das 09h às 19h. Enviamos para todo o Brasil e entregas no mesmo dia na cidade.",
+        address: "Rua do Comércio, 450 - Centro. Enviamos também pelo WhatsApp!",
+        faqs: "P: Qual o prazo de troca?\nR: Você tem até 30 dias para trocar qualquer peça sem custo.\n\nP: Como comprar?\nR: Basta me dizer qual produto você gostou que te envio o link de pagamento ou chave PIX.",
+        humanHandoffRules: "Se o cliente quiser falar sobre trocas ou parcerias, transfira para a equipe.",
+        tone: "amigavel"
+      }
+    };
+
+    const sel = templates[nicheKey];
+    if (sel) {
+      setWizardData({
+        storeName: currentTenantObj?.name || sel.storeName || "",
+        productsPrices: sel.productsPrices,
+        hoursDelivery: sel.hoursDelivery,
+        address: sel.address,
+        faqs: sel.faqs,
+        humanHandoffRules: sel.humanHandoffRules,
+        tone: sel.tone
+      });
+      setTemplateLoadedMsg(`✨ Modelo de "${sel.name}" aplicado! Você pode editar qualquer texto livremente abaixo.`);
+      setTimeout(() => setTemplateLoadedMsg(""), 6000);
+    }
+  };
+
+  const handleRunMiniSimulator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!miniSimQuestion.trim() || miniSimLoading) return;
+    const q = miniSimQuestion.trim();
+    setMiniSimQuestion("");
+    setMiniSimLoading(true);
+    setMiniSimHistory(prev => [...prev, { role: "user", text: q }]);
+    try {
+      const draftInstructions = instructions || "";
+      const draftStoreInfo = `Empresa: ${currentTenantObj?.name || ""}
+Preços e Produtos: ${wizardData.productsPrices || ""}
+Horários: ${wizardData.hoursDelivery || ""}
+Endereço: ${wizardData.address || ""}
+Perguntas Frequentes: ${wizardData.faqs || ""}`;
+      const res = await fetch("/api/crm/operator/simulator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: tenant,
+          question: q,
+          context: {
+            storeName: currentTenantObj?.name,
+            instructions: draftInstructions,
+            storeInfo: draftStoreInfo,
+            history: miniSimHistory.map(m => ({ role: m.role, content: m.text }))
+          }
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.reply) {
+        setMiniSimHistory(prev => [...prev, { role: "assistant", text: data.reply }]);
+      } else {
+        setMiniSimHistory(prev => [...prev, { role: "assistant", text: data.message || "Não foi possível gerar resposta no simulador." }]);
+      }
+    } catch {
+      setMiniSimHistory(prev => [...prev, { role: "assistant", text: "Erro ao conectar com o simulador de IA." }]);
+    } finally {
+      setMiniSimLoading(false);
+    }
+  };
+
   function handleGenerateFromWizard() {
     const sName = wizardData.storeName.trim() || currentTenantObj?.name || "Nossa Loja";
     const toneDescription = wizardData.tone === "formal"
@@ -1935,6 +2036,138 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             </div>
 
+            {/* CARD DE RESULTADO COMERCIAL & VALOR GERADO PELA IA */}
+            <section style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "12px",
+              marginBottom: "20px"
+            }}>
+              <div style={{background: "#18142a", border: "1px solid rgba(139, 92, 246, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
+                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(139, 92, 246, 0.15)", display: "grid", placeItems: "center"}}>
+                  <MessageSquare size={20} color="#a78bfa" />
+                </div>
+                <div>
+                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Mensagens Atendidas</small>
+                  <strong style={{color: "#fff", fontSize: "18px"}}>{data?.plan?.quotaUsed || 0}</strong>
+                </div>
+              </div>
+              <div style={{background: "#18142a", border: "1px solid rgba(0, 219, 140, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
+                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center"}}>
+                  <Zap size={20} color="#00db8c" />
+                </div>
+                <div>
+                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Tempo de Resposta</small>
+                  <strong style={{color: "#00db8c", fontSize: "18px"}}>~3s (Instantâneo)</strong>
+                </div>
+              </div>
+              <div style={{background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
+                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center"}}>
+                  <Bot size={20} color="#ec4899" />
+                </div>
+                <div>
+                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Status da IA</small>
+                  <strong style={{color: isSuspended ? "#f43f5e" : "#85e6b5", fontSize: "18px"}}>{isSuspended ? "Em Pausa" : "Ativa 24h/dia"}</strong>
+                </div>
+              </div>
+              <div style={{background: "#18142a", border: "1px solid rgba(245, 158, 11, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
+                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.15)", display: "grid", placeItems: "center"}}>
+                  <Users size={20} color="#f59e0b" />
+                </div>
+                <div>
+                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Contatos Salvos</small>
+                  <strong style={{color: "#fff", fontSize: "18px"}}>{contacts.length}</strong>
+                </div>
+              </div>
+            </section>
+
+            {/* ONBOARDING GUIADO EM 3 PASSOS (PRIMEIRO ACESSO & TESTE) */}
+            {data?.plan?.isTrial && !isSuspended && (
+              <section style={{
+                background: "linear-gradient(135deg, rgba(24, 16, 44, 0.95), rgba(16, 12, 30, 0.95))",
+                border: "1px solid rgba(139, 92, 246, 0.35)",
+                borderRadius: "16px",
+                padding: "18px 22px",
+                marginBottom: "20px",
+                boxShadow: "0 8px 30px rgba(0, 0, 0, 0.3)"
+              }}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                    <Sparkles size={20} color="#ec4899" />
+                    <strong style={{color: "#fff", fontSize: "15px"}}>
+                      Comece por Aqui: Ativação da sua Loja em 3 Passos Rápidos
+                    </strong>
+                  </div>
+                  <span style={{fontSize: "12px", color: "#a59cb8"}}>Siga os passos abaixo para começar a vender automaticamente</span>
+                </div>
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px"}}>
+                  <div
+                    onClick={() => setActiveTab("whatsapp")}
+                    style={{
+                      cursor: "pointer",
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      background: whatsappSlots.some(s => s.status === "connected") ? "rgba(0, 219, 140, 0.1)" : "rgba(255, 255, 255, 0.04)",
+                      border: `1px solid ${whatsappSlots.some(s => s.status === "connected") ? "#00db8c" : "rgba(255, 255, 255, 0.1)"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px"
+                    }}
+                  >
+                    <span style={{fontSize: "18px"}}>{whatsappSlots.some(s => s.status === "connected") ? "✅" : "1️⃣"}</span>
+                    <div>
+                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>1. Conectar WhatsApp</strong>
+                      <small style={{fontSize: "11px", color: whatsappSlots.some(s => s.status === "connected") ? "#6ee7b7" : "#a59cb8"}}>
+                        {whatsappSlots.some(s => s.status === "connected") ? "WhatsApp Conectado" : "Ler QR Code agora →"}
+                      </small>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setActiveTab("conhecimento")}
+                    style={{
+                      cursor: "pointer",
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      background: instructions ? "rgba(0, 219, 140, 0.1)" : "rgba(255, 255, 255, 0.04)",
+                      border: `1px solid ${instructions ? "#00db8c" : "rgba(255, 255, 255, 0.1)"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px"
+                    }}
+                  >
+                    <span style={{fontSize: "18px"}}>{instructions ? "✅" : "2️⃣"}</span>
+                    <div>
+                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>2. Configurar IA</strong>
+                      <small style={{fontSize: "11px", color: instructions ? "#6ee7b7" : "#a59cb8"}}>
+                        {instructions ? "IA Configurada" : "Escolher modelo de nicho →"}
+                      </small>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setActiveTab("simulador")}
+                    style={{
+                      cursor: "pointer",
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      background: "rgba(255, 255, 255, 0.04)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px"
+                    }}
+                  >
+                    <span style={{fontSize: "18px"}}>3️⃣</span>
+                    <div>
+                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>3. Testar Respostas</strong>
+                      <small style={{fontSize: "11px", color: "#a59cb8"}}>Abrir simulador interativo →</small>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
             {/* ALERTA DE BLOQUEIO / SUSPENSÃO POR MENSALIDADE OU ADMINISTRATIVO */}
             {isSuspended && (
               <section className="op-card" style={{
@@ -2017,7 +2250,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </section>
             )}
 
-            {/* BANNER INFORMATIVO: TESTE GRÁTIS DE 7 DIAS */}
+            {/* BANNER INFORMATIVO: TESTE GRÁTIS DE 7 DIAS (COM RÉGUA PREVENTIVA DIAS 5, 6 E 7) */}
             {data?.plan?.isTrial && !isSuspended && (
               <section
                 style={{
@@ -2768,6 +3001,122 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       <small style={{color: "#c2bed4"}}>Você define o nome, a simpatia, os preços e todas as regras do atendimento.</small>
                     </div>
                   </div>
+                </div>
+
+                {/* 1-CLICK TEMPLATES DE NICHO (100% EDITÁVEIS PELO LOJISTA) */}
+                <div style={{
+                  padding: "16px 20px",
+                  borderRadius: "14px",
+                  background: "linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(139, 92, 246, 0.08))",
+                  border: "1px solid rgba(236, 72, 153, 0.3)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px"
+                }}>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px"}}>
+                    <div>
+                      <strong style={{color: "#fff", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px"}}>
+                        <Sparkles size={16} color="#ec4899" /> Modelos Prontos por Nicho (1 Clique para Preencher)
+                      </strong>
+                      <span style={{color: "#c2bed4", fontSize: "12px"}}>
+                        Clique em um nicho para carregar as informações iniciais. Você pode editar qualquer texto livremente abaixo!
+                      </span>
+                    </div>
+                    {templateLoadedMsg && (
+                      <span style={{fontSize: "12px", color: "#6ee7b7", fontWeight: 700, background: "rgba(16, 185, 129, 0.2)", padding: "4px 10px", borderRadius: "8px", border: "1px solid #10b981"}}>
+                        {templateLoadedMsg}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "10px"}}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("delivery")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🍕</span> Delivery / Pizzaria
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("clinica")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🏥</span> Clínica / Saúde
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("servicos")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>💼</span> Prestador de Serviços
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("varejo")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🛍️</span> Loja / Varejo / Moda
+                    </button>
+                  </div>
+                </div>
+
+                <div>
 
                   <button
                     type="button"
@@ -3117,6 +3466,116 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </button>
                   </div>
                 </form>
+
+                {/* MINI SIMULADOR LADO A LADO NA ABA DE CONFIGURAÇÃO */}
+                <div style={{
+                  marginTop: "8px",
+                  padding: "20px",
+                  borderRadius: "16px",
+                  background: "linear-gradient(135deg, rgba(24, 18, 42, 0.95), rgba(15, 12, 28, 0.95))",
+                  border: "1px solid rgba(236, 72, 153, 0.35)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "14px"
+                }}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                      <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center"}}>
+                        <Play size={18} color="#fff" />
+                      </div>
+                      <div>
+                        <strong style={{color: "#fff", fontSize: "15px", display: "block"}}>
+                          Testar Minha IA Agora (Simulador Integrado)
+                        </strong>
+                        <small style={{color: "#aba8bf"}}>Faça uma pergunta para ver como sua IA responderá aos clientes com as regras atuais.</small>
+                      </div>
+                    </div>
+                    {miniSimHistory.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setMiniSimHistory([])}
+                        style={{background: "transparent", border: "none", color: "#a59cb8", fontSize: "12px", cursor: "pointer", textDecoration: "underline"}}
+                      >
+                        Limpar conversa
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Chat bubbles */}
+                  <div style={{
+                    minHeight: "140px",
+                    maxHeight: "260px",
+                    overflowY: "auto",
+                    background: "#110e1e",
+                    borderRadius: "12px",
+                    padding: "14px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                    border: "1px solid rgba(255, 255, 255, 0.08)"
+                  }}>
+                    {miniSimHistory.length === 0 ? (
+                      <div style={{textAlign: "center", color: "#857f9d", fontSize: "13px", padding: "30px 0"}}>
+                        💬 Digite uma pergunta abaixo (ex.: <em>&quot;Quanto custa a pizza grande?&quot;</em> ou <em>&quot;Qual o horário de vocês?&quot;</em>) para testar sua assistente virtual.
+                      </div>
+                    ) : (
+                      miniSimHistory.map((msg, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                            maxWidth: "80%",
+                            padding: "10px 14px",
+                            borderRadius: "14px",
+                            background: msg.role === "user" ? "linear-gradient(135deg, #ec4899, #8b5cf6)" : "#1e1834",
+                            color: "#fff",
+                            fontSize: "13px",
+                            lineHeight: 1.4,
+                            border: msg.role === "assistant" ? "1px solid rgba(255, 255, 255, 0.1)" : "none"
+                          }}
+                        >
+                          <small style={{display: "block", fontSize: "10px", color: msg.role === "user" ? "#fbcfe8" : "#a78bfa", marginBottom: "2px", fontWeight: 700}}>
+                            {msg.role === "user" ? "Você (Cliente)" : (agentLabel || "Assistente IA")}
+                          </small>
+                          {msg.text}
+                        </div>
+                      ))
+                    )}
+                    {miniSimLoading && (
+                      <div style={{alignSelf: "flex-start", padding: "8px 12px", borderRadius: "10px", background: "#1e1834", color: "#ec4899", fontSize: "12px"}}>
+                        ⚡ Pensando na resposta...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Input form */}
+                  <form onSubmit={handleRunMiniSimulator} style={{display: "flex", gap: "10px"}}>
+                    <input
+                      type="text"
+                      value={miniSimQuestion}
+                      onChange={e => setMiniSimQuestion(e.target.value)}
+                      placeholder="Faça uma pergunta de teste para a IA..."
+                      disabled={miniSimLoading}
+                      style={{
+                        flex: 1,
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#121020",
+                        border: "1px solid #443c5e",
+                        color: "#fff",
+                        fontSize: "13px"
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={miniSimLoading || !miniSimQuestion.trim()}
+                      className="op-primary"
+                      style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 700, fontSize: "13px"}}
+                    >
+                      {miniSimLoading ? "Enviando..." : "Testar"}
+                    </button>
+                  </form>
+                </div>
               </section>
             )}
 
@@ -4970,7 +5429,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               onClose={() => setRechargeModalOpen(false)}
               tenantId={tenant}
               currentBalance={localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
-              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as any}
+              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as Parameters<typeof RechargeMessagesModal>[0]["pixConfig"]}
               onRechargeSubmitted={() => {
                 if (tenant) {
                   void fetchReports(tenant);
@@ -4984,7 +5443,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               initialNotes={upgradeModal.reason}
               currentPlanName={data?.plan?.name || "Plano indisponível"}
               plans={data?.commercialPlans ?? []}
-              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as any}
+              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as Parameters<typeof UpgradeRequestModal>[0]["pixConfig"]}
               onClose={() => setUpgradeModal(prev => ({ ...prev, open: false }))}
               onSubmitUpgrade={handleSubmitUpgradeRequest}
             />

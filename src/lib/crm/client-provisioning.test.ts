@@ -54,7 +54,7 @@ test("Premium client receives exactly the selected published plan snapshot",asyn
 });
 test("free trial is created as a trial with a real expiry and zero price",async()=>{
  const f=fixture();const r=await f.post({planId:"crm-trial"});assert.equal(r.status,201);
- const result=await r.json();assert.equal(result.plan.price,"0,00");assert.equal(result.plan.isTrial,true);assert.equal(result.plan.quotaLimit,100);
+ const result=await r.json();assert.equal(result.plan.price,"0,00");assert.equal(result.plan.isTrial,true);assert.equal(result.plan.quotaLimit,50);
  assert.equal(result.plan.maxWhatsappConnections,3);assert.ok(Date.parse(result.plan.trialExpiresAt)>Date.parse(result.plan.trialStartedAt));
 });
 for(const path of ["/rest/v1/crm_tenant_memberships","/rest/v1/crm_tenant_settings","/rest/v1/crm_agents","/rest/v1/crm_channels"]){

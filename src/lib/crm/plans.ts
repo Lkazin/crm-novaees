@@ -394,7 +394,7 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     name: "CRM Premium",
     price: "89,90",
     quotaLimit: 1200, // 1.200 mensagens da IA por mês
-    maxOperators: 2, // Até 2 operadores (1 titular + 1 atendente)
+    maxOperators: 3, // Até 3 acessos (1 titular + 2 operadores de equipe)
     maxWhatsappConnections: 3, // Até 3 WhatsApps conectados (de 5 espaços)
     isPopular: true,
     description: "Plano definitivo com inteligência artificial completa, múltiplos WhatsApps e recarga de mensagens.",
@@ -402,7 +402,7 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     featureBullets: [
       "1.200 mensagens da IA por mês",
       "Até 3 WhatsApps conectados (de 5 espaços)",
-      "Até 2 operadores humanos (1 titular + 1 atendente)",
+      "Até 2 operadores humanos na equipe (+ 1 titular)",
       "Todas as funcionalidades liberadas",
       "Recargas adicionais: R$ 20,00 = 100 mensagens",
       "Suporte prioritário"
@@ -456,17 +456,17 @@ export const TRIAL_PLAN: CrmPlan & { durationDays: number } = {
   id: "crm-trial",
   name: "Teste Grátis (7 Dias)",
   price: "0,00",
-  quotaLimit: 100, // 100 mensagens da IA no período de teste
+  quotaLimit: 50, // 50 mensagens da IA no período de teste
   durationDays: 7,
-  maxOperators: 2, // Até 2 operadores
-  maxWhatsappConnections: 3, // Até 3 WhatsApps conectados
+  maxOperators: 3, // Até 3 acessos (1 titular + 2 operadores de equipe)
+    maxWhatsappConnections: 3, // Até 3 WhatsApps conectados
   description: "Avaliação gratuita de 7 dias com todas as funcionalidades Premium liberadas.",
   features: [...PREMIUM_FEATURES],
   featureBullets: [
     "7 dias corridos de teste grátis",
-    "100 mensagens da IA incluídas",
+    "50 mensagens da IA incluídas",
     "Até 3 WhatsApps conectados (de 5 espaços)",
-    "Até 2 operadores humanos",
+    "Até 2 operadores humanos na equipe (+ 1 titular)",
     "Todas as funcionalidades Premium liberadas",
     "Dados 100% preservados ao final do período"
   ],
@@ -521,7 +521,7 @@ export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
       status: defaultMatch.status,
       maxOperators: Math.min(raw.maxOperators, defaultMatch.maxOperators),
       maxWhatsappConnections: Math.min(raw.maxWhatsappConnections, defaultMatch.maxWhatsappConnections),
-      ...(defaultMatch.id === "crm-trial" ? { price: "0,00", quotaLimit: 100 } : {}),
+      ...(defaultMatch.id === "crm-trial" ? { price: "0,00", quotaLimit: defaultMatch.quotaLimit } : {}),
       ...(defaultMatch.id === "crm-premium" ? { price: "89,90", quotaLimit: 1200 } : {})
     };
   }
@@ -1589,12 +1589,12 @@ export async function getEffectiveTenantPlan(
       if (!publicSuspensionReason) {
         publicSuspensionReason = "Seu período de Teste Grátis (7 dias) terminou. Seus dados estão preservados — escolha um plano para continuar.";
       }
-    } else if (quotaUsed >= 100) {
+    } else if (quotaUsed >= (matchedPlan.quotaLimit || 50)) {
       trialStatus = "quota_exhausted";
       isSuspended = true;
       if (!suspensionReason) suspensionReason = "trial_quota_exhausted";
       if (!publicSuspensionReason) {
-        publicSuspensionReason = "Você atingiu o limite de 100 mensagens da IA do Teste Grátis. Seus dados estão preservados — faça upgrade para continuar.";
+        publicSuspensionReason = "Você atingiu o limite de mensagens da IA do Teste Grátis. Seus dados estão preservados — faça upgrade para continuar.";
       }
     } else if (trialDaysLeft <= 3) {
       trialStatus = "expiring_soon";

@@ -622,8 +622,10 @@ export function TeamOperatorsSection({
 
   const activeOperators = operators.filter(o => o.status === "active");
   // Total seats used includes owner (1) + active employee operators
-  const totalUsed = activeOperators.length + 1;
-  const limitReached = totalUsed >= maxOperators;
+  // Team operators used (excluding titular). maxOperators represents total seats (titular + team) or direct team limit
+  const teamLimit = Math.max(1, maxOperators > 1 ? maxOperators - 1 : 1);
+  const totalUsed = activeOperators.length;
+  const limitReached = totalUsed >= teamLimit;
 
   const handleGeneratePassword = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -640,7 +642,7 @@ export function TeamOperatorsSection({
     setNotice("");
     setErr("");
     if (limitReached) {
-      setErr(`Limite de ${maxOperators} acesso(s) atingido no plano ${planName}.`);
+      setErr(`Limite de ${teamLimit} operador(es) da equipe atingido no plano ${planName}.`);
       return;
     }
     if (password.length < 6) {
@@ -692,7 +694,7 @@ export function TeamOperatorsSection({
           </div>
           <div>
             <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
-              Minha Equipe — {totalUsed} de {maxOperators} acessos utilizados
+              Minha Equipe — {totalUsed} de {teamLimit} operadores utilizados
             </h2>
             <small style={{ color: "#c2bed4", fontSize: "13px", display: "block", marginTop: "2px" }}>
               Gerencie quem pode atender clientes e assumir conversas na sua empresa.
@@ -710,7 +712,7 @@ export function TeamOperatorsSection({
             color: limitReached ? "#fcd34d" : "#00db8c",
             border: `1px solid ${limitReached ? "#f59e0b" : "#00db8c"}`
           }}>
-            {totalUsed} / {maxOperators} vagas ocupadas ({planName})
+            {totalUsed} / {teamLimit} vagas de operadores ocupadas ({planName})
           </span>
 
           <button
@@ -783,10 +785,10 @@ export function TeamOperatorsSection({
             <LockKeyhole size={26} color="#ec4899" style={{ flexShrink: 0 }} />
             <div>
               <strong style={{ color: "#fff", fontSize: "15px", display: "block" }}>
-                Limite de {maxOperators} acesso(s) do plano {planName} atingido
+                Limite de {teamLimit} operador(es) da equipe atingido ({planName})
               </strong>
               <span style={{ color: "#d1c8e6", fontSize: "13px" }}>
-                O titular da conta conta como 1 acesso. O plano CRM Premium permite até 2 operadores humanos simultâneos.
+                O plano CRM Premium permite até 2 operadores humanos na sua equipe simultaneamente além do titular da conta.
               </span>
             </div>
           </div>
