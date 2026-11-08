@@ -240,30 +240,41 @@ export async function POST(req: NextRequest) {
       }
 
       if (effectivePlan.featureStates?.ai_chat?.state === "maintenance") return NextResponse.json({ error: "FEATURE_MAINTENANCE" }, { status: 503 });
-      // Check slot number against maxWhatsappConnections (1 for Trial/Start, 3 for Business, 5 for Premium)
-      if (slotNumber > effectivePlan.maxWhatsappConnections) {
-        const requiredPlan = slotNumber <= 3 ? "CRM Business" : "CRM Premium";
-        return NextResponse.json({
-          error: "whatsapp_slot_locked",
-          slot: slotNumber,
-          maxAllowed: effectivePlan.maxWhatsappConnections,
-          requiredPlan,
-          message: `O Espaço WhatsApp #${slotNumber} está bloqueado no seu plano ${effectivePlan.planName} (limite: ${effectivePlan.maxWhatsappConnections} de 5). Solicite upgrade para o ${requiredPlan} para liberar este espaço.`
-        }, { status: 403 });
-      }
 
-      // Also verify total non-paused channels + concurrent connection attempts so user cannot bypass slot naming
-      
-      const occupiedChannels = existingChannels.filter(
-        c => c.status !== "paused" && c.instance_name !== instanceName
-      );
+      // Master bypasses tenant connection limits (Master is superadmin/agency owner)
+      if (!masterAuth.authorized) {
+        // Check slot number against maxWhatsappConnections (1 for Start, 3 for Business/Trial, 5 for Premium)
+        if (slotNumber > effectivePlan.maxWhatsappConnections) {
+          const requiredPlan = slotNumber <= 3 ? "CRM Business" : "CRM Premium";
+          const isMaxPlan = effectivePlan.planId === "crm-premium" || effectivePlan.maxWhatsappConnections >= 5;
+          const upgradeText = isMaxPlan
+            ? "Este espaço excede a capacidade máxima de conexões permitidas no CRM."
+            : `Solicite upgrade para o ${requiredPlan} para liberar este espaço.`;
+          return NextResponse.json({
+            error: "whatsapp_slot_locked",
+            slot: slotNumber,
+            maxAllowed: effectivePlan.maxWhatsappConnections,
+            requiredPlan,
+            message: `O Espaço WhatsApp #${slotNumber} está bloqueado no seu plano ${effectivePlan.planName} (limite: ${effectivePlan.maxWhatsappConnections} de 5). ${upgradeText}`
+          }, { status: 403 });
+        }
 
-      if (occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
-        return NextResponse.json({
-          error: "whatsapp_limit_reached",
-          maxAllowed: effectivePlan.maxWhatsappConnections,
-          message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxWhatsappConnections} conexão(ões) de WhatsApp (de 5 espaços). Solicite upgrade para liberar mais números.`
-        }, { status: 403 });
+        // Also verify total non-paused channels + concurrent connection attempts so user cannot bypass slot naming
+        const occupiedChannels = existingChannels.filter(
+          c => c.status !== "paused" && c.instance_name !== instanceName
+        );
+
+        if (occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
+          const isMaxPlan = effectivePlan.planId === "crm-premium" || effectivePlan.maxWhatsappConnections >= 5;
+          const upgradeText = isMaxPlan
+            ? "Você atingiu a capacidade máxima de conexões simultâneas permitidas."
+            : "Solicite upgrade para liberar mais números.";
+          return NextResponse.json({
+            error: "whatsapp_limit_reached",
+            maxAllowed: effectivePlan.maxWhatsappConnections,
+            message: `Seu plano ${effectivePlan.planName} permite até ${effectivePlan.maxWhatsappConnections} conexão(ões) de WhatsApp (de 5 espaços). ${upgradeText}`
+          }, { status: 403 });
+        }
       }
 
       // Control simultaneous connection attempts via Redis lock

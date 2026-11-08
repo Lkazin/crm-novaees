@@ -47,7 +47,7 @@ test("invalid client plan ID is rejected before creating a tenant or account",as
 });
 test("Premium client receives exactly the selected published plan snapshot",async()=>{
  const f=fixture();const r=await f.post({planId:"crm-premium"});assert.equal(r.status,201);
- const result=await r.json();assert.equal(result.plan.name,"CRM Premium");assert.equal(result.plan.maxWhatsappConnections,3);
+ const result=await r.json();assert.equal(result.plan.name,"CRM Premium");assert.equal(result.plan.maxWhatsappConnections,5);
  assert.deepEqual(result.plan.contractedPlan.features,DEFAULT_PLANS.find(p=>p.id==="crm-premium")!.features);
  assert.equal(result.plan.contractedPlan.features.includes("advanced_reports"),true);
  const settings=f.calls.find(c=>c.path==="/rest/v1/crm_tenant_settings")!;assert.equal(settings.body.ai_sending_enabled,false);

@@ -90,12 +90,12 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
     assert.ok(!business.features.includes("advanced_reports"));
   });
 
-  it("deve definir CRM Premium (R$ 89,90, 1.200 atendimentos, 3 WhatsApps, 2 operadores)", () => {
+  it("deve definir CRM Premium (R$ 89,90, 1.200 atendimentos, 5 WhatsApps, 3 operadores)", () => {
     const premium = DEFAULT_PLANS.find((p) => p.id === "crm-premium");
     assert.ok(premium);
     assert.equal(premium.price, "89,90");
     assert.equal(premium.quotaLimit, 1200);
-    assert.equal(premium.maxWhatsappConnections, 3);
+    assert.equal(premium.maxWhatsappConnections, 5);
     assert.equal(premium.maxOperators, 3);
     assert.ok(premium.features.includes("advanced_reports"));
     assert.ok(premium.features.includes("satisfaction_analytics"));

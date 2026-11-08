@@ -241,10 +241,10 @@ const DEFAULT_PLANS: PlanItem[] = [
     price: "89,90",
     quotaLimit: 1200,
     maxOperators: 2,
-    maxWhatsAppConnections: 3,
+    maxWhatsAppConnections: 5,
     isPopular: true,
     isActive: true,
-    description: "Plano definitivo da NovaesWeb: todas as funcionalidades liberadas, 1.200 mensagens, 3 WhatsApps e 2 operadores.",
+    description: "Plano definitivo da NovaesWeb: todas as funcionalidades liberadas, 1.200 mensagens, 5 WhatsApps e 3 operadores.",
     allowedFeatures: [
       "ai_chat",
       "human_handoff",
@@ -267,7 +267,7 @@ const DEFAULT_PLANS: PlanItem[] = [
     ],
     features: [
       "1.200 mensagens da IA por mês",
-      "Até 3 números WhatsApp simultâneos",
+      "Até 5 números WhatsApp simultâneos (5/5 espaços)",
       "Até 2 operadores humanos",
       "Todas as funcionalidades liberadas",
       "Recargas adicionais fixas: R$ 20,00 = 100 mensagens",

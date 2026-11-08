@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
     if (requestedSlot && (!/^[1-5]$/.test(requestedSlot) || Number(requestedSlot) !== currentSlotNum)) return NextResponse.json({ error: "slot_instance_mismatch" }, { status: 403 });
     if (effectivePlan.isSuspended) return NextResponse.json({ error: "ACCOUNT_SUSPENDED", state: "suspended" }, { status: 403 });
     if (effectivePlan.featureStates?.ai_chat?.state === "maintenance") return NextResponse.json({ error: "FEATURE_MAINTENANCE", state: "maintenance" }, { status: 503 });
-    if (currentSlotNum > effectivePlan.maxWhatsappConnections) return NextResponse.json({ error: "whatsapp_slot_locked", slot: currentSlotNum, maxAllowed: effectivePlan.maxWhatsappConnections }, { status: 403 });
+    if (!masterAuth.authorized && currentSlotNum > effectivePlan.maxWhatsappConnections) return NextResponse.json({ error: "whatsapp_slot_locked", slot: currentSlotNum, maxAllowed: effectivePlan.maxWhatsappConnections }, { status: 403 });
     let whatsappSlots = undefined;
     const [rTenant, rCh] = await Promise.all([
       fetch(supaUrl + "/rest/v1/crm_tenants?id=eq." + tenantId + "&select=name&limit=1", { headers: { apikey: supaKey, Authorization: "Bearer " + supaKey }, cache: "no-store" }),
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
     const tenants = await rTenant.json();
     const channels = await rCh.json();
     if (!Array.isArray(tenants) || tenants.length !== 1 || !Array.isArray(channels)) return NextResponse.json({ error: "channel_verification_unavailable" }, { status: 503 });
-    const slots = buildTenantWhatsappSlots(tenants[0].name, channels, effectivePlan);
+    const slots = buildTenantWhatsappSlots(tenants[0].name, channels, masterAuth.authorized ? { maxWhatsappConnections: 5, isSuspended: false } : effectivePlan);
     if (includeAllSlots) whatsappSlots = slots;
     const isChannelPausedByDowngrade = channels.some((c: { instance_name: string; status: string }) => c.instance_name === instanceName && c.status === "paused");
     if (isChannelPausedByDowngrade) return NextResponse.json({ error: "channel_paused", state: "paused", connected: false, slot: currentSlotNum, whatsappSlots }, { status: 403 });

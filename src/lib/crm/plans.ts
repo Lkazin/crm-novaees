@@ -395,13 +395,13 @@ export const DEFAULT_PLANS: CrmPlan[] = [
     price: "89,90",
     quotaLimit: 1200, // 1.200 mensagens da IA por mês
     maxOperators: 3, // Até 3 acessos (1 titular + 2 operadores de equipe)
-    maxWhatsappConnections: 3, // Até 3 WhatsApps conectados (de 5 espaços)
+    maxWhatsappConnections: 5, // Até 5 WhatsApps conectados (5 espaços completos)
     isPopular: true,
     description: "Plano definitivo com inteligência artificial completa, múltiplos WhatsApps e recarga de mensagens.",
     features: [...PREMIUM_FEATURES],
     featureBullets: [
       "1.200 mensagens da IA por mês",
-      "Até 3 WhatsApps conectados (de 5 espaços)",
+      "Até 5 WhatsApps conectados (5 espaços completos)",
       "Até 2 operadores humanos na equipe (+ 1 titular)",
       "Todas as funcionalidades liberadas",
       "Recargas adicionais: R$ 20,00 = 100 mensagens",
