@@ -219,8 +219,6 @@ export default function ClientWorkspace({
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [data, setData] = useState<Data | null>(null);
   const [tenant, setTenant] = useState("");
@@ -673,7 +671,7 @@ export default function ClientWorkspace({
         if (!result.authenticated || result.role !== (embedded ? "master" : "client")) {
           setAuthenticated(false);
           if (!embedded && typeof window !== "undefined") {
-            window.location.href = "/?error=unauthorized_client";
+            window.location.replace("/?error=unauthorized_client");
           }
           setError("Sua sessão expirou. Entre novamente.");
           return;
@@ -697,39 +695,19 @@ export default function ClientWorkspace({
     }
   }, [authenticated, instanceName, checkStatus]);
 
-  async function signIn(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/crm/auth/session", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, scope: "client" })
-      });
-      const data = await res.json() as { authenticated?: boolean; success?: boolean; error?: string };
-      if (!res.ok) throw Error(data.error === "invalid_credentials" ? "E-mail ou senha incorretos." : "Não foi possível autenticar.");
-      setAuthenticated(true);
-      setEmail("");
-      setPassword("");
-      void fetchData("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha na conexão.");
-    } finally {
-      setLoading(false);
-    }
-  }
+
 
   async function signOut() {
-    await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" });
+    try {
+      await fetch("/api/crm/auth/session", { method: "DELETE", credentials: "same-origin" });
+    } catch {}
     setAuthenticated(false);
     setData(null);
     setTenant("");
     setQrCode(null);
     setQrState("disconnected");
     if (typeof window !== "undefined") {
-      window.location.href = "/";
+      window.location.replace("/?logout=success");
     }
   }
 
@@ -1522,65 +1500,13 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           {error || "Não foi possível acessar o CRM NovaesWeb. Entre novamente no painel Master."}
         </section>
       ) : !authenticated ? (
-        <main className="op-card op-login" style={{maxWidth: "460px", margin: "50px auto"}}>
-          <img
-            src="/novaes-crm-logo.jpg"
-            alt="Novaes CRM IA"
-            style={{
-              width: "88px",
-              height: "88px",
-              borderRadius: "20px",
-              objectFit: "cover",
-              margin: "0 auto 16px",
-              display: "block",
-              border: "1px solid rgba(236, 72, 153, 0.4)",
-              boxShadow: "0 0 25px rgba(236, 72, 153, 0.4)"
-            }}
-          />
-          <h1 style={{fontSize: "26px", margin: "0 0 4px", textAlign: "center", fontWeight: 800}}>
-            Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
-          </h1>
-          <p style={{textAlign: "center", color: "#c084fc", fontSize: "12px", fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", margin: "0 0 18px"}}>
-            CRM Inteligente da NovaesWeb
+        <section className="op-card op-centered" style={{margin: "120px auto", maxWidth: "420px", textAlign: "center"}}>
+          <RefreshCw size={36} className="spin" style={{margin: "0 auto 14px", color: "#ec4899"}}/>
+          <h1 style={{fontSize: "20px"}}>Redirecionando para o portal de acesso...</h1>
+          <p style={{fontSize: "13px", color: "#aba8bf", marginTop: "8px"}}>
+            Acesso unificado e seguro NovaesWeb.
           </p>
-          <p style={{textAlign: "center", color: "#aba8bf", fontSize: "13px", lineHeight: "1.5", margin: "0 0 24px"}}>
-            Acesse para acompanhar suas conversas no WhatsApp, monitorar o funil e gerenciar sua IA em tempo real.
-          </p>
-          <form onSubmit={e => void signIn(e)} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
-            <label style={{fontSize: "13px", color: "#d1c8e6"}}>
-              E-mail de Acesso
-              <input
-                type="email"
-                autoComplete="username"
-                required
-                maxLength={254}
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="cliente@suaempresa.com"
-                style={{width: "100%", padding: "12px 14px", marginTop: "6px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-              />
-            </label>
-            <label style={{fontSize: "13px", color: "#d1c8e6"}}>
-              Senha
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                style={{width: "100%", padding: "12px 14px", marginTop: "6px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
-              />
-            </label>
-            <button className="op-primary" disabled={loading || !email || !password} style={{padding: "14px", borderRadius: "10px", marginTop: "8px", fontWeight: 700}}>
-              {loading ? "Autenticando..." : "Entrar no Painel da Loja"}
-            </button>
-          </form>
-          {error && <p className="op-alert" role="alert" style={{marginTop: "16px"}}><CircleAlert size={16}/>{error}</p>}
-          <div className="op-notice" style={{marginTop: "20px", display: "flex", alignItems: "center", gap: "8px", justifyContent: "center", fontSize: "13px", color: "#9ca3af"}}>
-            <ShieldCheck size={18} color="#00db8c"/> Ambiente individual e 100% seguro da sua loja.
-          </div>
-        </main>
+        </section>
       ) : (
         <>
           {/* O Master já fornece a navegação e a sessão globais. */}

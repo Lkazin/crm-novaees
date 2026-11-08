@@ -215,7 +215,8 @@ export async function verifyMasterRequest(request: NextRequest): Promise<{ autho
       }
 
       // Revalidate staff status if actor is a platform staff user (master_<userId>)
-      if (session.actor.startsWith("master_")) {
+      // If actor is "master_admin", it is the master administrator signed with CRM_MASTER_PASSWORD
+      if (session.actor.startsWith("master_") && session.actor !== "master_admin") {
         const userId = session.actor.replace(/^master_/, "").trim();
         if (userId) {
           const now = Date.now();

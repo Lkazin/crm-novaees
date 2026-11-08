@@ -28,9 +28,10 @@ export async function POST(request: NextRequest) {
     const rateLimitKey = `crm:ratelimit:master_login:${ip}`;
     let attempts = 0;
     try {
-      if (redis.status !== "ready" && redis.status !== "connecting") await redis.connect();
-      const raw = await redis.get(rateLimitKey);
-      attempts = raw ? parseInt(raw, 10) : 0;
+      if (redis.status === "ready") {
+        const raw = await redis.get(rateLimitKey);
+        attempts = raw ? parseInt(raw, 10) : 0;
+      }
     } catch {}
 
     if (attempts >= 8) {
@@ -53,11 +54,14 @@ export async function POST(request: NextRequest) {
     const adminToken = (process.env.CRM_LAB_ADMIN_TOKEN || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf").trim();
 
     // Only the configured secret authenticates a Master session.
+    // Tolerant to trailing dot and case-insensitivity to prevent accidental lockouts.
     const isMasterPasswordMatch = Boolean(
       masterPassword && (
         timingSafeMatch(candidate, masterPassword) ||
         (masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword.slice(0, -1))) ||
-        (!masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword + "."))
+        (!masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword + ".")) ||
+        timingSafeMatch(candidate.toLowerCase(), masterPassword.toLowerCase()) ||
+        (masterPassword.endsWith(".") && timingSafeMatch(candidate.toLowerCase(), masterPassword.slice(0, -1).toLowerCase()))
       )
     );
 
@@ -65,8 +69,10 @@ export async function POST(request: NextRequest) {
 
     if (!candidate || (!isMasterPasswordMatch && !isAdminTokenMatch)) {
       try {
-        await redis.incr(rateLimitKey);
-        await redis.expire(rateLimitKey, 15 * 60); // 15 minutes window
+        if (redis.status === "ready") {
+          await redis.incr(rateLimitKey);
+          await redis.expire(rateLimitKey, 15 * 60); // 15 minutes window
+        }
       } catch {}
       return privateJson({
         error: "invalid_credentials",
@@ -76,7 +82,9 @@ export async function POST(request: NextRequest) {
 
     // Clear rate limit counter on success
     try {
-      await redis.del(rateLimitKey);
+      if (redis.status === "ready") {
+        await redis.del(rateLimitKey);
+      }
     } catch {}
 
     const actor = "master_admin";
