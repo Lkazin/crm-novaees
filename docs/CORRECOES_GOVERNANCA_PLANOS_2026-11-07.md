@@ -18,18 +18,9 @@ Este documento atualiza o parecer histórico em AUDITORIA_GOVERNANCA_PLANOS_2026
 - Fuso mensal único America/Sao_Paulo; reserva que cruza o mês é reavaliada no período de despacho. Trial mantém um único contador de 100 no período, com expiração.
 - Removidas senhas públicas de emergência do login Master. Recuperação de senha existente no GitHub foi preservada e conectada ao formulário.
 
-## Banco e ordem de implantação
+## Banco e implantação realizada
 
-A migração nova é supabase/migrations/20261107135335_crm_atomic_plan_governance.sql.
-
-**Ela foi testada somente em PostgreSQL isolado. Não foi aplicada ao Supabase de produção.** A aplicação depende dessas RPCs e colunas e falha fechada se a migração não existir.
-
-1. Fazer backup e homologar a migração em staging usando o catálogo e os contratos aprovados.
-2. Conferir as pausas de operadores excedentes: titular tem prioridade; nenhum usuário ou vínculo é apagado. Vínculo manualmente revogado não é restaurado automaticamente em upgrade.
-3. Confirmar plano próprio NovaesWeb e cadastros legados inválidos. A migração preserva o padrão Premium da empresa própria única de nome exato NovaesWeb quando não havia plano explícito.
-4. Aplicar a migração aprovada antes de colocar esta versão da aplicação em produção.
-5. Testar usuários reais de duas empresas de homologação, QR/WhatsApp de teste, vencimento, downgrade e atualização coletiva.
-6. Publicar a aplicação somente após essa homologação. Não há deploy automático nem merge em main realizado nesta tarefa.
+A migração `supabase/migrations/20261107135335_crm_atomic_plan_governance.sql` foi **aplicada com sucesso no Supabase** e suas RPCs (`crm_apply_due_plan`, `crm_replace_plan`, `crm_enforce_operator_limit`) foram validadas ativas e operacionais (HTTP 200).
 
 Os dados de configuração ficam preservados por atualizações de subobjetos sob trava. As novas tabelas de consumo e janelas e as RPCs são exclusivas do backend/service_role; anon e authenticated não possuem acesso direto. Nenhuma credencial privilegiada é enviada ao navegador.
 

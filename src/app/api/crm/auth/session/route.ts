@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "missing_credentials", message: "Informe a senha para continuar." }, 400);
     }
 
-    const masterPassword = (getMasterPassword() || "Noah2027.").trim();
+    const masterPassword = getMasterPassword();
     const adminToken = getLegacyAdminToken();
 
     // Check with trimming, dot tolerance, and case-insensitivity

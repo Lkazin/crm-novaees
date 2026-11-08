@@ -1,13 +1,17 @@
-name: Validate CRM dashboard (draft)
+name: CI - Novaes CRM IA
+
 on:
   push:
     branches:
+      - main
       - feat/dashboard-image-to-nextjs
   pull_request:
     branches:
       - main
+
 permissions:
   contents: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -17,8 +21,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install dependencies (no secrets required)
-        run: npm install --no-audit --no-fund
+      - name: Install dependencies (clean install)
+        run: npm ci --no-audit --no-fund
       - name: Agent unit tests
         run: npm run test:agent
       - name: Typecheck

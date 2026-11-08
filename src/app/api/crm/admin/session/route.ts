@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, MASTER_REMEMBER_TTL_SEC, signMasterToken, timingSafeMatch, verifyMasterRequest, revokeMasterToken } from "@/lib/crm/master-auth";
+import {
+  MASTER_COOKIE_NAME,
+  MASTER_SESSION_TTL_SEC,
+  MASTER_REMEMBER_TTL_SEC,
+  signMasterToken,
+  timingSafeMatch,
+  verifyMasterRequest,
+  revokeMasterToken,
+  getMasterPassword,
+  getLegacyAdminToken
+} from "@/lib/crm/master-auth";
 import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
@@ -50,8 +60,8 @@ export async function POST(request: NextRequest) {
     const email = typeof body.email === "string" ? body.email.trim() : "";
     const rememberMe = Boolean(body.rememberMe);
 
-    const masterPassword = (process.env.CRM_MASTER_PASSWORD || "Noah2027.").trim();
-    const adminToken = (process.env.CRM_LAB_ADMIN_TOKEN || "1d175f822fc53f2707af52d58ef814ddb6872e873d04b4ba73898e66b4451aaf").trim();
+    const masterPassword = getMasterPassword();
+    const adminToken = getLegacyAdminToken();
 
     // Only the configured secret authenticates a Master session.
     // Tolerant to trailing dot and case-insensitivity to prevent accidental lockouts.

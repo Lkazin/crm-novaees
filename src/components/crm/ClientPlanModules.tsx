@@ -140,6 +140,12 @@ export function WhatsappFiveSlotsGrid({
     setEditingSlot(null);
   };
 
+  const displaySlots = slots.filter(s => {
+    if (s.slot <= maxConnections || s.status === "connected" || s.pausedByDowngrade) return true;
+    if (maxConnections < 3 && s.slot <= 3) return true;
+    return false;
+  });
+
   return (
     <div className="op-card" style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "12px" }}>
@@ -148,7 +154,7 @@ export function WhatsappFiveSlotsGrid({
             <Smartphone size={20} color="#ec4899" /> Meus WhatsApps — Números Comerciais da Empresa
           </h3>
           <small style={{ color: "#c2bed4", fontSize: "13px", marginTop: "2px", display: "block" }}>
-            Aqui ficam os números oficiais por onde seus clientes enviam mensagens. Seu plano libera <strong>{maxConnections} de 5 números simultâneos</strong>.
+            Aqui ficam os números oficiais por onde seus clientes enviam mensagens. Seu plano libera <strong>{maxConnections} número(s) de WhatsApp</strong>.
           </small>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -161,13 +167,13 @@ export function WhatsappFiveSlotsGrid({
             border: "1px solid rgba(236, 72, 153, 0.45)",
             color: "#f472b6"
           }}>
-            {connectedCount} de {maxConnections} conectado(s) · {maxConnections} de 5 liberados
+            {connectedCount} de {maxConnections} conectado(s) · {maxConnections} liberado(s)
           </span>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "14px" }}>
-        {slots.map(s => {
+        {displaySlots.map(s => {
           const isSelected = selectedSlot === s.slot;
           const isLocked = !s.unlocked || s.slot > maxConnections || (blockedState && blockedState.state !== "allowed");
           const planLocked = isLocked && (!blockedState || blockedState.state === "allowed" || blockedState.state === "locked_by_plan") && (s.slot > maxConnections || s.pausedByDowngrade || s.status === "locked");
