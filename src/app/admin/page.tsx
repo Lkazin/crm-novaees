@@ -2368,6 +2368,23 @@ export default function AdminCRM() {
                       <strong style={{color: "#fff", fontSize: "14px"}}>
                         {reqItem.storeName}
                       </strong>{" "}
+                      {reqItem.reason?.includes("IMPLANTAÇÃO VIP") && (
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          marginLeft: "6px",
+                          marginRight: "6px",
+                          padding: "2px 8px",
+                          borderRadius: "6px",
+                          background: "linear-gradient(135deg, #eab308, #ca8a04)",
+                          color: "#000",
+                          fontSize: "11px",
+                          fontWeight: 900
+                        }}>
+                          ⭐ IMPLANTAÇÃO VIP (+R$ 197)
+                        </span>
+                      )}
                       <span style={{fontSize: "12px", color: "#cbd5e1"}}>
                         solicitou upgrade de <strong>{reqItem.currentPlanName}</strong> para{" "}
                         <strong style={{color: "#ec4899"}}>{reqItem.targetPlanName}</strong>

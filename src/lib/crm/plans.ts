@@ -481,6 +481,11 @@ export const ALL_DEFAULT_PLANS: CrmPlan[] = [
   ...DEFAULT_PLANS
 ];
 
+export const MANDATORY_BASE_PLANS: CrmPlan[] = [
+  TRIAL_PLAN,
+  DEFAULT_PLANS.find(p => p.id === "crm-premium")!
+];
+
 /** Resolve an explicit selection without silently assigning another plan. */
 export function selectPublishedPlan(plans: CrmPlan[], planId: string, planName = ""): CrmPlan | undefined {
   const id = planId.trim();
@@ -695,7 +700,10 @@ async function getMasterPlansFromSupabase(): Promise<CrmPlan[]> {
   if (hadLegacy) {
     await saveMasterPlansToSupabase(loadedPlans).catch(() => {});
   }
-  const map = new Map(ALL_DEFAULT_PLANS.map(p => [p.id, p]));
+    if (loadedPlans.length === 0) {
+    return ALL_DEFAULT_PLANS;
+  }
+  const map = new Map(MANDATORY_BASE_PLANS.map(p => [p.id, p]));
   for (const plan of loadedPlans) map.set(plan.id, plan);
   return Array.from(map.values());
 }
@@ -790,9 +798,9 @@ export async function getMasterPlans(providedRedis?: Redis): Promise<CrmPlan[]> 
         if (hadLegacy) {
           await redis.set("crm:master:plans", JSON.stringify(normalized)).catch(() => {});
         }
-        const map = new Map<string, CrmPlan>();
-        for (const def of ALL_DEFAULT_PLANS) {
-          map.set(def.id, def);
+                const map = new Map<string, CrmPlan>();
+        for (const base of MANDATORY_BASE_PLANS) {
+          map.set(base.id, base);
         }
         for (const p of normalized) {
           map.set(p.id, p);

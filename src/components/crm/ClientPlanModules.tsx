@@ -1468,6 +1468,7 @@ export function UpgradeRequestModal({
   const [doneMsg, setDoneMsg] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [copiedPix, setCopiedPix] = useState(false);
+  const [wantsVipOnboarding, setWantsVipOnboarding] = useState(false);
 
   React.useEffect(() => {
     if (open) {
@@ -1499,7 +1500,15 @@ export function UpgradeRequestModal({
     setSending(true);
     setSubmitError("");
     try {
-      const res = await onSubmitUpgrade(selectedPlan, notes);
+      const basePrice = chosenPlan?.price || "89,90";
+    const basePriceNum = parseFloat(basePrice.replace(",", "."));
+    const finalTotalDisplay = wantsVipOnboarding
+      ? (basePriceNum + 197).toFixed(2).replace(".", ",")
+      : basePrice;
+    const finalNotes = wantsVipOnboarding
+      ? `[IMPLANTAÇÃO VIP SOLICITADA (+R$ 197,00)] Total PIX: R$ ${finalTotalDisplay} | ${notes}`
+      : notes;
+    const res = await onSubmitUpgrade(selectedPlan, finalNotes);
       if (res.ok) {
         setDoneMsg(res.message || "Solicitação de upgrade registrada com sucesso! Aguarde a conferência do PIX pelo administrador Master para ativação.");
       } else setSubmitError(res.message || "Não foi possível enviar a solicitação.");
@@ -1559,6 +1568,40 @@ export function UpgradeRequestModal({
               </select>
             </label>
 
+                        {/* Opção de Implantação VIP */}
+            <div
+              onClick={() => setWantsVipOnboarding(!wantsVipOnboarding)}
+              style={{
+                background: wantsVipOnboarding ? "linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(168, 85, 247, 0.15))" : "rgba(255, 255, 255, 0.03)",
+                border: wantsVipOnboarding ? "1px solid #facc15" : "1px solid rgba(255, 255, 255, 0.08)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "12px",
+                transition: "all 0.2s ease"
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={wantsVipOnboarding}
+                onChange={e => setWantsVipOnboarding(e.target.checked)}
+                style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: "#facc15", cursor: "pointer" }}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+                  <strong style={{ color: wantsVipOnboarding ? "#fef08a" : "#fff", fontSize: "13px" }}>
+                    ⭐ Quero Implantação VIP da equipe NovaesWeb
+                  </strong>
+                  <span style={{ fontSize: "12px", fontWeight: 800, color: "#facc15" }}>+ R$ 197,00 (taxa única)</span>
+                </div>
+                <small style={{ color: "#c2bed4", fontSize: "11.5px", display: "block", marginTop: "4px", lineHeight: 1.35 }}>
+                  Nossos especialistas cadastram todo seu cardápio/tabela de serviços, configuram a persona da sua IA e entregam seu WhatsApp pronto para atender em até 24h úteis.
+                </small>
+              </div>
+            </div>
+
             {/* Box de Pagamento PIX e Instruções do Master */}
             <div style={{
               background: "rgba(139, 92, 246, 0.08)",
@@ -1571,7 +1614,7 @@ export function UpgradeRequestModal({
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "13px", fontWeight: 700, color: "#fff" }}>
-                  Valor da Mensalidade: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {chosenPlan?.price || "89,90"}/mês</strong>
+                  Valor do Pagamento PIX: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {wantsVipOnboarding ? (parseFloat((chosenPlan?.price || "89,90").replace(",", ".")) + 197).toFixed(2).replace(".", ",") : (chosenPlan?.price || "89,90")}</strong>{wantsVipOnboarding ? " (Plano + Implantação VIP)" : "/mês"}
                 </span>
                 <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px", background: "rgba(236,72,153,0.2)", color: "#f472b6", fontWeight: 700 }}>
                   Aprovação pelo Master

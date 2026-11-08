@@ -415,14 +415,20 @@ export default function ClientWorkspace({
   const [savingSurvey, setSavingSurvey] = useState(false);
   const [newTagOpen, setNewTagOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
-  const [newTagColor, setNewTagColor] = useState("purple");
-
-  // Guided Setup Wizard state
+  const [newTagColor, setNewTagColor] = useState("purple");  // Guided Setup Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
   const [templateLoadedMsg, setTemplateLoadedMsg] = useState("");
   const [miniSimQuestion, setMiniSimQuestion] = useState("");
   const [miniSimLoading, setMiniSimLoading] = useState(false);
   const [miniSimHistory, setMiniSimHistory] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [reengageOpen, setReengageOpen] = useState(false);
+  const [reengageDays, setReengageDays] = useState("30");
+  const [reengageCoupon, setReengageCoupon] = useState("VOLTEI10");
+  const [reengageMessage, setReengageMessage] = useState(
+    "Oi {nome}! Tudo bem? Sentimos sua falta aqui na {loja}! 🍕 Preparamos um cupom exclusivo de 10% de desconto para você usar hoje: {cupom}. Quer dar uma olhadinha no cardápio de hoje?"
+  );
+  const [reengageLoading, setReengageLoading] = useState(false);
+  const [reengageNotice, setReengageNotice] = useState("");
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardData, setWizardData] = useState({
     storeName: "",
@@ -1329,7 +1335,36 @@ export default function ClientWorkspace({
     } catch (e) {
       alert(e instanceof Error ? e.message : "Erro ao atualizar etiqueta comercial.");
     }
-  }
+  }  // Handler to dispatch inactive customers campaign
+  const handleExecuteReengagement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenant) return;
+    setReengageLoading(true);
+    setReengageNotice("");
+    try {
+      const res = await fetch("/api/crm/operator/reengage", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: tenant,
+          days: reengageDays === "all" ? 0 : parseInt(reengageDays, 10),
+          couponCode: reengageCoupon,
+          messageTemplate: reengageMessage
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setReengageNotice(data.message || "Campanha disparada com sucesso!");
+      } else {
+        setReengageNotice("⚠️ " + (data.message || data.error || "Falha ao disparar campanha."));
+      }
+    } catch {
+      setReengageNotice("⚠️ Erro de comunicação com o servidor.");
+    } finally {
+      setReengageLoading(false);
+    }
+  };
 
   // Generate AI Store Knowledge from Wizard
   const handleSelectNicheTemplate = (nicheKey: string) => {
@@ -5064,6 +5099,106 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     {newContactOpen ? "Fechar formulário" : "+ Novo Contato"}
                   </button>
                 </div>
+
+                                {/* Painel do Recuperador de Clientes Inativos */}
+                {reengageOpen && (
+                  <form onSubmit={handleExecuteReengagement} style={{
+                    marginBottom: "20px",
+                    background: "linear-gradient(135deg, rgba(236, 72, 153, 0.1), rgba(139, 92, 246, 0.1))",
+                    border: "1px solid rgba(236, 72, 153, 0.35)",
+                    borderRadius: "14px",
+                    padding: "20px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "14px"
+                  }}>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                      <div>
+                        <strong style={{color: "#fff", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px"}}>
+                          <Sparkles size={18} color="#ec4899" /> Campanha de Reativação de Vendas
+                        </strong>
+                        <small style={{color: "#aba8bf", fontSize: "12px"}}>
+                          Recupere clientes antigos que não compram há algum tempo com uma oferta exclusiva via WhatsApp.
+                        </small>
+                      </div>
+                      <span style={{fontSize: "12px", background: "rgba(0, 219, 140, 0.2)", color: "#00db8c", padding: "4px 10px", borderRadius: "999px", fontWeight: 700}}>
+                        {contacts.length} contatos disponíveis
+                      </span>
+                    </div>
+
+                    <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px"}}>
+                      <label style={{fontSize: "13px", color: "#c2bed4"}}>
+                        Filtrar Clientes Sem Interação Há:
+                        <select
+                          value={reengageDays}
+                          onChange={e => setReengageDays(e.target.value)}
+                          style={{width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", marginTop: "4px"}}
+                        >
+                          <option value="15">Mais de 15 dias sem comprar</option>
+                          <option value="30">Mais de 30 dias sem comprar (Recomendado)</option>
+                          <option value="60">Mais de 60 dias sem comprar</option>
+                          <option value="all">Todos os contatos da lista</option>
+                        </select>
+                      </label>
+
+                      <label style={{fontSize: "13px", color: "#c2bed4"}}>
+                        Cupom Promocional (Opcional):
+                        <input
+                          type="text"
+                          value={reengageCoupon}
+                          onChange={e => setReengageCoupon(e.target.value)}
+                          placeholder="Ex.: VOLTEI10 ou OFF15"
+                          style={{width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", marginTop: "4px"}}
+                        />
+                      </label>
+                    </div>
+
+                    <label style={{fontSize: "13px", color: "#c2bed4"}}>
+                      Mensagem de Reativação (Use <em>{'{nome}'}</em>, <em>{'{loja}'}</em> e <em>{'{cupom}'}</em>):
+                      <textarea
+                        rows={3}
+                        required
+                        value={reengageMessage}
+                        onChange={e => setReengageMessage(e.target.value)}
+                        style={{width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", marginTop: "4px", fontSize: "13px"}}
+                      />
+                    </label>
+
+                    {reengageNotice && (
+                      <div style={{
+                        padding: "10px 14px",
+                        borderRadius: "8px",
+                        background: reengageNotice.startsWith("⚠️") ? "rgba(239, 68, 68, 0.15)" : "rgba(0, 219, 140, 0.15)",
+                        border: reengageNotice.startsWith("⚠️") ? "1px solid #ef4444" : "1px solid #00db8c",
+                        color: reengageNotice.startsWith("⚠️") ? "#fca5a5" : "#6ee7b7",
+                        fontSize: "13px",
+                        fontWeight: 600
+                      }}>
+                        {reengageNotice}
+                      </div>
+                    )}
+
+                    <div style={{display: "flex", justifyContent: "flex-end", gap: "10px"}}>
+                      <button
+                        type="submit"
+                        disabled={reengageLoading || !contacts.length}
+                        className="op-primary"
+                        style={{
+                          padding: "10px 22px",
+                          borderRadius: "10px",
+                          fontWeight: 800,
+                          fontSize: "13px",
+                          background: "linear-gradient(135deg, #00db8c, #059669)",
+                          color: "#052e16",
+                          border: "none",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {reengageLoading ? "Disparando mensagens..." : "🚀 Disparar Campanha de Reativação"}
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {newContactOpen && (
                   <form className="op-contact-form" onSubmit={e => void registerContact(e)} style={{marginBottom: "20px", background: "rgba(0,0,0,0.25)", padding: "18px", borderRadius: "12px"}}>
