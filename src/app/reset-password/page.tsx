@@ -2,7 +2,7 @@
 import {useEffect,useState,type FormEvent} from "react";
 import Link from "next/link";
 import {ArrowRight,LockKeyhole,Eye,EyeOff,ShieldCheck,CheckCircle2,CircleAlert} from "lucide-react";
-import styles from "@/components/crm-login.module.css";
+import styles from "./reset-password.module.css";
 
 export default function ResetPasswordPage(){
   const [token,setToken]=useState("");
