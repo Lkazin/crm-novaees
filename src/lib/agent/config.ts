@@ -34,7 +34,11 @@ function validUrl(name: string, value: string): string {
 }
 
 export function getAiConfig(): AiConfig {
-  const aiUrl = validUrl("AI_OPENAI_BASE_URL", read("AI_OPENAI_BASE_URL"));
+  let rawAi = read("AI_OPENAI_BASE_URL");
+  if (rawAi.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+    rawAi = rawAi.replace("host.docker.internal", "127.0.0.1");
+  }
+  const aiUrl = validUrl("AI_OPENAI_BASE_URL", rawAi);
   const aiModel = read("AI_MODEL");
   // A free lab must never silently fall back to a billed model.
   if (aiUrl === "https://openrouter.ai/api/v1" && aiModel !== "openrouter/free" && !aiModel.endsWith(":free")) {
@@ -56,13 +60,19 @@ export function getAgentConfig(): AgentConfig {
   if (allowed !== "*" && !/^\d{10,15}$/.test(allowed)) throw new Error("AI_TEST_ALLOWED_NUMBER inválido");
   const webhookSecret = read("CRM_WEBHOOK_SECRET");
   if (webhookSecret.length < 32) throw new Error("CRM_WEBHOOK_SECRET precisa ter pelo menos 32 caracteres");
-  const redisUrl = read("CRM_REDIS_URL");
+  const redisUrl = (process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379").trim();
   if (!/^redis(s)?:\/\//.test(redisUrl)) throw new Error("CRM_REDIS_URL deve ser redis:// ou rediss://");
   const format = process.env.EVOLUTION_SEND_FORMAT || "v2";
   if (format !== "v2" && format !== "legacy") throw new Error("EVOLUTION_SEND_FORMAT inválido");
   return {
     ...getAiConfig(),
-    evolutionUrl: validUrl("EVOLUTION_API_URL", read("EVOLUTION_API_URL")),
+    evolutionUrl: (() => {
+      let rawEvo = read("EVOLUTION_API_URL");
+      if (rawEvo.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+        rawEvo = rawEvo.replace("host.docker.internal", "127.0.0.1");
+      }
+      return validUrl("EVOLUTION_API_URL", rawEvo);
+    })(),
     evolutionKey: read("EVOLUTION_API_KEY"),
     instance: read("EVOLUTION_INSTANCE"),
     webhookSecret,
