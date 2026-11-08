@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
 import KnowledgeWorkspace from "./KnowledgeWorkspace";
+import { DEFAULT_AUTOCLOSE_MESSAGE } from "@/lib/crm/auto-close";
+import type { AutoCloseSettings } from "@/lib/crm/settings-types";
 import {
   Building2, CheckCircle2, CircleAlert, Inbox, LockKeyhole, LogOut,
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
@@ -299,6 +301,18 @@ export default function ClientWorkspace({
   const [hoursError, setHoursError] = useState("");
   const [savingHours, setSavingHours] = useState(false);
 
+  // Finalização Automática por Inatividade
+  const [autoClose, setAutoClose] = useState<AutoCloseSettings>({
+    enabled: false,
+    timeoutMinutes: 30,
+    message: DEFAULT_AUTOCLOSE_MESSAGE,
+    includeWaitingClient: true
+  });
+  const [savingAutoClose, setSavingAutoClose] = useState(false);
+  const [autoCloseNotice, setAutoCloseNotice] = useState("");
+  const [runningAutoCloseNow, setRunningAutoCloseNow] = useState(false);
+  const isAutoCloseDirtyRef = useRef(false);
+
   // Quota state
   const [quotaData, setQuotaData] = useState<{
     quotaLimit: number;
@@ -558,6 +572,15 @@ export default function ClientWorkspace({
           }));
           isHoursDirtyRef.current = false;
         }
+        if (json.autoCloseSettings && (force || !isAutoCloseDirtyRef.current)) {
+          setAutoClose({
+            enabled: Boolean(json.autoCloseSettings.enabled),
+            timeoutMinutes: json.autoCloseSettings.timeoutMinutes || 30,
+            message: json.autoCloseSettings.message || DEFAULT_AUTOCLOSE_MESSAGE,
+            includeWaitingClient: json.autoCloseSettings.includeWaitingClient !== false
+          });
+          isAutoCloseDirtyRef.current = false;
+        }
         if (json.plan) {
           setQuotaData({
             quotaLimit: json.plan.quotaLimit ?? 0,
@@ -673,6 +696,17 @@ export default function ClientWorkspace({
     }, 3500);
     return () => clearInterval(interval);
   }, [authenticated, tenant, fetchData]);
+
+  // Periodic background check for auto-close of inactive conversations
+  useEffect(() => {
+    if (!authenticated || !tenant || !autoClose.enabled) return;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void fetch(`/api/crm/operator/auto-close?tenant=${tenant}`).catch(() => {});
+      }
+    }, 45000);
+    return () => clearInterval(interval);
+  }, [authenticated, tenant, autoClose.enabled]);
 
   // Check connection state for this tenant & active slot
   const checkStatus = useCallback(async () => {
@@ -990,6 +1024,60 @@ export default function ClientWorkspace({
       setHoursError("Falha de comunicação ao salvar horários de atendimento.");
     } finally {
       setSavingHours(false);
+    }
+  };
+
+  const handleSaveAutoClose = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenant) return;
+    setSavingAutoClose(true);
+    setAutoCloseNotice("");
+    try {
+      const res = await fetch("/api/crm/operator/ai-settings", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: tenant,
+          autoCloseSettings: autoClose
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "Falha ao salvar automação.");
+      isAutoCloseDirtyRef.current = false;
+      setAutoCloseNotice("Configuração de encerramento por inatividade salva com sucesso!");
+      setTimeout(() => setAutoCloseNotice(""), 6000);
+      void fetch(`/api/crm/operator/auto-close?tenant=${tenant}`).catch(() => {});
+    } catch (err) {
+      setAutoCloseNotice("⚠️ " + (err instanceof Error ? err.message : "Erro ao salvar automação."));
+    } finally {
+      setSavingAutoClose(false);
+    }
+  };
+
+  const handleTriggerAutoCloseNow = async () => {
+    if (!tenant || runningAutoCloseNow) return;
+    setRunningAutoCloseNow(true);
+    setAutoCloseNotice("Verificando conversas inativas...");
+    try {
+      const res = await fetch(`/api/crm/operator/auto-close?tenant=${tenant}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.result) {
+        const count = data.result.closedCount ?? 0;
+        if (count > 0) {
+          setAutoCloseNotice(`✅ Sucesso! ${count} conversa(s) inativa(s) finalizada(s) e mensagem de despedida enviada no WhatsApp.`);
+          await fetchData(tenant, true);
+        } else {
+          setAutoCloseNotice("ℹ️ Nenhuma conversa atingiu o tempo limite de inatividade neste momento.");
+        }
+      } else {
+        setAutoCloseNotice("⚠️ " + (data.error || "Falha ao verificar inatividade."));
+      }
+      setTimeout(() => setAutoCloseNotice(""), 7000);
+    } catch {
+      setAutoCloseNotice("⚠️ Falha de rede ao conectar com o serviço.");
+    } finally {
+      setRunningAutoCloseNow(false);
     }
   };
 
@@ -4145,6 +4233,206 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </button>
                   </div>
                 </form>
+
+                {/* CARD DE FINALIZAÇÃO AUTOMÁTICA POR INATIVIDADE */}
+                <div className="op-card" style={{padding: "26px", marginTop: "24px", border: "1px solid rgba(236, 72, 153, 0.25)"}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px", flexWrap: "wrap", gap: "10px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                      <Clock size={22} color="#ec4899"/>
+                      <div>
+                        <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Finalização Automática por Inatividade</h3>
+                        <p style={{margin: "4px 0 0", fontSize: "13px", color: "#aba8bf"}}>
+                          Encerra a conversa e envia uma mensagem de despedida no WhatsApp caso o cliente não responda após determinado tempo.
+                        </p>
+                      </div>
+                    </div>
+                    <span style={{
+                      padding: "4px 10px",
+                      borderRadius: "999px",
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      background: autoClose.enabled ? "rgba(0, 219, 140, 0.16)" : "rgba(255, 255, 255, 0.08)",
+                      color: autoClose.enabled ? "#00db8c" : "#aba8bf",
+                      border: `1px solid ${autoClose.enabled ? "#00db8c" : "rgba(255,255,255,0.15)"}`
+                    }}>
+                      {autoClose.enabled ? "⚡ Automação Ativa" : "⏸️ Desativada"}
+                    </span>
+                  </div>
+
+                  {autoCloseNotice && (
+                    <div style={{
+                      padding: "10px 14px",
+                      borderRadius: "10px",
+                      marginBottom: "16px",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      background: autoCloseNotice.startsWith("⚠️") ? "rgba(239, 68, 68, 0.15)" : "rgba(0, 219, 140, 0.15)",
+                      border: autoCloseNotice.startsWith("⚠️") ? "1px solid #ef4444" : "1px solid #00db8c",
+                      color: autoCloseNotice.startsWith("⚠️") ? "#fca5a5" : "#6ee7b7"
+                    }}>
+                      {autoCloseNotice}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleSaveAutoClose} style={{display: "flex", flexDirection: "column", gap: "18px"}}>
+                    <label style={{display: "flex", alignItems: "center", gap: "12px", background: autoClose.enabled ? "rgba(236, 72, 153, 0.1)" : "rgba(255,255,255,0.03)", padding: "14px 18px", borderRadius: "12px", border: `1px solid ${autoClose.enabled ? "#ec4899" : "#3a3250"}`, cursor: "pointer"}}>
+                      <input
+                        type="checkbox"
+                        checked={autoClose.enabled}
+                        onChange={e => {
+                          isAutoCloseDirtyRef.current = true;
+                          setAutoClose(prev => ({ ...prev, enabled: e.target.checked }));
+                        }}
+                        style={{width: "20px", height: "20px", accentColor: "#ec4899"}}
+                      />
+                      <span style={{fontWeight: 700, fontSize: "14px", color: "#fff"}}>
+                        Ativar encerramento automático de conversas quando o cliente parar de responder
+                      </span>
+                    </label>
+
+                    {autoClose.enabled && (
+                      <>
+                        <div>
+                          <label style={{display: "block", fontSize: "13px", fontWeight: 700, color: "#fff", marginBottom: "8px"}}>
+                            ⏱️ Tempo sem resposta do cliente para finalizar a conversa:
+                          </label>
+                          <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                            {[
+                              { label: "15 minutos", val: 15 },
+                              { label: "30 minutos (Recomendado)", val: 30 },
+                              { label: "1 hora", val: 60 },
+                              { label: "2 horas", val: 120 },
+                              { label: "4 horas", val: 240 },
+                              { label: "12 horas", val: 720 },
+                              { label: "24 horas", val: 1440 }
+                            ].map(opt => {
+                              const isSel = autoClose.timeoutMinutes === opt.val;
+                              return (
+                                <button
+                                  key={opt.val}
+                                  type="button"
+                                  onClick={() => {
+                                    isAutoCloseDirtyRef.current = true;
+                                    setAutoClose(prev => ({ ...prev, timeoutMinutes: opt.val }));
+                                  }}
+                                  style={{
+                                    padding: "8px 14px",
+                                    borderRadius: "8px",
+                                    border: `1px solid ${isSel ? "#ec4899" : "rgba(255,255,255,0.1)"}`,
+                                    background: isSel ? "var(--grad-primary)" : "rgba(255,255,255,0.04)",
+                                    color: isSel ? "#fff" : "#c4bed6",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    transition: "all 0.15s ease"
+                                  }}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px"}}>
+                            <label style={{fontSize: "13px", fontWeight: 700, color: "#fff"}}>
+                              💬 Mensagem de Despedida da IA no WhatsApp:
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                isAutoCloseDirtyRef.current = true;
+                                setAutoClose(prev => ({ ...prev, message: DEFAULT_AUTOCLOSE_MESSAGE }));
+                              }}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#ec4899",
+                                fontSize: "11px",
+                                cursor: "pointer",
+                                textDecoration: "underline"
+                              }}
+                            >
+                              Restaurar mensagem padrão
+                            </button>
+                          </div>
+                          <textarea
+                            rows={3}
+                            value={autoClose.message}
+                            onChange={e => {
+                              isAutoCloseDirtyRef.current = true;
+                              setAutoClose(prev => ({ ...prev, message: e.target.value }));
+                            }}
+                            placeholder="Mensagem enviada no WhatsApp ao finalizar o atendimento..."
+                            style={{
+                              width: "100%",
+                              padding: "12px 14px",
+                              borderRadius: "10px",
+                              background: "#161325",
+                              border: "1px solid #3d345c",
+                              color: "white",
+                              fontSize: "13px",
+                              lineHeight: "1.5"
+                            }}
+                          />
+                          <small style={{color: "#aba8bf", fontSize: "11px", display: "block", marginTop: "4px"}}>
+                            Essa mensagem será enviada pelo WhatsApp no momento exato em que a conversa for finalizada por inatividade. Se o cliente responder novamente mais tarde, a conversa reabrirá automaticamente!
+                          </small>
+                        </div>
+
+                        <div>
+                          <label style={{display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#c4bed6", cursor: "pointer"}}>
+                            <input
+                              type="checkbox"
+                              checked={autoClose.includeWaitingClient !== false}
+                              onChange={e => {
+                                isAutoCloseDirtyRef.current = true;
+                                setAutoClose(prev => ({ ...prev, includeWaitingClient: e.target.checked }));
+                              }}
+                              style={{accentColor: "#ec4899"}}
+                            />
+                            Aplicar também em conversas assumidas por atendente humano que estejam aguardando cliente
+                          </label>
+                        </div>
+                      </>
+                    )}
+
+                    <div style={{display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginTop: "6px"}}>
+                      <button
+                        type="submit"
+                        className="op-primary"
+                        disabled={savingAutoClose}
+                        style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "12px 24px", fontWeight: 700, borderRadius: "10px", fontSize: "14px"}}
+                      >
+                        <Save size={16}/> {savingAutoClose ? "Salvando..." : "Salvar Automação de Encerramento"}
+                      </button>
+
+                      {autoClose.enabled && (
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          disabled={runningAutoCloseNow}
+                          onClick={() => void handleTriggerAutoCloseNow()}
+                          style={{
+                            background: "rgba(255, 255, 255, 0.08)",
+                            color: "#fff",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            padding: "11px 16px",
+                            borderRadius: "10px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px"
+                          }}
+                        >
+                          <RefreshCw size={14} className={runningAutoCloseNow ? "animate-spin" : ""}/>
+                          {runningAutoCloseNow ? "Verificando..." : "Verificar Conversas Inativas Agora"}
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
               </section>
             )}
 

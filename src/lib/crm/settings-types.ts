@@ -16,6 +16,13 @@ export type StoredTenantPlan = Record<string, unknown> & {
   monthlyQuotaUsed?: Record<string, number>;
 };
 
+export type AutoCloseSettings = {
+  enabled: boolean;
+  timeoutMinutes: number;
+  message: string;
+  includeWaitingClient?: boolean;
+};
+
 export type StoredTenantConfig = Record<string, unknown> & {
   plan?: StoredTenantPlan;
   suspension?: { isSuspended?: boolean; publicReason?: string; internalNote?: string; updatedAt?: string; actor?: string };
@@ -23,6 +30,7 @@ export type StoredTenantConfig = Record<string, unknown> & {
   conversationTags?: Record<string, string>;
   conversationPriorities?: Record<string, "low" | "normal" | "high" | "urgent">;
   ai_settings?: Record<string, unknown>;
+  autoCloseSettings?: AutoCloseSettings;
   tagHistory?: Array<Record<string, unknown>>;
   teamOperators?: Array<Record<string, unknown>>;
   quickReplies?: Array<Record<string, unknown>>;

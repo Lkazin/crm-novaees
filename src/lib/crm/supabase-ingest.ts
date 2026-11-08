@@ -165,7 +165,11 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-    if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
+    if (conversation.status === "resolved" || conversation.status === "closed") {
+      patchPayload.status = "open";
+      patchPayload.mode = "ai";
+      patchPayload.assigned_to = null;
+    } else if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
       patchPayload.status = "open";
     }
     await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", patchPayload);

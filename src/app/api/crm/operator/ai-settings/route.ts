@@ -1,4 +1,4 @@
-import type { StoredTenantConfig } from "@/lib/crm/settings-types";
+import type { StoredTenantConfig, AutoCloseSettings } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { authorizeCrmTenant, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
@@ -232,6 +232,26 @@ export async function GET(request: NextRequest) {
       ? parsedSettings.upgradeRequests
       : [];
 
+    const defaultAutoClose = {
+      enabled: false,
+      timeoutMinutes: 30,
+      message: "Como não tivemos mais retorno por aqui, estamos finalizando este atendimento para manter nossa fila organizada. Se precisar de algo ou tiver qualquer dúvida, basta mandar uma nova mensagem a qualquer momento! Tenha um ótimo dia! 😊",
+      includeWaitingClient: true
+    };
+    const rawAutoClose = parsedSettings.autoCloseSettings && typeof parsedSettings.autoCloseSettings === "object"
+      ? (parsedSettings.autoCloseSettings as Record<string, unknown>)
+      : {};
+    const autoCloseSettings = {
+      enabled: Boolean(rawAutoClose.enabled),
+      timeoutMinutes: typeof rawAutoClose.timeoutMinutes === "number" && rawAutoClose.timeoutMinutes >= 5
+        ? Math.floor(rawAutoClose.timeoutMinutes)
+        : 30,
+      message: typeof rawAutoClose.message === "string" && rawAutoClose.message.trim()
+        ? rawAutoClose.message
+        : defaultAutoClose.message,
+      includeWaitingClient: rawAutoClose.includeWaitingClient !== false
+    };
+
     const planData = {
       ...effectivePlan,
       quotaUsed
@@ -252,6 +272,7 @@ export async function GET(request: NextRequest) {
       teamOperators,
       satisfactionSurveys: crmFeatureAllowed(effectivePlan, "satisfaction_survey") ? satisfactionSurveys : [],
       upgradeRequests,
+      autoCloseSettings,
       plan: planData,
       allowedFeatures: effectivePlan.allowedFeatures,
       featureStates: effectivePlan.featureStates
@@ -424,12 +445,31 @@ export async function POST(request: NextRequest) {
       if (!rTimezone.ok) throw new Error("timezone_write_failed");
     }
 
+    // 4. Save auto-close inactivity settings in crm_tenant_settings
+    let savedAutoClose: AutoCloseSettings | undefined;
+    if (body.autoCloseSettings && typeof body.autoCloseSettings === "object") {
+      const rawAC = body.autoCloseSettings as Record<string, unknown>;
+      const sanitizedAC: AutoCloseSettings = {
+        enabled: Boolean(rawAC.enabled),
+        timeoutMinutes: typeof rawAC.timeoutMinutes === "number" && rawAC.timeoutMinutes >= 5 && rawAC.timeoutMinutes <= 10080
+          ? Math.floor(rawAC.timeoutMinutes)
+          : 30,
+        message: typeof rawAC.message === "string" && rawAC.message.trim()
+          ? rawAC.message.trim().slice(0, 1000)
+          : "Como não tivemos mais retorno por aqui, estamos finalizando este atendimento para manter nossa fila organizada. Se precisar de algo ou tiver qualquer dúvida, basta mandar uma nova mensagem a qualquer momento! Tenha um ótimo dia! 😊",
+        includeWaitingClient: rawAC.includeWaitingClient !== false
+      };
+      await patchCrmConfig(tenantId, { autoCloseSettings: sanitizedAC });
+      savedAutoClose = sanitizedAC;
+    }
+
     return privateJson({
       saved: true,
       agentLabel: savedLabel,
       enabled: savedEnabled,
       hasStoreInfo: storeInfo.length > 0,
       operatingHours: savedOperatingHours,
+      autoCloseSettings: savedAutoClose,
       allowAdvancedHours
     });
   } catch (e) {
