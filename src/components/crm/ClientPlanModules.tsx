@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import {
+import { Copy,
   Smartphone, LockKeyhole, CheckCircle2, Sparkles, Users, UserPlus, Trash2,
   BarChart3, Star, Zap, Plus, ShieldAlert, Wrench, Ban, Check, Send, Filter, Tag,
   Eye, EyeOff, Edit3, HelpCircle, Headphones, MessageSquare, Bot, ArrowRight, Clock, ShieldCheck, Crown
@@ -1653,22 +1653,46 @@ export function RechargeMessagesModal({
   onClose,
   tenantId,
   currentBalance = 0,
-  onRechargeSuccess
+  pixConfig,
+  onRechargeSubmitted
 }: {
   open: boolean;
   onClose: () => void;
   tenantId: string;
   currentBalance?: number;
-  onRechargeSuccess: (newBalance: number) => void;
+  pixConfig?: {
+    keyType?: string;
+    pixKey?: string;
+    beneficiaryName?: string;
+    bankName?: string;
+    instructions?: string;
+  };
+  onRechargeSubmitted?: () => void;
 }) {
   const [selectedPackages, setSelectedPackages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [clientNotes, setClientNotes] = useState<string>("");
+  const [copiedKey, setCopiedKey] = useState<boolean>(false);
 
   if (!open) return null;
 
   const currentPkg = DEFAULT_RECHARGE_PACKAGES.find(p => p.packagesCount === selectedPackages) || DEFAULT_RECHARGE_PACKAGES[0];
+
+  const activePixKey = pixConfig?.pixKey || "58.742.894/0001-40";
+  const activeBeneficiary = pixConfig?.beneficiaryName || "NovaesWeb Soluções Digitais";
+  const activeBank = pixConfig?.bankName || "Banco Inter / NuBank";
+  const activeInstructions = pixConfig?.instructions || "Após realizar o PIX, clique no botão abaixo para registrar o pedido. O administrador Master confirmará o recebimento e liberará seus créditos imediatamente.";
+
+  const handleCopyPix = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(activePixKey).then(() => {
+        setCopiedKey(true);
+        setTimeout(() => setCopiedKey(false), 2500);
+      }).catch(() => {});
+    }
+  };
 
   const handleConfirmRecharge = async () => {
     setLoading(true);
@@ -1683,21 +1707,20 @@ export function RechargeMessagesModal({
           action: "buy_recharge",
           packagesCount: currentPkg.packagesCount,
           txId,
-          paymentMethod: "pix"
+          paymentMethod: "pix",
+          clientNotes
         })
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.message || data.error || "Erro ao processar recarga.");
+        throw new Error(data.message || data.error || "Erro ao solicitar recarga.");
       }
 
-      setSuccessMsg(data.message || `Recarga de ${currentPkg.messages} mensagens ativada com sucesso!`);
-      if (typeof data.rechargeCreditsBalance === "number") {
-        onRechargeSuccess(data.rechargeCreditsBalance);
-      }
+      setSuccessMsg(data.message || `Solicitação de recarga de ${currentPkg.messages} mensagens registrada com sucesso! Aguarde a conferência do PIX pelo administrador Master.`);
+      onRechargeSubmitted?.();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Falha ao processar recarga.");
+      setErrorMsg(err instanceof Error ? err.message : "Falha ao solicitar recarga.");
     } finally {
       setLoading(false);
     }
@@ -1721,8 +1744,10 @@ export function RechargeMessagesModal({
         border: "1px solid rgba(139, 92, 246, 0.35)",
         borderRadius: "20px",
         padding: "24px",
-        maxWidth: "520px",
+        maxWidth: "540px",
         width: "100%",
+        maxHeight: "92vh",
+        overflowY: "auto",
         display: "flex",
         flexDirection: "column",
         gap: "18px",
@@ -1742,11 +1767,11 @@ export function RechargeMessagesModal({
               <Sparkles size={22} color="#fff" />
             </div>
             <div>
-              <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
-                Comprar Mais Mensagens
+              <h3 style={{ margin: 0, fontSize: "19px", fontWeight: 800, color: "#fff" }}>
+                Comprar Recarga de Mensagens
               </h3>
               <span style={{ fontSize: "12px", color: "#aba8bf" }}>
-                R$ 20,00 = 100 mensagens adicionais para a IA
+                Mensagens adicionais de IA aprovadas manualmente pelo Master
               </span>
             </div>
           </div>
@@ -1776,7 +1801,7 @@ export function RechargeMessagesModal({
           justifyContent: "space-between",
           alignItems: "center"
         }}>
-          <span style={{ fontSize: "13px", color: "#c9bede" }}>Saldo de Recargas Disponível:</span>
+          <span style={{ fontSize: "13px", color: "#c9bede" }}>Saldo de Recargas Vigente:</span>
           <strong style={{ fontSize: "16px", color: "#00db8c" }}>{currentBalance} mensagens</strong>
         </div>
 
@@ -1785,17 +1810,36 @@ export function RechargeMessagesModal({
             <div style={{
               background: "rgba(0, 219, 140, 0.15)",
               border: "1px solid #00db8c",
-              borderRadius: "12px",
-              padding: "16px",
+              borderRadius: "14px",
+              padding: "18px",
               color: "#d1fae5",
               fontSize: "14px",
               display: "flex",
-              alignItems: "center",
-              gap: "10px"
+              alignItems: "flex-start",
+              gap: "12px",
+              lineHeight: 1.5
             }}>
-              <CheckCircle2 size={24} color="#00db8c" />
-              <span>{successMsg}</span>
+              <CheckCircle2 size={24} color="#00db8c" style={{ flexShrink: 0, marginTop: "2px" }} />
+              <div>
+                <strong style={{ display: "block", color: "#fff", fontSize: "15px", marginBottom: "4px" }}>
+                  Solicitação Registrada com Sucesso!
+                </strong>
+                <span>{successMsg}</span>
+              </div>
             </div>
+
+            <div style={{
+              background: "rgba(245, 158, 11, 0.12)",
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              borderRadius: "12px",
+              padding: "14px",
+              fontSize: "12px",
+              color: "#fde68a",
+              lineHeight: 1.5
+            }}>
+              ⏳ <strong>Como funciona a liberação:</strong> O administrador do Painel Master foi notificado. Assim que ele conferir o comprovante PIX no extrato, os créditos serão ativados automaticamente na sua conta.
+            </div>
+
             <button
               type="button"
               onClick={onClose}
@@ -1806,7 +1850,8 @@ export function RechargeMessagesModal({
                 borderRadius: "10px",
                 padding: "12px",
                 fontWeight: 700,
-                cursor: "pointer"
+                cursor: "pointer",
+                marginTop: "6px"
               }}
             >
               Concluir e Voltar
@@ -1814,9 +1859,9 @@ export function RechargeMessagesModal({
           </div>
         ) : (
           <>
-            {/* Opções de Pacotes */}
+            {/* 1. Escolha do Pacote */}
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <span style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>Escolha o pacote de recarga:</span>
+              <span style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>1. Escolha a quantidade de créditos:</span>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "8px" }}>
                 {DEFAULT_RECHARGE_PACKAGES.map(pkg => (
                   <div
@@ -1824,7 +1869,7 @@ export function RechargeMessagesModal({
                     onClick={() => setSelectedPackages(pkg.packagesCount)}
                     style={{
                       border: selectedPackages === pkg.packagesCount ? "2px solid #ec4899" : "1px solid rgba(255, 255, 255, 0.1)",
-                      background: selectedPackages === pkg.packagesCount ? "rgba(236, 72, 153, 0.12)" : "rgba(255, 255, 255, 0.02)",
+                      background: selectedPackages === pkg.packagesCount ? "rgba(236, 72, 153, 0.14)" : "rgba(255, 255, 255, 0.02)",
                       borderRadius: "12px",
                       padding: "12px 16px",
                       display: "flex",
@@ -1838,32 +1883,120 @@ export function RechargeMessagesModal({
                       <strong style={{ color: "#fff", fontSize: "14px", display: "block" }}>
                         {pkg.messages} mensagens da IA
                       </strong>
-                      <span style={{ fontSize: "12px", color: "#aba8bf" }}>
+                      <span style={{ fontSize: "12px", color: "#c4bed6" }}>
                         {pkg.packagesCount === 1 ? "1 recarga avulsa" : `${pkg.packagesCount} recargas combinadas`}
                       </span>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <strong style={{ color: "#00db8c", fontSize: "16px", display: "block" }}>
+                      <strong style={{ color: "#00db8c", fontSize: "17px", display: "block" }}>
                         R$ {pkg.price}
                       </strong>
-                      <span style={{ fontSize: "11px", color: "#8e87a2" }}>Pagamento único</span>
+                      <span style={{ fontSize: "11px", color: "#aba8bf" }}>Pagamento PIX</span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Informações Comerciais Claras */}
+            {/* 2. Caixa Oficial de Pagamento PIX */}
             <div style={{
               background: "rgba(139, 92, 246, 0.08)",
-              border: "1px solid rgba(139, 92, 246, 0.2)",
-              borderRadius: "12px",
-              padding: "12px",
-              fontSize: "12px",
-              color: "#c4b5fd",
-              lineHeight: 1.5
+              border: "1px solid rgba(139, 92, 246, 0.28)",
+              borderRadius: "14px",
+              padding: "16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px"
             }}>
-              💡 <strong>Regras comerciais:</strong> As mensagens de recarga são liberadas imediatamente após confirmação, acumulam com seu saldo atual e não alteram a sua mensalidade fixa de R$ 89,90.
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", fontWeight: 800, color: "#fff" }}>
+                  2. Dados para Transferência PIX:
+                </span>
+                <span style={{
+                  background: "rgba(0, 219, 140, 0.18)",
+                  border: "1px solid #00db8c",
+                  color: "#00db8c",
+                  padding: "2px 8px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 800
+                }}>
+                  Valor: R$ {currentPkg.price}
+                </span>
+              </div>
+
+              {/* Chave PIX com botão Copiar */}
+              <div style={{
+                background: "rgba(0, 0, 0, 0.45)",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                borderRadius: "10px",
+                padding: "10px 14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "10px"
+              }}>
+                <div style={{ overflow: "hidden" }}>
+                  <span style={{ fontSize: "11px", color: "#aba8bf", display: "block" }}>
+                    Chave PIX Oficial ({pixConfig?.keyType?.toUpperCase() || "CNPJ"}):
+                  </span>
+                  <strong style={{ color: "#fff", fontSize: "14px", wordBreak: "break-all" }}>
+                    {activePixKey}
+                  </strong>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyPix}
+                  style={{
+                    background: copiedKey ? "rgba(0, 219, 140, 0.2)" : "rgba(236, 72, 153, 0.2)",
+                    border: `1px solid ${copiedKey ? "#00db8c" : "#ec4899"}`,
+                    color: copiedKey ? "#00db8c" : "#f472b6",
+                    padding: "6px 12px",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  {copiedKey ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{copiedKey ? "Copiado!" : "Copiar"}</span>
+                </button>
+              </div>
+
+              <div style={{ fontSize: "12px", color: "#c4bed6", display: "flex", flexDirection: "column", gap: "3px" }}>
+                <span><strong>Favorecido:</strong> {activeBeneficiary}</span>
+                {activeBank && <span><strong>Instituição:</strong> {activeBank}</span>}
+              </div>
+
+              <p style={{ margin: 0, fontSize: "11px", color: "#aba8bf", lineHeight: 1.4 }}>
+                {activeInstructions}
+              </p>
+            </div>
+
+            {/* 3. Identificação do Pagamento */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "12px", color: "#c4bed6", fontWeight: 700 }}>
+                Nome do titular do PIX ou observação (opcional):
+              </label>
+              <input
+                type="text"
+                value={clientNotes}
+                onChange={e => setClientNotes(e.target.value)}
+                placeholder="Ex.: PIX feito por João / Final 4567"
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "10px",
+                  background: "#120e20",
+                  border: "1px solid #443c5e",
+                  color: "#fff",
+                  fontSize: "13px"
+                }}
+              />
             </div>
 
             {errorMsg && (
@@ -1880,7 +2013,7 @@ export function RechargeMessagesModal({
             )}
 
             {/* Ações */}
-            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "6px" }}>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "4px" }}>
               <button
                 type="button"
                 onClick={onClose}
@@ -1914,7 +2047,7 @@ export function RechargeMessagesModal({
                   boxShadow: "0 4px 16px rgba(236, 72, 153, 0.4)"
                 }}
               >
-                {loading ? "Confirmando..." : `Confirmar Recarga de R$ ${currentPkg.price}`}
+                {loading ? "Registrando..." : `Já Fiz o PIX / Solicitar Créditos`}
               </button>
             </div>
           </>
@@ -1996,11 +2129,11 @@ export function RechargeHistoryTable({
                       borderRadius: "6px",
                       fontSize: "11px",
                       fontWeight: 700,
-                      background: rec.status === "paid" ? "rgba(0, 219, 140, 0.15)" : "rgba(245, 158, 11, 0.15)",
-                      color: rec.status === "paid" ? "#00db8c" : "#f59e0b",
-                      border: `1px solid ${rec.status === "paid" ? "rgba(0, 219, 140, 0.3)" : "rgba(245, 158, 11, 0.3)"}`
+                      background: rec.status === "paid" ? "rgba(0, 219, 140, 0.15)" : rec.status === "rejected" ? "rgba(239, 68, 68, 0.15)" : "rgba(245, 158, 11, 0.15)",
+                      color: rec.status === "paid" ? "#00db8c" : rec.status === "rejected" ? "#fca5a5" : "#fcd34d",
+                      border: `1px solid ${rec.status === "paid" ? "rgba(0, 219, 140, 0.3)" : rec.status === "rejected" ? "rgba(239, 68, 68, 0.3)" : "rgba(245, 158, 11, 0.3)"}`
                     }}>
-                      {rec.status === "paid" ? "✅ Liberado" : "Pendente"}
+                      {rec.status === "paid" ? "✅ Aprovado" : rec.status === "rejected" ? "❌ Recusado" : "⏳ Aguardando Aprovação (PIX)"}
                     </span>
                   </td>
                 </tr>

@@ -10,16 +10,17 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
   plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de mensagens da IA." },
   kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
   providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
+  recharges: { title: "Central de Recargas & Chave PIX", description: "Aprove manualmente as recargas de mensagens após conferir o comprovante PIX e configure a chave de pagamento." },
   crm: { title: "CRM NovaesWeb", description: "Atendimento, WhatsApp e inteligência artificial da própria NovaesWeb." },
 };
 import {
-  Building2, RefreshCw, ShieldCheck,
+  Building2, Settings, Coins, RefreshCw, ShieldCheck,
   BrainCircuit, AlertCircle, PlusCircle, CheckCircle2, Ban, RotateCcw,
   Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
@@ -332,6 +333,142 @@ const DEFAULT_PLANS: PlanItem[] = [
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
   const [upgradeRequests, setUpgradeRequests] = useState<UpgradeRequestItem[]>([]);
+
+  // Recharges & PIX Configuration states
+  type AdminRecharge = {
+    id: string;
+    tenantId: string;
+    tenantName: string;
+    tenantEmail: string;
+    packagesCount: number;
+    messagesAdded: number;
+    pricePaid: number;
+    purchasedAt: string;
+    status: "paid" | "pending" | "rejected";
+    paymentMethod?: string;
+    txId?: string;
+    approvedAt?: string;
+    approvedBy?: string;
+    rejectionReason?: string;
+    clientNotes?: string;
+  };
+
+  type PixConfig = {
+    keyType: "cnpj" | "email" | "phone" | "random";
+    pixKey: string;
+    beneficiaryName: string;
+    bankName?: string;
+    city?: string;
+    instructions?: string;
+    updatedAt?: string;
+  };
+
+  const [adminRecharges, setAdminRecharges] = useState<AdminRecharge[]>([]);
+  const [pixConfig, setPixConfig] = useState<PixConfig>({
+    keyType: "cnpj",
+    pixKey: "58.742.894/0001-40",
+    beneficiaryName: "NovaesWeb Soluções Digitais",
+    bankName: "Banco Inter / NuBank",
+    city: "São Paulo - SP",
+    instructions: "Após transferir o PIX, confirme sua recarga nesta tela para aprovação imediata pelo administrador Master."
+  });
+  const [rechargesLoading, setRechargesLoading] = useState(false);
+  const [pixModalOpen, setPixModalOpen] = useState(false);
+  const [savingPix, setSavingPix] = useState(false);
+  const [rechargeFilter, setRechargeFilter] = useState<"all" | "pending" | "paid" | "rejected">("all");
+  const [rejectionModalOpen, setRejectionModalOpen] = useState(false);
+  const [targetRechargeForReject, setTargetRechargeForReject] = useState<AdminRecharge | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState("");
+  const [approvingRechargeId, setApprovingRechargeId] = useState<string | null>(null);
+
+  const fetchRecharges = useCallback(async () => {
+    try {
+      setRechargesLoading(true);
+      const res = await fetch("/api/crm/admin/recharges");
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.recharges)) setAdminRecharges(data.recharges);
+        if (data.pixConfig) setPixConfig(data.pixConfig);
+      }
+    } catch {} finally {
+      setRechargesLoading(false);
+    }
+  }, []);
+
+  const handleApproveRecharge = async (tenantId: string, rechargeId: string) => {
+    setApprovingRechargeId(rechargeId);
+    try {
+      const res = await fetch("/api/crm/admin/recharges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_recharge", tenantId, rechargeId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotice(data.message || "Recarga aprovada com sucesso! Créditos liberados.");
+        await fetchRecharges();
+        await fetchClients();
+      } else {
+        setError(data.message || "Erro ao aprovar recarga.");
+      }
+    } catch {
+      setError("Falha de comunicação ao aprovar recarga.");
+    } finally {
+      setApprovingRechargeId(null);
+    }
+  };
+
+  const handleRejectRecharge = async () => {
+    if (!targetRechargeForReject) return;
+    try {
+      const res = await fetch("/api/crm/admin/recharges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reject_recharge",
+          tenantId: targetRechargeForReject.tenantId,
+          rechargeId: targetRechargeForReject.id,
+          reason: rejectionReasonInput
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotice(data.message || "Solicitação de recarga recusada.");
+        setRejectionModalOpen(false);
+        setTargetRechargeForReject(null);
+        setRejectionReasonInput("");
+        await fetchRecharges();
+      } else {
+        setError(data.message || "Erro ao recusar recarga.");
+      }
+    } catch {
+      setError("Falha de comunicação ao recusar recarga.");
+    }
+  };
+
+  const handleSavePixConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPix(true);
+    try {
+      const res = await fetch("/api/crm/admin/recharges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update_pix_config", pixConfig })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotice("Chave PIX atualizada com sucesso!");
+        setPixModalOpen(false);
+        if (data.pixConfig) setPixConfig(data.pixConfig);
+      } else {
+        setError(data.message || "Erro ao atualizar chave PIX.");
+      }
+    } catch {
+      setError("Falha de comunicação ao salvar chave PIX.");
+    } finally {
+      setSavingPix(false);
+    }
+  };
   const [plans, setPlans] = useState<PlanItem[]>([]);
   const [clientCountsMap, setClientCountsMap] = useState<Record<string, number>>({});
   const [enrolledStoresMap, setEnrolledStoresMap] = useState<Record<string, Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>>>({});
@@ -1885,6 +2022,34 @@ export default function AdminCRM() {
 
           <button
             type="button"
+            className={`nw-nav-button ${currentNav === "recharges" ? "active" : ""}`}
+            aria-current={currentNav === "recharges" ? "page" : undefined}
+            onClick={() => navigateSection("recharges")}
+          >
+            <Coins size={18}/>
+            <span>Recargas &amp; PIX</span>
+            {adminRecharges.filter(r => r.status === "pending").length > 0 ? (
+              <span style={{
+                marginLeft: "auto",
+                background: "rgba(245, 158, 11, 0.2)",
+                color: "#fcd34d",
+                border: "1px solid rgba(245, 158, 11, 0.4)",
+                padding: "2px 8px",
+                borderRadius: "10px",
+                fontSize: "11px",
+                fontWeight: 800
+              }}>
+                {adminRecharges.filter(r => r.status === "pending").length} pendente{adminRecharges.filter(r => r.status === "pending").length > 1 ? "s" : ""}
+              </span>
+            ) : (
+              <span style={{marginLeft: "auto", background: "rgba(0, 219, 140, 0.15)", color: "#00db8c", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {adminRecharges.filter(r => r.status === "paid").length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`nw-nav-button ${currentNav === "kpis" ? "active" : ""}`}
             aria-current={currentNav === "kpis" ? "page" : undefined}
             onClick={() => navigateSection("kpis")}
@@ -2073,6 +2238,38 @@ export default function AdminCRM() {
             </p>
           </div>
           <div style={{display: "flex", gap: "10px"}}>
+            {currentNav === "recharges" && (
+              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", width: "100%"}}>
+                <div>
+                  <h2 style={{margin: 0, fontSize: "22px", fontWeight: 900, display: "flex", alignItems: "center", gap: "10px"}}>
+                    <Coins size={24} color="#ec4899"/> Central de Recargas &amp; Chave PIX
+                  </h2>
+                  <p style={{margin: "4px 0 0", fontSize: "13px", color: "#aba8bf"}}>
+                    Aprove manualmente as recargas de mensagens após conferir o comprovante PIX e configure a chave de pagamento.
+                  </p>
+                </div>
+                <div style={{display: "flex", gap: "10px"}}>
+                  <button
+                    type="button"
+                    onClick={() => setPixModalOpen(true)}
+                    className="op-primary"
+                    style={{padding: "10px 18px", borderRadius: "10px", display: "flex", alignItems: "center", gap: "8px", fontWeight: 700}}
+                  >
+                    <Settings size={16}/> Configurar Chave PIX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void fetchRecharges()}
+                    className="op-refresh"
+                    style={{padding: "10px 14px", borderRadius: "10px"}}
+                    title="Atualizar solicitações"
+                  >
+                    <RefreshCw size={16}/>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {currentNav === "plans" && (
               <>
                 <button
@@ -3154,7 +3351,401 @@ export default function AdminCRM() {
           </section>
         )}
 
+        {/* ===================== VIEW: RECARGAS & PIX ===================== */}
+        {currentNav === "recharges" && (
+          <section style={{display: "flex", flexDirection: "column", gap: "24px"}}>
+            {/* Bento Cards Resumo */}
+            <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px"}}>
+              <div className="op-card" style={{
+                padding: "20px",
+                border: adminRecharges.filter(r => r.status === "pending").length > 0 ? "1px solid rgba(245, 158, 11, 0.4)" : "1px solid rgba(255, 255, 255, 0.08)",
+                background: adminRecharges.filter(r => r.status === "pending").length > 0 ? "rgba(245, 158, 11, 0.06)" : "rgba(22, 19, 39, 0.65)",
+                borderRadius: "16px"
+              }}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
+                  <span style={{fontSize: "12px", color: "#c4bed6", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700}}>
+                    Recargas Pendentes
+                  </span>
+                  <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.15)", display: "grid", placeItems: "center"}}>
+                    <Zap size={18} color="#f59e0b"/>
+                  </div>
+                </div>
+                <strong style={{display: "block", fontSize: "34px", color: adminRecharges.filter(r => r.status === "pending").length > 0 ? "#fcd34d" : "#fff", marginTop: "8px", fontWeight: 900}}>
+                  {adminRecharges.filter(r => r.status === "pending").length}
+                </strong>
+                <small style={{color: adminRecharges.filter(r => r.status === "pending").length > 0 ? "#fcd34d" : "#00db8c", fontSize: "12px", fontWeight: 600}}>
+                  {adminRecharges.filter(r => r.status === "pending").length > 0 ? "⚠️ Requer sua conferência bancária" : "✅ Todas as solicitações processadas"}
+                </small>
+              </div>
+
+              <div className="op-card" style={{padding: "20px", background: "rgba(22, 19, 39, 0.65)", borderRadius: "16px"}}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
+                  <span style={{fontSize: "12px", color: "#c4bed6", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700}}>
+                    Receita com Recargas
+                  </span>
+                  <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center"}}>
+                    <DollarSign size={18} color="#00db8c"/>
+                  </div>
+                </div>
+                <strong style={{display: "block", fontSize: "34px", color: "#00db8c", marginTop: "8px", fontWeight: 900}}>
+                  R$ {adminRecharges.filter(r => r.status === "paid").reduce((s, r) => s + (Number(r.pricePaid) || 0), 0).toFixed(2).replace(".", ",")}
+                </strong>
+                <small style={{color: "#aba8bf", fontSize: "12px"}}>Faturamento confirmado em créditos</small>
+              </div>
+
+              <div className="op-card" style={{padding: "20px", background: "rgba(22, 19, 39, 0.65)", borderRadius: "16px"}}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
+                  <span style={{fontSize: "12px", color: "#c4bed6", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700}}>
+                    Créditos IA Liberados
+                  </span>
+                  <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center"}}>
+                    <Bot size={18} color="#ec4899"/>
+                  </div>
+                </div>
+                <strong style={{display: "block", fontSize: "34px", color: "#fff", marginTop: "8px", fontWeight: 900}}>
+                  {adminRecharges.filter(r => r.status === "paid").reduce((s, r) => s + (Number(r.messagesAdded) || 0), 0).toLocaleString("pt-BR")}
+                </strong>
+                <small style={{color: "#aba8bf", fontSize: "12px"}}>Mensagens extras de IA ativadas</small>
+              </div>
+            </div>
+
+            {/* Painel da Chave PIX Ativa */}
+            <div className="op-card" style={{
+              padding: "20px 24px",
+              background: "linear-gradient(135deg, rgba(236, 72, 153, 0.12), rgba(139, 92, 246, 0.1))",
+              border: "1px solid rgba(236, 72, 153, 0.35)",
+              borderRadius: "16px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "16px"
+            }}>
+              <div>
+                <span style={{fontSize: "11px", color: "#ec4899", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px"}}>
+                  Chave PIX Vigente da NovaesWeb (Visível para todos os lojistas)
+                </span>
+                <div style={{display: "flex", alignItems: "center", gap: "10px", marginTop: "4px"}}>
+                  <strong style={{fontSize: "18px", color: "#fff"}}>{pixConfig.pixKey}</strong>
+                  <span style={{fontSize: "11px", background: "rgba(255,255,255,0.1)", padding: "2px 8px", borderRadius: "6px", color: "#d1c8e6", textTransform: "uppercase", fontWeight: 700}}>
+                    {pixConfig.keyType}
+                  </span>
+                </div>
+                <div style={{fontSize: "13px", color: "#c4bed6", marginTop: "4px"}}>
+                  <span>Favorecido: <strong>{pixConfig.beneficiaryName}</strong></span>
+                  {pixConfig.bankName && <span style={{marginLeft: "12px"}}>Banco: <strong>{pixConfig.bankName}</strong></span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPixModalOpen(true)}
+                className="op-primary"
+                style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px"}}
+              >
+                <Edit3 size={15}/> Alterar Chave PIX
+              </button>
+            </div>
+
+            {/* Tabela de Solicitações */}
+            <div className="op-card" style={{padding: "24px", borderRadius: "16px"}}>
+              <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px", flexWrap: "wrap", gap: "12px"}}>
+                <div>
+                  <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                    Fila de Solicitações de Recarga
+                  </h3>
+                  <span style={{fontSize: "12px", color: "#c4bed6"}}>
+                    Clique em &quot;Aprovar&quot; após conferir o recebimento do valor na sua conta bancária.
+                  </span>
+                </div>
+
+                {/* Filtros */}
+                <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                  {[
+                    { id: "all", label: `Todas (${adminRecharges.length})` },
+                    { id: "pending", label: `⏳ Pendentes (${adminRecharges.filter(r => r.status === "pending").length})`, highlight: adminRecharges.filter(r => r.status === "pending").length > 0 },
+                    { id: "paid", label: `✅ Aprovadas (${adminRecharges.filter(r => r.status === "paid").length})` },
+                    { id: "rejected", label: `❌ Recusadas (${adminRecharges.filter(r => r.status === "rejected").length})` }
+                  ].map(f => {
+                    const isSelected = rechargeFilter === f.id;
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setRechargeFilter(f.id as typeof rechargeFilter)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: "8px",
+                          border: isSelected ? "1px solid #ec4899" : "1px solid rgba(255, 255, 255, 0.1)",
+                          background: isSelected ? "var(--grad-primary)" : f.highlight ? "rgba(245, 158, 11, 0.15)" : "transparent",
+                          color: isSelected ? "#fff" : f.highlight ? "#fcd34d" : "#c4bed6",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: "pointer"
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {adminRecharges.filter(r => rechargeFilter === "all" ? true : r.status === rechargeFilter).length === 0 ? (
+                <div style={{textAlign: "center", padding: "40px 20px", color: "#aba8bf", fontSize: "14px", border: "1px dashed rgba(255, 255, 255, 0.08)", borderRadius: "12px"}}>
+                  Nenhuma solicitação de recarga encontrada neste filtro.
+                </div>
+              ) : (
+                <div style={{overflowX: "auto"}}>
+                  <table style={{width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left"}}>
+                    <thead>
+                      <tr style={{borderBottom: "1px solid rgba(255, 255, 255, 0.1)", color: "#aba8bf"}}>
+                        <th style={{padding: "12px 14px"}}>Data / Hora</th>
+                        <th style={{padding: "12px 14px"}}>Loja / Solicitante</th>
+                        <th style={{padding: "12px 14px"}}>Pacote</th>
+                        <th style={{padding: "12px 14px"}}>Valor</th>
+                        <th style={{padding: "12px 14px"}}>Identificação PIX</th>
+                        <th style={{padding: "12px 14px"}}>Status</th>
+                        <th style={{padding: "12px 14px", textAlign: "right"}}>Ações Financeiras</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminRecharges.filter(r => rechargeFilter === "all" ? true : r.status === rechargeFilter).map(rec => (
+                        <tr key={rec.id} style={{borderBottom: "1px solid rgba(255, 255, 255, 0.04)", color: "#fff"}}>
+                          <td style={{padding: "12px 14px", color: "#c4bed6", whiteSpace: "nowrap"}}>
+                            {rec.purchasedAt ? new Date(rec.purchasedAt).toLocaleString("pt-BR") : "—"}
+                          </td>
+                          <td style={{padding: "12px 14px"}}>
+                            <strong style={{color: "#fff", display: "block"}}>{rec.tenantName}</strong>
+                            <span style={{fontSize: "11px", color: "#aba8bf"}}>{rec.tenantEmail}</span>
+                          </td>
+                          <td style={{padding: "12px 14px", color: "#ec4899", fontWeight: 700}}>
+                            +{rec.messagesAdded} mensagens IA
+                          </td>
+                          <td style={{padding: "12px 14px", color: "#00db8c", fontWeight: 800}}>
+                            R$ {Number(rec.pricePaid || 0).toFixed(2).replace(".", ",")}
+                          </td>
+                          <td style={{padding: "12px 14px", color: "#c4bed6", maxWidth: "200px"}}>
+                            {rec.clientNotes ? (
+                              <span style={{background: "rgba(255,255,255,0.06)", padding: "4px 8px", borderRadius: "6px", display: "inline-block", fontSize: "12px"}}>
+                                📝 {rec.clientNotes}
+                              </span>
+                            ) : (
+                              <span style={{color: "#6b7280"}}>Nenhuma observação</span>
+                            )}
+                          </td>
+                          <td style={{padding: "12px 14px"}}>
+                            <span style={{
+                              padding: "4px 10px",
+                              borderRadius: "999px",
+                              fontSize: "11px",
+                              fontWeight: 800,
+                              background: rec.status === "paid" ? "rgba(0, 219, 140, 0.15)" : rec.status === "rejected" ? "rgba(239, 68, 68, 0.15)" : "rgba(245, 158, 11, 0.18)",
+                              color: rec.status === "paid" ? "#00db8c" : rec.status === "rejected" ? "#fca5a5" : "#fcd34d",
+                              border: `1px solid ${rec.status === "paid" ? "rgba(0, 219, 140, 0.35)" : rec.status === "rejected" ? "rgba(239, 68, 68, 0.35)" : "rgba(245, 158, 11, 0.4)"}`
+                            }}>
+                              {rec.status === "paid" ? "✅ Aprovado" : rec.status === "rejected" ? "❌ Recusado" : "⏳ Pendente"}
+                            </span>
+                          </td>
+                          <td style={{padding: "12px 14px", textAlign: "right"}}>
+                            {rec.status === "pending" ? (
+                              <div style={{display: "inline-flex", gap: "8px", justifyContent: "flex-end"}}>
+                                <button
+                                  type="button"
+                                  disabled={approvingRechargeId === rec.id}
+                                  onClick={() => handleApproveRecharge(rec.tenantId, rec.id)}
+                                  className="op-primary"
+                                  style={{padding: "6px 12px", fontSize: "12px", borderRadius: "8px", fontWeight: 700, background: "#00db8c", color: "#000"}}
+                                  title="Confirmar recebimento do PIX e creditar mensagens"
+                                >
+                                  {approvingRechargeId === rec.id ? "Aprovando..." : "✅ Aprovar e Creditar"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={approvingRechargeId === rec.id}
+                                  onClick={() => {
+                                    setTargetRechargeForReject(rec);
+                                    setRejectionReasonInput("");
+                                    setRejectionModalOpen(true);
+                                  }}
+                                  className="op-refresh"
+                                  style={{padding: "6px 12px", fontSize: "12px", borderRadius: "8px", color: "#fca5a5", borderColor: "#ef4444"}}
+                                  title="Recusar solicitação"
+                                >
+                                  ❌ Recusar
+                                </button>
+                              </div>
+                            ) : rec.status === "paid" ? (
+                              <span style={{fontSize: "11px", color: "#00db8c"}}>
+                                Aprovado em {rec.approvedAt ? new Date(rec.approvedAt).toLocaleDateString("pt-BR") : "—"}
+                              </span>
+                            ) : (
+                              <span style={{fontSize: "11px", color: "#f87171"}} title={rec.rejectionReason}>
+                                Recusado: {rec.rejectionReason || "PIX não identificado"}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* ===================== MODAIS ===================== */}
+
+        {/* MODAL CONFIGURAR CHAVE PIX */}
+        {pixModalOpen && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "520px", padding: "28px", borderColor: "#ec4899", borderRadius: "20px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)"}}>
+              <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px"}}>
+                <Coins size={22} color="#ec4899"/>
+                <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Configurar Chave PIX Oficial</h3>
+              </div>
+              <p style={{margin: "0 0 16px", fontSize: "13px", color: "#c4bed6"}}>
+                Esta chave e dados de pagamento serão exibidos imediatamente para todos os lojistas que solicitarem recarga de créditos.
+              </p>
+
+              <form onSubmit={handleSavePixConfig} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                <div>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "4px"}}>Tipo de Chave PIX</label>
+                  <select
+                    value={pixConfig.keyType}
+                    onChange={e => setPixConfig({ ...pixConfig, keyType: e.target.value as typeof pixConfig.keyType })}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                  >
+                    <option value="cnpj">CNPJ</option>
+                    <option value="email">E-mail</option>
+                    <option value="phone">Telefone (Celular)</option>
+                    <option value="random">Chave Aleatória (EVP)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "4px"}}>Chave PIX</label>
+                  <input
+                    type="text"
+                    required
+                    value={pixConfig.pixKey}
+                    onChange={e => setPixConfig({ ...pixConfig, pixKey: e.target.value })}
+                    placeholder="Ex: 58.742.894/0001-40 ou financeiro@novaesweb.com.br"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                  />
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "4px"}}>Nome do Favorecido / Beneficiário</label>
+                  <input
+                    type="text"
+                    required
+                    value={pixConfig.beneficiaryName}
+                    onChange={e => setPixConfig({ ...pixConfig, beneficiaryName: e.target.value })}
+                    placeholder="Ex: NovaesWeb Soluções Digitais Ltda"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                  />
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "4px"}}>Banco / Instituição (Opcional)</label>
+                  <input
+                    type="text"
+                    value={pixConfig.bankName || ""}
+                    onChange={e => setPixConfig({ ...pixConfig, bankName: e.target.value })}
+                    placeholder="Ex: Banco Inter / NuBank"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                  />
+                </div>
+
+                <div>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "4px"}}>Instruções para o Lojista</label>
+                  <textarea
+                    rows={3}
+                    value={pixConfig.instructions || ""}
+                    onChange={e => setPixConfig({ ...pixConfig, instructions: e.target.value })}
+                    placeholder="Ex: Realize a transferência PIX e clique em 'Informar Pagamento'. Os créditos serão liberados em minutos."
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                  />
+                </div>
+
+                <div style={{display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px"}}>
+                  <button
+                    type="button"
+                    onClick={() => setPixModalOpen(false)}
+                    className="op-refresh"
+                    style={{padding: "8px 16px", borderRadius: "8px"}}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingPix}
+                    className="op-primary"
+                    style={{padding: "8px 20px", borderRadius: "8px", fontWeight: 800}}
+                  >
+                    {savingPix ? "Salvando..." : "Salvar Configurações de PIX"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL RECUSAR RECARGA */}
+        {rejectionModalOpen && targetRechargeForReject && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "460px", padding: "26px", borderColor: "#f43f5e", borderRadius: "20px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)"}}>
+              <h3 style={{margin: "0 0 8px", fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                Recusar Recarga — {targetRechargeForReject.tenantName}
+              </h3>
+              <p style={{margin: "0 0 16px", fontSize: "13px", color: "#c4bed6"}}>
+                Valor solicitado: <strong>R$ {Number(targetRechargeForReject.pricePaid).toFixed(2).replace(".", ",")}</strong> (+{targetRechargeForReject.messagesAdded} msgs).
+              </p>
+
+              <div>
+                <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px"}}>
+                  Motivo da Recusa (visível para o cliente no histórico):
+                </label>
+                <input
+                  type="text"
+                  value={rejectionReasonInput}
+                  onChange={e => setRejectionReasonInput(e.target.value)}
+                  placeholder="Ex: Comprovante não anexado / PIX não localizado"
+                  style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#1c182c", border: "1px solid #4a3c68", color: "#fff", fontSize: "13px"}}
+                />
+              </div>
+
+              <div style={{display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "18px"}}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRejectionModalOpen(false);
+                    setTargetRechargeForReject(null);
+                  }}
+                  className="op-refresh"
+                  style={{padding: "8px 16px", borderRadius: "8px"}}
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRejectRecharge}
+                  className="op-primary"
+                  style={{padding: "8px 18px", borderRadius: "8px", fontWeight: 800, background: "#ef4444"}}
+                >
+                  Confirmar Recusa
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* MODAL 1: EDITAR / CRIAR PLANO */}
         {editPlanModalOpen && (

@@ -113,17 +113,38 @@ export type MessageRechargeItem = {
   messagesAdded: number;
   pricePaid: number;
   purchasedAt: string;
-  status: "paid" | "pending";
+  status: "paid" | "pending" | "rejected";
   paymentMethod?: string;
   txId?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  rejectionReason?: string;
+  clientNotes?: string;
+};
+
+export type MasterPixConfig = {
+  keyType: "cnpj" | "email" | "phone" | "random";
+  pixKey: string;
+  beneficiaryName: string;
+  bankName: string;
+  city?: string;
+  instructions?: string;
+  updatedAt?: string;
+};
+
+export const DEFAULT_PIX_CONFIG: MasterPixConfig = {
+  keyType: "cnpj",
+  pixKey: "58.742.894/0001-40",
+  beneficiaryName: "NovaesWeb Soluções Digitais",
+  bankName: "Banco Inter / NuBank",
+  city: "São Paulo - SP",
+  instructions: "Transfira o valor exato do pacote escolhido para a chave PIX acima. Em seguida, informe seu pagamento para aprovação imediata pelo administrador Master."
 };
 
 export const RECHARGE_PACKAGES = [
   { packagesCount: 1, messages: 100, price: "20,00", priceValue: 20, label: "100 mensagens adicionais" },
   { packagesCount: 2, messages: 200, price: "40,00", priceValue: 40, label: "200 mensagens adicionais" },
-  { packagesCount: 3, messages: 300, price: "60,00", priceValue: 60, label: "300 mensagens adicionais" },
-  { packagesCount: 5, messages: 500, price: "100,00", priceValue: 100, label: "500 mensagens adicionais" },
-  { packagesCount: 10, messages: 1000, price: "200,00", priceValue: 200, label: "1.000 mensagens adicionais" }
+  { packagesCount: 5, messages: 500, price: "90,00", priceValue: 90, label: "500 mensagens (Combo especial)" }
 ];
 
 export type EffectiveTenantPlan = {
@@ -1686,7 +1707,7 @@ export async function getEffectiveTenantPlan(
     masterPlans
   );
 
-  const rawRecharges: MessageRechargeItem[] = Array.isArray(parsedRoot.recharges) ? parsedRoot.recharges : [];
+  const rawRecharges: MessageRechargeItem[] = Array.isArray(parsedRoot.recharges) ? (parsedRoot.recharges as unknown as MessageRechargeItem[]) : [];
   const paidRecharges = rawRecharges.filter(r => r.status === "paid");
   const totalRechargeCreditsAdded = paidRecharges.reduce((sum, r) => sum + (Number(r.messagesAdded) || 0), 0);
   const rechargesConsumed = Number((parsedRoot.usageCounters as Record<string, unknown> | undefined)?.rechargesConsumed) || 0;
@@ -1701,7 +1722,7 @@ export async function getEffectiveTenantPlan(
     maxOperators: isTrial ? (matchedPlan.maxOperators || 2) : baseMaxOperators,
     maxWhatsappConnections: isTrial ? (matchedPlan.maxWhatsappConnections || 3) : baseMaxWhatsapp,
     rechargeCreditsBalance,
-    rechargesHistory: rawRecharges,
+    rechargesHistory: rawRecharges as unknown as MessageRechargeItem[],
     allowedFeatures: finalFeatures.filter(feature => featureStates[feature]?.state === "allowed"),
     featureStates,
     dueDate,
@@ -2041,4 +2062,107 @@ export async function convertTrialToPaidPlan(
   } catch (err) {
     return { success: false, plan: targetPlan, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+let inMemoryPixConfig: MasterPixConfig | null = null;
+
+export async function getMasterPixConfig(providedRedis?: Redis): Promise<MasterPixConfig> {
+  const rConn = getRedis(providedRedis);
+  let owns = false;
+  try {
+    if (rConn.status !== "ready" && rConn.status !== "connecting") {
+      await rConn.connect();
+      owns = true;
+    }
+    const cached = await rConn.get("crm:master:pix_config");
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && typeof parsed === "object" && parsed.pixKey) {
+        return parsed as MasterPixConfig;
+      }
+    }
+  } catch {} finally {
+    if (owns && !providedRedis) rConn.disconnect();
+  }
+
+  const config = getSupabaseConfig();
+  if (config.url && config.serviceKey) {
+    try {
+      const ownerId = await catalogOwnerId();
+      const response = await fetch(config.url + `/rest/v1/crm_tenant_settings?tenant_id=eq.` + ownerId + `&select=business_description`, {
+        headers: { apikey: config.serviceKey, Authorization: "Bearer " + config.serviceKey },
+        cache: "no-store", signal: AbortSignal.timeout(6000)
+      });
+      if (response.ok) {
+        const rows = (await response.json()) as Array<{ business_description?: string }>;
+        if (rows[0]?.business_description) {
+          const root = JSON.parse(rows[0].business_description);
+          if (root?.master_pix_config && typeof root.master_pix_config === "object" && root.master_pix_config.pixKey) {
+            inMemoryPixConfig = { ...DEFAULT_PIX_CONFIG, ...root.master_pix_config };
+            try {
+              const r = getRedis(providedRedis);
+              let o = false;
+              if (r.status !== "ready" && r.status !== "connecting") {
+                await r.connect();
+                o = true;
+              }
+              await r.set("crm:master:pix_config", JSON.stringify(inMemoryPixConfig), "EX", 86400);
+              if (o && !providedRedis) r.disconnect();
+            } catch {}
+            return inMemoryPixConfig!;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return (inMemoryPixConfig ?? DEFAULT_PIX_CONFIG) as MasterPixConfig;
+}
+
+export async function saveMasterPixConfig(update: Partial<MasterPixConfig>, providedRedis?: Redis): Promise<MasterPixConfig> {
+  const current = await getMasterPixConfig(providedRedis);
+  const nextConfig: MasterPixConfig = {
+    keyType: update.keyType || current.keyType || "cnpj",
+    pixKey: (update.pixKey || current.pixKey || "").trim(),
+    beneficiaryName: (update.beneficiaryName || current.beneficiaryName || "").trim(),
+    bankName: (update.bankName || current.bankName || "").trim(),
+    city: (update.city || current.city || "São Paulo - SP").trim(),
+    instructions: (update.instructions || current.instructions || "").trim(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (!nextConfig.pixKey) {
+    throw new Error("A chave PIX não pode ser vazia.");
+  }
+  if (!nextConfig.beneficiaryName) {
+    throw new Error("O nome do beneficiário não pode ser vazio.");
+  }
+
+  const config = getSupabaseConfig();
+  if (!config.url || !config.serviceKey) throw new Error("plan_service_not_configured");
+  const ownerId = await catalogOwnerId();
+
+  const patch = { master_pix_config: nextConfig };
+  const saved = await fetch(config.url + "/rest/v1/rpc/crm_patch_tenant_config", {
+    method: "POST", cache: "no-store", signal: AbortSignal.timeout(8000),
+    headers: { apikey: config.serviceKey, Authorization: "Bearer " + config.serviceKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_tenant: ownerId, p_patch: patch })
+  });
+  if (!saved.ok) throw new Error("pix_config_save_failed");
+
+  inMemoryPixConfig = nextConfig;
+
+  const rConn = getRedis(providedRedis);
+  let owns = false;
+  try {
+    if (rConn.status !== "ready" && rConn.status !== "connecting") {
+      await rConn.connect();
+      owns = true;
+    }
+    await rConn.set("crm:master:pix_config", JSON.stringify(nextConfig), "EX", 86400);
+  } catch {} finally {
+    if (owns && !providedRedis) rConn.disconnect();
+  }
+
+  return nextConfig;
 }

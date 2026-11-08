@@ -5002,8 +5002,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               onClose={() => setRechargeModalOpen(false)}
               tenantId={tenant}
               currentBalance={localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
-              onRechargeSuccess={(newBalance) => {
-                setLocalRechargeBalance(newBalance);
+              pixConfig={(data?.plan as unknown as Record<string, unknown> | undefined)?.pixConfig as any}
+              onRechargeSubmitted={() => {
                 if (tenant) {
                   void fetchReports(tenant);
                   void fetchData(tenant, true);

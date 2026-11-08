@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { authorizeCrmTenant, ownsCrmResource, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans, RECHARGE_PACKAGES, DEFAULT_QUICK_REPLIES, type MessageRechargeItem } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans, getMasterPixConfig, RECHARGE_PACKAGES, DEFAULT_QUICK_REPLIES, type MessageRechargeItem } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 
 export const runtime = "nodejs";
@@ -296,6 +296,7 @@ export async function GET(request: NextRequest) {
         rechargeCreditsBalance: effectivePlan.rechargeCreditsBalance || 0,
         rechargesHistory: effectivePlan.rechargesHistory || [],
         rechargePackages: RECHARGE_PACKAGES,
+        pixConfig: await getMasterPixConfig(),
         maxWhatsappConnections: effectivePlan.maxWhatsappConnections,
         maxOperators: effectivePlan.maxOperators,
         dueDate: effectivePlan.dueDate,
@@ -341,25 +342,24 @@ export async function POST(request: NextRequest) {
 
     const dataObj = await loadTenantSettingsJson(url, serviceKey, tenantId);
 
-    // 0. ACTION: Buy Recharge Credits (Always allowed for active / trial tenants)
-    if (action === "buy_recharge") {
+    // 0. ACTION: Request Recharge Credits (Creates pending request for Master manual approval)
+    if (action === "buy_recharge" || action === "request_recharge") {
       const packagesCount = Number(body.packagesCount) || 1;
-      const matchedPkg = RECHARGE_PACKAGES.find(p => p.packagesCount === packagesCount);
-      if (!matchedPkg) {
-        return privateJson({ error: "invalid_package", message: "Pacote de recarga inválido." }, 400);
-      }
+      const matchedPkg = RECHARGE_PACKAGES.find(p => p.packagesCount === packagesCount) || RECHARGE_PACKAGES[0];
 
       const txId = typeof body.txId === "string" && body.txId.trim() ? body.txId.trim() : `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const existingRecharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+      const existingRecharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? (dataObj.recharges as unknown as MessageRechargeItem[]) : [];
 
-      // Idempotency: prevent double credit if txId already processed
+      // Idempotency: prevent double registration if txId already processed
       if (existingRecharges.some(r => r.txId === txId || r.id === txId)) {
         return privateJson({
           alreadyProcessed: true,
           recharges: existingRecharges,
-          message: "Esta transação já foi processada anteriormente."
+          message: "Esta solicitação de recarga já foi registrada anteriormente."
         });
       }
+
+      const clientNotes = typeof body.clientNotes === "string" ? body.clientNotes.trim().slice(0, 300) : "";
 
       const newRecharge: MessageRechargeItem = {
         id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -367,23 +367,25 @@ export async function POST(request: NextRequest) {
         messagesAdded: matchedPkg.messages,
         pricePaid: matchedPkg.priceValue,
         purchasedAt: new Date().toISOString(),
-        status: "paid",
+        status: "pending", // <--- PENDING MANUAL APPROVAL BY MASTER
         paymentMethod: typeof body.paymentMethod === "string" ? body.paymentMethod : "pix",
-        txId
+        txId,
+        clientNotes
       };
 
       existingRecharges.unshift(newRecharge);
-      dataObj.recharges = existingRecharges;
+      dataObj.recharges = existingRecharges.slice(0, 100);
       await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "recharges");
 
       const effectivePlanUpdated = await getEffectiveTenantPlan(tenantId);
 
       return privateJson({
         success: true,
+        pending: true,
         recharge: newRecharge,
         recharges: existingRecharges,
         rechargeCreditsBalance: effectivePlanUpdated.rechargeCreditsBalance,
-        message: `Recarga de ${matchedPkg.messages} mensagens adicionadas com sucesso ao seu saldo!`
+        message: `Solicitação de recarga de ${matchedPkg.messages} mensagens registrada com sucesso! Assim que seu PIX for confirmado no Painel Master, os créditos serão liberados imediatamente.`
       });
     }
 

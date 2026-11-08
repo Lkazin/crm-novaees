@@ -29,4 +29,6 @@ export type StoredTenantConfig = Record<string, unknown> & {
   satisfactionSurveys?: Array<Record<string, unknown>>;
   upgradeRequests?: Array<Record<string, unknown>>;
   paymentHistory?: Array<Record<string, unknown>>;
+  recharges?: Array<Record<string, unknown>>;
+  master_pix_config?: Record<string, unknown>;
 };
