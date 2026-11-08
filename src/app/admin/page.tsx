@@ -3159,7 +3159,7 @@ export default function AdminCRM() {
         {/* MODAL 1: EDITAR / CRIAR PLANO */}
         {editPlanModalOpen && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 100, padding: "20px"
           }}>
             <div className="op-card" style={{
@@ -3379,7 +3379,7 @@ export default function AdminCRM() {
         {/* MODAL 2: CONFIRMAÇÃO DE IMPACTO E APLICAÇÃO EM LOTE */}
         {impactModalOpen && planToApply && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "560px", padding: "28px", borderColor: "#ec4899"}}>
@@ -3510,7 +3510,7 @@ export default function AdminCRM() {
         {/* MODAL 3: DUPLICAR PLANO */}
         {duplicateModalOpen && sourcePlanForDuplicate && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "440px", padding: "26px", borderColor: "#ec4899"}}>
@@ -3567,7 +3567,7 @@ export default function AdminCRM() {
         {/* MODAL 4: VER LOJAS VINCULADAS */}
         {enrolledModalOpen && selectedPlanForStores && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "520px", padding: "26px", borderColor: "#ec4899"}}>
@@ -3629,7 +3629,7 @@ export default function AdminCRM() {
         {/* MODAL 5: HISTÓRICO DE AUDITORIA */}
         {historyModalOpen && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 110, padding: "20px"
           }}>
             <div className="op-card" style={{
@@ -3691,7 +3691,7 @@ export default function AdminCRM() {
         {/* MODAL 6: ALTERAR PLANO DA LOJA (COM SUPORTE A EXCEÇÃO CONTRATUAL) */}
         {changePlanModalOpen && selectedClientForPlan && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 100, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "480px", padding: "28px", borderColor: "#ec4899"}}>
@@ -3807,7 +3807,7 @@ export default function AdminCRM() {
         {/* MODAL 7: REDEFINIR SENHA DO CLIENTE */}
         {resetModalOpen && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 100, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "420px", padding: "28px", borderColor: "#ec4899"}}>
@@ -3851,7 +3851,7 @@ export default function AdminCRM() {
         {/* MODAL 8: SUSPENSÃO ADMINISTRATIVA / DESBLOQUEIO COM MOTIVO PÚBLICO E NOTA INTERNA */}
         {blockModalOpen && clientToBlock && (
           <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)",
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
             display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
           }}>
             <div className="op-card" style={{width: "100%", maxWidth: "480px", padding: "28px", borderColor: clientToBlock.status === "suspended" ? "#00db8c" : "#f43f5e"}}>

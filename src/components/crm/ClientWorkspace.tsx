@@ -3660,12 +3660,60 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* SEÇÃO 3: ATENDIMENTOS E CONVERSAS */}
             {activeTab === "atendimentos" && (
               <>
+                {/* Alerta Inteligente de Franquia (se >= 80% consumida) */}
+                <ConsumptionAlertBanner
+                  quotaUsed={quotaData.quotaUsed}
+                  quotaLimit={quotaData.quotaLimit}
+                  rechargeBalance={localRechargeBalance ?? data?.plan?.rechargeCreditsBalance ?? 0}
+                  onBuyRecharge={() => setRechargeModalOpen(true)}
+                />
+
                 <section className="op-workspace" style={{minHeight: "640px"}}>
                   {/* Coluna Esquerda: Lista de Conversas */}
                   <aside className={`op-card op-inbox ${mobileChatOpen ? "op-mobile-hide" : ""}`} style={{display: "flex", flexDirection: "column"}}>
-                    <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px"}}>
+                    <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", gap: "8px", flexWrap: "wrap"}}>
                       <h2 style={{margin: 0, fontSize: "18px", fontWeight: 800}}>Atendimento ao Vivo</h2>
-                      <span style={{fontSize: "12px", color: "#a59cb8", fontWeight: 600}}>{filtered.length} conversas</span>
+                      <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                        {/* Live Quota Pill */}
+                        <div
+                          title="Saldo de mensagens automáticas de IA da franquia"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            padding: "3px 8px",
+                            borderRadius: "999px",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            background: quotaPercent >= 90 ? "rgba(239, 68, 68, 0.16)" : quotaPercent >= 80 ? "rgba(245, 158, 11, 0.16)" : "rgba(0, 219, 140, 0.12)",
+                            border: `1px solid ${quotaPercent >= 90 ? "rgba(239, 68, 68, 0.4)" : quotaPercent >= 80 ? "rgba(245, 158, 11, 0.4)" : "rgba(0, 219, 140, 0.3)"}`,
+                            color: quotaPercent >= 90 ? "#fca5a5" : quotaPercent >= 80 ? "#fcd34d" : "#00db8c"
+                          }}
+                        >
+                          <Bot size={13} />
+                          <span>{Math.max(0, quotaData.quotaLimit - quotaData.quotaUsed)} msgs IA</span>
+                          {quotaPercent >= 80 && (
+                            <button
+                              type="button"
+                              onClick={() => setRechargeModalOpen(true)}
+                              style={{
+                                background: "rgba(255, 255, 255, 0.18)",
+                                border: "none",
+                                color: "#fff",
+                                borderRadius: "4px",
+                                padding: "0 5px",
+                                fontSize: "10px",
+                                cursor: "pointer",
+                                fontWeight: 800,
+                                lineHeight: "16px"
+                              }}
+                            >
+                              + Recarga
+                            </button>
+                          )}
+                        </div>
+                        <span style={{fontSize: "12px", color: "#c4bed6", fontWeight: 600}}>{filtered.length} conversas</span>
+                      </div>
                     </div>
 
                     <label className="op-search">
@@ -4883,46 +4931,46 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
                 {/* Grid de Limites Técnicos da Conta */}
                 <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px"}}>
-                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
-                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center"}}>
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "14px", minHeight: "76px", background: "rgba(22, 19, 39, 0.65)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "14px", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)"}}>
+                    <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center", flexShrink: 0}}>
                       <Smartphone size={20} color="#ec4899"/>
                     </div>
                     <div>
-                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>WhatsApps Permitidos</span>
+                      <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>WhatsApps Permitidos</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>
-                        {data?.plan?.maxWhatsappConnections ?? 1} de 5 espaços
+                        {data?.plan?.maxWhatsappConnections ?? 3} de 5 espaços
                       </strong>
                     </div>
                   </div>
 
-                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
-                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(139, 92, 246, 0.15)", display: "grid", placeItems: "center"}}>
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "14px", minHeight: "76px", background: "rgba(22, 19, 39, 0.65)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "14px", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)"}}>
+                    <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(139, 92, 246, 0.15)", display: "grid", placeItems: "center", flexShrink: 0}}>
                       <Users size={20} color="#8b5cf6"/>
                     </div>
                     <div>
-                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>Operadores Humanos</span>
+                      <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>Operadores Humanos</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>
-                        Até {data?.plan?.maxOperators ?? (data?.plan?.isTrial ? 1 : 3)} atendente(s)
+                        Até {data?.plan?.maxOperators ?? 2} atendente(s)
                       </strong>
                     </div>
                   </div>
 
-                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
-                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center"}}>
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "14px", minHeight: "76px", background: "rgba(22, 19, 39, 0.65)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "14px", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)"}}>
+                    <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center", flexShrink: 0}}>
                       <Bot size={20} color="#00db8c"/>
                     </div>
                     <div>
-                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>NovaesWeb IA</span>
+                      <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>NovaesWeb IA</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>Ativa 24h/dia</strong>
                     </div>
                   </div>
 
-                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "12px"}}>
-                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(59, 130, 246, 0.15)", display: "grid", placeItems: "center"}}>
+                  <div className="op-card" style={{padding: "16px", display: "flex", alignItems: "center", gap: "14px", minHeight: "76px", background: "rgba(22, 19, 39, 0.65)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "14px", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)"}}>
+                    <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(59, 130, 246, 0.15)", display: "grid", placeItems: "center", flexShrink: 0}}>
                       <ShieldCheck size={20} color="#3b82f6"/>
                     </div>
                     <div>
-                      <span style={{fontSize: "11px", color: "#8e87a2", display: "block"}}>Histórico & Conversas</span>
+                      <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>Histórico & Conversas</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>100% Preservado</strong>
                     </div>
                   </div>

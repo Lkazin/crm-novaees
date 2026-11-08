@@ -975,10 +975,10 @@ export function TeamOperatorsSection({
       {/* MODAL: CONVIDAR ATENDENTE */}
       {modalOpen && (
         <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)",
+          position: "fixed", inset: 0, background: "rgba(8, 6, 18, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
           display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
         }}>
-          <div className="op-card" style={{ maxWidth: "480px", width: "100%", background: "#161327", border: "1px solid #4a3c68", borderRadius: "18px", padding: "26px", display: "flex", flexDirection: "column", gap: "18px" }}>
+          <div className="op-card" style={{ maxWidth: "480px", width: "100%", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "26px", display: "flex", flexDirection: "column", gap: "18px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px" }}>
               <div style={{ width: "40px", height: "40px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center" }}>
                 <UserPlus size={20} color="#fff" />
@@ -1107,10 +1107,10 @@ export function TeamOperatorsSection({
       {/* MODAL: EDITAR FUNÇÃO DO ATENDENTE */}
       {editRoleModalOpen && selectedOpToEdit && (
         <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)",
+          position: "fixed", inset: 0, background: "rgba(8, 6, 18, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
           display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
         }}>
-          <div className="op-card" style={{ maxWidth: "420px", width: "100%", background: "#161327", border: "1px solid #4a3c68", borderRadius: "18px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div className="op-card" style={{ maxWidth: "420px", width: "100%", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
             <h3 style={{ margin: 0, fontSize: "17px", color: "#fff" }}>
               Alterar Função — {selectedOpToEdit.name}
             </h3>
@@ -1480,13 +1480,15 @@ export function UpgradeRequestModal({
     <div style={{
       position: "fixed",
       inset: 0,
-      background: "rgba(0,0,0,0.75)",
+      background: "rgba(8, 6, 18, 0.82)",
+      backdropFilter: "blur(12px)",
+      WebkitBackdropFilter: "blur(12px)",
       zIndex: 9999,
       display: "grid",
       placeItems: "center",
       padding: "16px"
     }}>
-      <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "480px", width: "100%", border: "2px solid #ec4899", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "500px", width: "100%", background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.4)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0, fontSize: "18px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
             <Sparkles size={20} color="#ec4899" /> Solicitar Upgrade de Plano
@@ -1705,8 +1707,9 @@ export function RechargeMessagesModal({
     <div style={{
       position: "fixed",
       inset: 0,
-      background: "rgba(0, 0, 0, 0.75)",
-      backdropFilter: "blur(6px)",
+      background: "rgba(8, 6, 18, 0.82)",
+      backdropFilter: "blur(12px)",
+      WebkitBackdropFilter: "blur(12px)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -1715,7 +1718,7 @@ export function RechargeMessagesModal({
     }}>
       <div style={{
         background: "#18142a",
-        border: "1px solid rgba(139, 92, 246, 0.3)",
+        border: "1px solid rgba(139, 92, 246, 0.35)",
         borderRadius: "20px",
         padding: "24px",
         maxWidth: "520px",
@@ -1723,7 +1726,7 @@ export function RechargeMessagesModal({
         display: "flex",
         flexDirection: "column",
         gap: "18px",
-        boxShadow: "0 10px 40px rgba(0, 0, 0, 0.6)"
+        boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)"
       }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
