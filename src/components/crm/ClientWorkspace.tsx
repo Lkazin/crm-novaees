@@ -2040,7 +2040,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 </div>
                 <button
                   type="button"
-                  onClick={() => openUpgradeRequest("CRM Business", "Reativar conta / Contratar plano comercial")}
+                  onClick={() => openUpgradeRequest("CRM Premium", "Reativar conta / Assinar CRM Premium (R$ 89,90)")}
                   className="op-primary"
                   style={{padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px"}}
                 >
@@ -2449,6 +2449,28 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     >
                       <Users size={17} />
                       Gerenciar minha equipe
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRechargeModalOpen(true)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "12px 20px",
+                        borderRadius: "12px",
+                        background: "rgba(236, 72, 153, 0.12)",
+                        border: "1px solid rgba(236, 72, 153, 0.4)",
+                        color: "#f472b6",
+                        fontWeight: 700,
+                        fontSize: "14px",
+                        cursor: "pointer",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <Sparkles size={17} />
+                      Comprar mais mensagens (R$ 20 = 100)
                     </button>
                   </div>
                 </section>
