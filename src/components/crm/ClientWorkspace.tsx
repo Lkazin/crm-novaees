@@ -2060,17 +2060,46 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             )}
 
-            {/* Navegação Principal */}
+            {/* Navegação Principal Organizada por Categorias com Cores Chamativas */}
             <nav className="nw-sidebar-nav">
+              {/* CATEGORIA 1: ATENDIMENTO & IA */}
+              <div style={{padding: "8px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#a78bfa", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
+                <Sparkles size={12} color="#c084fc" />
+                <span>Atendimento &amp; IA</span>
+              </div>
+
               <button
                 type="button"
                 className={`nw-nav-button ${activeTab === "whatsapp" ? "active" : ""}`}
                 onClick={() => setActiveTab("whatsapp")}
+                style={{
+                  borderLeft: activeTab === "whatsapp" ? "3px solid #00db8c" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <Smartphone size={19}/>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "whatsapp" ? "rgba(255,255,255,0.2)" : "rgba(0, 219, 140, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Smartphone size={16} color={activeTab === "whatsapp" ? "#fff" : "#00db8c"} />
+                </div>
                 <span>Conectar WhatsApp</span>
-                <span style={{marginLeft: "auto", fontSize: "10px", fontWeight: 800, background: "rgba(255,255,255,0.12)", padding: "2px 6px", borderRadius: "8px"}}>
-                  {data?.plan?.maxWhatsappConnections ?? 1}/5
+                <span style={{
+                  marginLeft: "auto",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  background: qrState === "open" ? "rgba(0, 219, 140, 0.2)" : "rgba(255,255,255,0.12)",
+                  color: qrState === "open" ? "#00db8c" : "#e2e8f0",
+                  padding: "2px 7px",
+                  borderRadius: "8px",
+                  border: qrState === "open" ? "1px solid rgba(0, 219, 140, 0.4)" : "1px solid rgba(255,255,255,0.15)"
+                }}>
+                  {qrState === "open" ? "ONLINE" : `${data?.plan?.maxWhatsappConnections ?? 1}/5`}
                 </span>
               </button>
 
@@ -2078,42 +2107,158 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 type="button"
                 className={`nw-nav-button ${activeTab === "conhecimento" ? "active" : ""}`}
                 onClick={() => setActiveTab("conhecimento")}
+                style={{
+                  borderLeft: activeTab === "conhecimento" ? "3px solid #c084fc" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <Bot size={19}/>
-                <span>Minha IA (O que ela fala)</span>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "conhecimento" ? "rgba(255,255,255,0.2)" : "rgba(168, 85, 247, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Bot size={16} color={activeTab === "conhecimento" ? "#fff" : "#c084fc"} />
+                </div>
+                <span>Minha IA (Cérebro da Loja)</span>
               </button>
 
               <button
                 type="button"
                 className={`nw-nav-button ${activeTab === "simulador" ? "active" : ""}`}
                 onClick={() => setActiveTab("simulador")}
+                style={{
+                  borderLeft: activeTab === "simulador" ? "3px solid #ec4899" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <Play size={19}/>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "simulador" ? "rgba(255,255,255,0.2)" : "rgba(236, 72, 153, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Play size={16} color={activeTab === "simulador" ? "#fff" : "#f472b6"} />
+                </div>
                 <span>Chat de Teste (Simulador)</span>
-                <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 6px", borderRadius: "6px", fontSize: "10px", fontWeight: 800}}>
+                <span style={{
+                  marginLeft: "auto",
+                  background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                  color: "#fff",
+                  padding: "2px 7px",
+                  borderRadius: "6px",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  boxShadow: "0 0 10px rgba(236, 72, 153, 0.4)"
+                }}>
                   TESTAR
                 </span>
               </button>
 
               <button
                 type="button"
-                className={`nw-nav-button ${activeTab === "horarios" ? "active" : ""}`}
-                onClick={() => setActiveTab("horarios")}
+                className={`nw-nav-button ${activeTab === "atendimentos" ? "active" : ""}`}
+                onClick={() => setActiveTab("atendimentos")}
+                style={{
+                  borderLeft: activeTab === "atendimentos" ? "3px solid #60a5fa" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <Clock size={19}/>
-                <span>Horários de Atendimento</span>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "atendimentos" ? "rgba(255,255,255,0.2)" : "rgba(59, 130, 246, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Inbox size={16} color={activeTab === "atendimentos" ? "#fff" : "#60a5fa"} />
+                </div>
+                <span>Atendimentos ao Vivo</span>
+                {conversations.length > 0 && (
+                  <span style={{
+                    marginLeft: "auto",
+                    background: pendingHumanList.length > 0 ? "#ef4444" : "rgba(59, 130, 246, 0.25)",
+                    color: "#fff",
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    boxShadow: pendingHumanList.length > 0 ? "0 0 8px rgba(239, 68, 68, 0.6)" : "none"
+                  }}>
+                    {conversations.length}
+                  </span>
+                )}
               </button>
 
               <button
                 type="button"
-                className={`nw-nav-button ${activeTab === "atendimentos" ? "active" : ""}`}
-                onClick={() => setActiveTab("atendimentos")}
+                className={`nw-nav-button ${activeTab === "horarios" ? "active" : ""}`}
+                onClick={() => setActiveTab("horarios")}
+                style={{
+                  borderLeft: activeTab === "horarios" ? "3px solid #fbbf24" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <Inbox size={19}/>
-                <span>Atendimentos ao Vivo</span>
-                {conversations.length > 0 && (
-                  <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-                    {conversations.length}
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "horarios" ? "rgba(255,255,255,0.2)" : "rgba(245, 158, 11, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Clock size={16} color={activeTab === "horarios" ? "#fff" : "#fbbf24"} />
+                </div>
+                <span>Horários de Atendimento</span>
+              </button>
+
+              {/* CATEGORIA 2: GESTÃO DA LOJA */}
+              <div style={{padding: "16px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
+                <Users size={12} color="#38bdf8" />
+                <span>Gestão da Loja</span>
+              </div>
+
+              <button
+                type="button"
+                className={`nw-nav-button ${activeTab === "contatos" ? "active" : ""}`}
+                onClick={() => setActiveTab("contatos")}
+                style={{
+                  borderLeft: activeTab === "contatos" ? "3px solid #22d3ee" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
+              >
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "contatos" ? "rgba(255,255,255,0.2)" : "rgba(6, 182, 212, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <Users size={16} color={activeTab === "contatos" ? "#fff" : "#22d3ee"} />
+                </div>
+                <span>Contatos da Loja</span>
+                {contacts.length > 0 && (
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "rgba(6, 182, 212, 0.2)",
+                    color: "#67e8f9",
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    fontSize: "11px",
+                    fontWeight: 700
+                  }}>
+                    {contacts.length}
                   </span>
                 )}
               </button>
@@ -2122,10 +2267,32 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 type="button"
                 className={`nw-nav-button ${activeTab === "equipe" ? "active" : ""}`}
                 onClick={() => setActiveTab("equipe")}
+                style={{
+                  borderLeft: activeTab === "equipe" ? "3px solid #c084fc" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <UserPlus size={19}/>
-                <span>Equipe & Operadores</span>
-                <span style={{marginLeft: "auto", background: "rgba(139,92,246,0.22)", color: "#d8b4fe", padding: "2px 7px", borderRadius: "8px", fontSize: "10px", fontWeight: 800}}>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "equipe" ? "rgba(255,255,255,0.2)" : "rgba(139, 92, 246, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <UserPlus size={16} color={activeTab === "equipe" ? "#fff" : "#c084fc"} />
+                </div>
+                <span>Equipe &amp; Operadores</span>
+                <span style={{
+                  marginLeft: "auto",
+                  background: "rgba(139,92,246,0.22)",
+                  color: "#d8b4fe",
+                  padding: "2px 7px",
+                  borderRadius: "8px",
+                  fontSize: "10px",
+                  fontWeight: 800
+                }}>
                   {teamOperators.filter(o => o.status === "active").length}/{data?.plan?.maxOperators ?? 1}
                 </span>
               </button>
@@ -2137,38 +2304,74 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   setActiveTab("relatorios");
                   if (tenant) void fetchReports(tenant);
                 }}
+                style={{
+                  borderLeft: activeTab === "relatorios" ? "3px solid #34d399" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <BarChart3 size={19}/>
-                <span>Indicadores & Relatórios</span>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "relatorios" ? "rgba(255,255,255,0.2)" : "rgba(16, 185, 129, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <BarChart3 size={16} color={activeTab === "relatorios" ? "#fff" : "#34d399"} />
+                </div>
+                <span>Indicadores &amp; Relatórios</span>
               </button>
 
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "contatos" ? "active" : ""}`}
-                onClick={() => setActiveTab("contatos")}
-              >
-                <Users size={19}/>
-                <span>Contatos da Loja</span>
-                {contacts.length > 0 && (
-                  <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-                    {contacts.length}
-                  </span>
-                )}
-              </button>
+              {/* CATEGORIA 3: CONTA & SEGURANÇA */}
+              <div style={{padding: "16px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
+                <Crown size={12} color="#fbbf24" />
+                <span>Conta &amp; Segurança</span>
+              </div>
 
               <button
                 type="button"
                 className={`nw-nav-button ${activeTab === "plano" ? "active" : ""}`}
                 onClick={() => setActiveTab("plano")}
+                style={{
+                  borderLeft: activeTab === "plano" ? "3px solid #fbbf24" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <CreditCard size={19}/>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "plano" ? "rgba(255,255,255,0.2)" : "rgba(245, 158, 11, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <CreditCard size={16} color={activeTab === "plano" ? "#fff" : "#fbbf24"} />
+                </div>
                 <span>Meu Plano &amp; Recargas</span>
                 {data?.plan?.isTrial ? (
-                  <span style={{marginLeft: "auto", background: "linear-gradient(90deg, #ec4899, #8b5cf6)", color: "#fff", padding: "2px 7px", borderRadius: "999px", fontSize: "10px", fontWeight: 800}}>
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                    color: "#fff",
+                    padding: "2px 7px",
+                    borderRadius: "999px",
+                    fontSize: "10px",
+                    fontWeight: 800
+                  }}>
                     7 DIAS
                   </span>
                 ) : (
-                  <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#f472b6", padding: "2px 6px", borderRadius: "6px", fontSize: "10px", fontWeight: 700}}>
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "rgba(245, 158, 11, 0.2)",
+                    color: "#fcd34d",
+                    padding: "2px 6px",
+                    borderRadius: "6px",
+                    fontSize: "10px",
+                    fontWeight: 700
+                  }}>
                     {data?.plan?.name?.replace("CRM ", "") || "PLANO"}
                   </span>
                 )}
@@ -2181,8 +2384,22 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   setActiveTab("seguranca");
                   void fetchClientRecoverySettings();
                 }}
+                style={{
+                  borderLeft: activeTab === "seguranca" ? "3px solid #34d399" : "3px solid transparent",
+                  transition: "all 0.2s ease"
+                }}
               >
-                <KeyRound size={19}/>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: activeTab === "seguranca" ? "rgba(255,255,255,0.2)" : "rgba(16, 185, 129, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <KeyRound size={16} color={activeTab === "seguranca" ? "#fff" : "#34d399"} />
+                </div>
                 <span>Recuperação de Senha</span>
                 {clientRecoveryVerified ? (
                   <span style={{marginLeft: "auto", color: "#34d399", fontSize: "10px", fontWeight: 700}}>
@@ -2202,7 +2419,17 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 className="nw-nav-button"
                 style={{textDecoration: "none"}}
               >
-                <BookOpen size={19}/>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: "rgba(59, 130, 246, 0.15)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0
+                }}>
+                  <BookOpen size={16} color="#60a5fa" />
+                </div>
                 <span>Base de Conhecimento</span>
                 <ChevronRight size={14} style={{marginLeft: "auto", opacity: 0.6}}/>
               </Link>
@@ -2302,17 +2529,76 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           <Content className={embedded ? styles.content : "nw-main-content"}>
             {activeTab !== "plano" && activeFeatureBlocked && <FeatureUnavailable feature={isSuspended && activeFeatureState ? {...activeFeatureState,state:"suspended"} : activeFeatureState} onUpgrade={openUpgradeRequest}/>}
             <fieldset disabled={activeFeatureBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
-            {/* Topbar com Nome da Loja */}
-            <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", flexWrap: "wrap", gap: "12px", position: "relative"}}>
-              <div>
-                <WorkspaceHeading style={{fontSize: embedded ? "20px" : "26px", fontWeight: 800, margin: 0, letterSpacing: "-0.5px"}}>
-                  {currentTenantObj ? currentTenantObj.name : embedded ? "CRM NovaesWeb" : "Painel da Loja"}
-                </WorkspaceHeading>
-                <p style={{color: "#aba8bf", margin: "4px 0 0", fontSize: "14px"}}>
-                  Atendimento inteligente com <strong>NovaesWeb IA</strong> · Totalmente personalizado para o seu negócio.
-                </p>
+            {/* Topbar com Nome da Loja e Status em Tempo Real */}
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "20px",
+              padding: "18px 24px",
+              borderRadius: "18px",
+              background: "linear-gradient(135deg, rgba(30, 20, 50, 0.75), rgba(18, 14, 32, 0.85))",
+              backdropFilter: "blur(12px)",
+              border: "1px solid rgba(236, 72, 153, 0.25)",
+              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.35)",
+              flexWrap: "wrap",
+              gap: "16px",
+              position: "relative"
+            }}>
+              <div style={{display: "flex", alignItems: "center", gap: "16px"}}>
+                <div style={{
+                  width: "50px",
+                  height: "50px",
+                  borderRadius: "14px",
+                  background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+                  display: "grid",
+                  placeItems: "center",
+                  boxShadow: "0 0 20px rgba(236, 72, 153, 0.4)",
+                  border: "2px solid rgba(255, 255, 255, 0.2)",
+                  flexShrink: 0
+                }}>
+                  <Building2 size={26} color="#fff" />
+                </div>
+                <div>
+                  <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                    <WorkspaceHeading style={{fontSize: embedded ? "20px" : "24px", fontWeight: 800, margin: 0, letterSpacing: "-0.5px", color: "#fff"}}>
+                      {currentTenantObj ? currentTenantObj.name : embedded ? "CRM NovaesWeb" : "Painel da Loja"}
+                    </WorkspaceHeading>
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      padding: "2px 8px",
+                      borderRadius: "12px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      background: "rgba(16, 185, 129, 0.15)",
+                      color: "#34d399",
+                      border: "1px solid rgba(16, 185, 129, 0.3)"
+                    }}>
+                      <CheckCircle2 size={12} /> Loja Ativa
+                    </span>
+                    {data?.plan?.isTrial && (
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: "12px",
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                        color: "#fff",
+                        boxShadow: "0 0 10px rgba(236, 72, 153, 0.35)"
+                      }}>
+                        🎁 TESTE GRÁTIS (7 DIAS)
+                      </span>
+                    )}
+                  </div>
+                  <p style={{color: "#c4b5fd", margin: "4px 0 0", fontSize: "13px", fontWeight: 500}}>
+                    Atendimento inteligente com <strong style={{color: "#fff"}}>NovaesWeb IA</strong> · Totalmente personalizado para sua loja
+                  </p>
+                </div>
               </div>
-              <div style={{display: "flex", gap: "10px", alignItems: "center", position: "relative"}}>
+
+              <div style={{display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", position: "relative"}}>
                 {/* Botão de Som de Notificação */}
                 <button
                   type="button"
@@ -2334,10 +2620,12 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   }
                   style={{
                     padding: "8px 12px",
-                    background: soundEnabled ? "rgba(236,72,153,0.15)" : undefined,
-                    borderColor: soundEnabled ? "#ec4899" : undefined,
+                    background: soundEnabled ? "rgba(236,72,153,0.18)" : "rgba(255,255,255,0.05)",
+                    borderColor: soundEnabled ? "#ec4899" : "rgba(255,255,255,0.12)",
                     color: soundEnabled ? "#ec4899" : "#aba8bf",
-                    opacity: !canUseFeature("sound_notifications") ? 0.6 : 1
+                    opacity: !canUseFeature("sound_notifications") ? 0.6 : 1,
+                    borderRadius: "10px",
+                    cursor: "pointer"
                   }}
                 >
                   {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
@@ -2349,7 +2637,15 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     type="button"
                     onClick={() => setBellOpen(v => !v)}
                     className="op-refresh"
-                    style={{position: "relative", padding: "8px 12px", background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.2)" : undefined, borderColor: pendingHumanList.length > 0 ? "#ef4444" : undefined, color: pendingHumanList.length > 0 ? "#fca5a5" : "#aba8bf"}}
+                    style={{
+                      position: "relative",
+                      padding: "8px 12px",
+                      background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.2)" : "rgba(255,255,255,0.05)",
+                      borderColor: pendingHumanList.length > 0 ? "#ef4444" : "rgba(255,255,255,0.12)",
+                      color: pendingHumanList.length > 0 ? "#fca5a5" : "#aba8bf",
+                      borderRadius: "10px",
+                      cursor: "pointer"
+                    }}
                     title="Notificações de atendimento humano pendente"
                   >
                     <Bell size={16} />
@@ -2363,7 +2659,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         borderRadius: "10px",
                         padding: "1px 6px",
                         fontSize: "10px",
-                        fontWeight: 800
+                        fontWeight: 800,
+                        boxShadow: "0 0 8px rgba(239, 68, 68, 0.8)"
                       }}>
                         {pendingHumanList.length}
                       </span>
@@ -2443,24 +2740,54 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   )}
                 </div>
 
-                <span style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "6px 14px",
-                  borderRadius: "20px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  background: qrState === "open" ? "rgba(0, 219, 140, 0.15)" : "rgba(244, 63, 94, 0.15)",
-                  color: qrState === "open" ? "#00db8c" : "#f43f5e",
-                  border: `1px solid ${qrState === "open" ? "rgba(0, 219, 140, 0.4)" : "rgba(244, 63, 94, 0.4)"}`
-                }}>
-                  <span style={{width: "8px", height: "8px", borderRadius: "50%", background: qrState === "open" ? "#00db8c" : "#f43f5e"}}/>
-                  {qrState === "open" ? "WhatsApp Conectado" : "WhatsApp Desconectado"}
-                </span>
+                {/* Badge de Status do WhatsApp com Beacon Pulsante */}
+                <div
+                  onClick={() => setActiveTab("whatsapp")}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "7px 14px",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    background: qrState === "open" ? "rgba(0, 219, 140, 0.15)" : "rgba(244, 63, 94, 0.15)",
+                    color: qrState === "open" ? "#00db8c" : "#f43f5e",
+                    border: `1px solid ${qrState === "open" ? "rgba(0, 219, 140, 0.45)" : "rgba(244, 63, 94, 0.45)"}`,
+                    boxShadow: qrState === "open" ? "0 0 14px rgba(0, 219, 140, 0.25)" : "0 0 14px rgba(244, 63, 94, 0.25)",
+                    transition: "all 0.2s"
+                  }}
+                  title="Clique para gerenciar conexões do WhatsApp"
+                >
+                  <span className={qrState === "open" ? "pulse-online" : "pulse-offline"} style={{
+                    width: "9px",
+                    height: "9px",
+                    borderRadius: "50%",
+                    background: qrState === "open" ? "#00db8c" : "#f43f5e",
+                    display: "inline-block"
+                  }}/>
+                  <span>{qrState === "open" ? "WhatsApp Conectado" : "WhatsApp Desconectado"}</span>
+                </div>
 
-                <button className="op-refresh" onClick={() => void fetchData(tenant)} disabled={loading}>
-                  <RefreshCw size={15}/> Atualizar
+                <button
+                  className="op-refresh"
+                  onClick={() => void fetchData(tenant)}
+                  disabled={loading}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "10px",
+                    background: "rgba(255, 255, 255, 0.06)",
+                    borderColor: "rgba(255, 255, 255, 0.15)",
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px"
+                  }}
+                >
+                  <RefreshCw size={14} className={loading ? "spin" : ""}/> Atualizar
                 </button>
               </div>
             </div>
@@ -2522,47 +2849,276 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             )}
 
-            {/* CARD DE RESULTADO COMERCIAL & VALOR GERADO PELA IA */}
+            {/* CARDS INTERATIVOS DE KPI & ATALHOS RÁPIDOS */}
             <section style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-              gap: "12px",
-              marginBottom: "20px"
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "14px",
+              marginBottom: "22px"
             }}>
-              <div style={{background: "#18142a", border: "1px solid rgba(139, 92, 246, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
-                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(139, 92, 246, 0.15)", display: "grid", placeItems: "center"}}>
-                  <MessageSquare size={20} color="#a78bfa" />
+              {/* CARD 1: WHATSAPP CONEXÃO */}
+              <div
+                onClick={() => setActiveTab("whatsapp")}
+                style={{
+                  background: "linear-gradient(135deg, rgba(0, 219, 140, 0.08), rgba(20, 16, 36, 0.95))",
+                  border: "1px solid rgba(0, 219, 140, 0.3)",
+                  borderRadius: "16px",
+                  padding: "16px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.25s ease",
+                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = "translateY(-3px)";
+                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(0, 219, 140, 0.25)";
+                  e.currentTarget.style.borderColor = "#00db8c";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
+                  e.currentTarget.style.borderColor = "rgba(0, 219, 140, 0.3)";
+                }}
+              >
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "12px",
+                    background: "rgba(0, 219, 140, 0.15)",
+                    display: "grid",
+                    placeItems: "center",
+                    border: "1px solid rgba(0, 219, 140, 0.3)"
+                  }}>
+                    <Smartphone size={22} color="#00db8c" />
+                  </div>
+                  <span style={{
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    padding: "3px 8px",
+                    borderRadius: "12px",
+                    background: qrState === "open" ? "rgba(0, 219, 140, 0.2)" : "rgba(244, 63, 94, 0.2)",
+                    color: qrState === "open" ? "#00db8c" : "#f43f5e"
+                  }}>
+                    {qrState === "open" ? "CONECTADO" : "OFFLINE"}
+                  </span>
                 </div>
                 <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Mensagens Atendidas</small>
-                  <strong style={{color: "#fff", fontSize: "18px"}}>{data?.plan?.quotaUsed || 0}</strong>
+                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Status do WhatsApp</small>
+                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
+                    {whatsappSlots.filter(s => s.status === "connected").length} de {data?.plan?.maxWhatsappConnections ?? 1} Conexões
+                  </strong>
+                </div>
+                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#00db8c", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
+                  <span>Gerenciar WhatsApp</span>
+                  <ChevronRight size={14} />
                 </div>
               </div>
-              <div style={{background: "#18142a", border: "1px solid rgba(0, 219, 140, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
-                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(0, 219, 140, 0.15)", display: "grid", placeItems: "center"}}>
-                  <Zap size={20} color="#00db8c" />
+
+              {/* CARD 2: MENSAGENS ATENDIDAS & FRANQUIA */}
+              <div
+                onClick={() => setActiveTab("plano")}
+                style={{
+                  background: "linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(20, 16, 36, 0.95))",
+                  border: "1px solid rgba(236, 72, 153, 0.3)",
+                  borderRadius: "16px",
+                  padding: "16px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.25s ease",
+                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = "translateY(-3px)";
+                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(236, 72, 153, 0.25)";
+                  e.currentTarget.style.borderColor = "#ec4899";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
+                  e.currentTarget.style.borderColor = "rgba(236, 72, 153, 0.3)";
+                }}
+              >
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "12px",
+                    background: "rgba(236, 72, 153, 0.15)",
+                    display: "grid",
+                    placeItems: "center",
+                    border: "1px solid rgba(236, 72, 153, 0.3)"
+                  }}>
+                    <MessageSquare size={22} color="#ec4899" />
+                  </div>
+                  <span style={{
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    padding: "3px 8px",
+                    borderRadius: "12px",
+                    background: quotaPercent > 90 ? "rgba(244, 63, 94, 0.2)" : "rgba(236, 72, 153, 0.2)",
+                    color: quotaPercent > 90 ? "#f43f5e" : "#f472b6"
+                  }}>
+                    {quotaPercent}% USADO
+                  </span>
                 </div>
                 <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Tempo de Resposta</small>
-                  <strong style={{color: "#00db8c", fontSize: "18px"}}>~3s (Instantâneo)</strong>
+                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Franquia de Mensagens</small>
+                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
+                    {quotaData.quotaUsed} / {quotaData.quotaLimit}
+                  </strong>
+                  <div style={{width: "100%", height: "4px", background: "rgba(255,255,255,0.1)", borderRadius: "2px", overflow: "hidden", marginTop: "6px"}}>
+                    <div style={{
+                      width: `${quotaPercent}%`,
+                      height: "100%",
+                      background: quotaPercent > 90 ? "#f43f5e" : "linear-gradient(90deg, #ec4899, #8b5cf6)",
+                      transition: "width 0.4s ease"
+                    }} />
+                  </div>
+                </div>
+                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#ec4899", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
+                  <span>Ver Franquia &amp; Recargas</span>
+                  <ChevronRight size={14} />
                 </div>
               </div>
-              <div style={{background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
-                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center"}}>
-                  <Bot size={20} color="#ec4899" />
+
+              {/* CARD 3: ATENDIMENTOS AO VIVO & FILA */}
+              <div
+                onClick={() => setActiveTab("atendimentos")}
+                style={{
+                  background: "linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(20, 16, 36, 0.95))",
+                  border: pendingHumanList.length > 0 ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid rgba(59, 130, 246, 0.3)",
+                  borderRadius: "16px",
+                  padding: "16px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.25s ease",
+                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = "translateY(-3px)";
+                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(59, 130, 246, 0.25)";
+                  e.currentTarget.style.borderColor = "#60a5fa";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
+                  e.currentTarget.style.borderColor = pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.5)" : "rgba(59, 130, 246, 0.3)";
+                }}
+              >
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "12px",
+                    background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(59, 130, 246, 0.15)",
+                    display: "grid",
+                    placeItems: "center",
+                    border: pendingHumanList.length > 0 ? "1px solid rgba(239, 68, 68, 0.3)" : "1px solid rgba(59, 130, 246, 0.3)"
+                  }}>
+                    <Inbox size={22} color={pendingHumanList.length > 0 ? "#ef4444" : "#60a5fa"} />
+                  </div>
+                  {pendingHumanList.length > 0 ? (
+                    <span style={{
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      padding: "3px 8px",
+                      borderRadius: "12px",
+                      background: "rgba(239, 68, 68, 0.25)",
+                      color: "#fca5a5",
+                      boxShadow: "0 0 10px rgba(239, 68, 68, 0.4)"
+                    }}>
+                      🚨 {pendingHumanList.length} AGUARDANDO
+                    </span>
+                  ) : (
+                    <span style={{
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      padding: "3px 8px",
+                      borderRadius: "12px",
+                      background: "rgba(59, 130, 246, 0.2)",
+                      color: "#93c5fd"
+                    }}>
+                      CHAT EM DIA
+                    </span>
+                  )}
                 </div>
                 <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Status da IA</small>
-                  <strong style={{color: isSuspended ? "#f43f5e" : "#85e6b5", fontSize: "18px"}}>{isSuspended ? "Em Pausa" : "Ativa 24h/dia"}</strong>
+                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Central de Atendimento</small>
+                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
+                    {conversations.length} Conversas Ativas
+                  </strong>
+                </div>
+                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#60a5fa", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
+                  <span>Abrir Atendimentos ao Vivo</span>
+                  <ChevronRight size={14} />
                 </div>
               </div>
-              <div style={{background: "#18142a", border: "1px solid rgba(245, 158, 11, 0.25)", borderRadius: "14px", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px"}}>
-                <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.15)", display: "grid", placeItems: "center"}}>
-                  <Users size={20} color="#f59e0b" />
+
+              {/* CARD 4: SIMULADOR DE CHAT DA IA */}
+              <div
+                onClick={() => setActiveTab("simulador")}
+                style={{
+                  background: "linear-gradient(135deg, rgba(168, 85, 247, 0.08), rgba(20, 16, 36, 0.95))",
+                  border: "1px solid rgba(168, 85, 247, 0.3)",
+                  borderRadius: "16px",
+                  padding: "16px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.25s ease",
+                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = "translateY(-3px)";
+                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(168, 85, 247, 0.25)";
+                  e.currentTarget.style.borderColor = "#c084fc";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
+                  e.currentTarget.style.borderColor = "rgba(168, 85, 247, 0.3)";
+                }}
+              >
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "12px",
+                    background: "rgba(168, 85, 247, 0.15)",
+                    display: "grid",
+                    placeItems: "center",
+                    border: "1px solid rgba(168, 85, 247, 0.3)"
+                  }}>
+                    <Play size={22} color="#c084fc" />
+                  </div>
+                  <span style={{
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    padding: "3px 8px",
+                    borderRadius: "12px",
+                    background: "rgba(168, 85, 247, 0.2)",
+                    color: "#d8b4fe"
+                  }}>
+                    ⚡ ~3s RESPOSTA
+                  </span>
                 </div>
                 <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", display: "block"}}>Contatos Salvos</small>
-                  <strong style={{color: "#fff", fontSize: "18px"}}>{contacts.length}</strong>
+                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Status da Inteligência Artificial</small>
+                  <strong style={{color: isSuspended ? "#f43f5e" : "#34d399", fontSize: "18px", display: "block", marginTop: "2px"}}>
+                    {isSuspended ? "IA Em Pausa" : "IA Ativa 24h/dia"}
+                  </strong>
+                </div>
+                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#c084fc", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
+                  <span>Testar no Simulador</span>
+                  <ChevronRight size={14} />
                 </div>
               </div>
             </section>

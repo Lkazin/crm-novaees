@@ -15,6 +15,7 @@ import {
   convertTrialToPaidPlan,
   invalidateEffectivePlanCache,
   recordPlanAudit,
+  getRedis,
   DEFAULT_PLANS,
   TRIAL_PLAN
 } from "@/lib/crm/plans";
@@ -942,7 +943,7 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-// DELETE: Delete store / client and its WhatsApp instances
+// DELETE: Delete store / client and its WhatsApp instances with complete cleanup
 export async function DELETE(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
@@ -962,65 +963,118 @@ export async function DELETE(request: NextRequest) {
     const rT = await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=id,name`, { headers: svcHeaders, cache: "no-store" });
     const tRows = rT.ok ? ((await rT.json()) as Array<{ id: string; name: string }>) : [];
     if (!tRows.length) return privateJson({ error: "tenant_not_found" }, 404);
+    const tenantName = tRows[0].name.trim();
     const isMasterOwn = process.env.CRM_MASTER_OWN_TENANT_ID
       ? tenantId === process.env.CRM_MASTER_OWN_TENANT_ID.trim()
-      : tRows[0].name.trim().toLowerCase() === "novaesweb";
+      : tenantName.toLowerCase() === "novaesweb";
     if (isMasterOwn) return privateJson({ error: "master_tenant_protected", message: "A loja principal da NovaesWeb não pode ser apagada." }, 403);
 
     // Remember members so their logins can be removed afterwards (optional)
     const rM = await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}&select=user_id`, { headers: svcHeaders, cache: "no-store" });
     const memberIds = rM.ok ? ((await rM.json()) as Array<{ user_id: string }>).map(m => m.user_id) : [];
 
+    // 1. Collect all channel instances for this tenant, plus slug-based instance name
+    const storeSlug = tenantName.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 24);
+    const potentialSlugs = new Set<string>([`loja_${storeSlug}`]);
+    const instancesToDelete = new Set<string>();
+
     try {
       const rCh = await fetch(url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=instance_name`, {
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
+        headers: svcHeaders,
+        cache: "no-store"
       });
-      const channels = (await rCh.json()) as Array<{ instance_name: string }>;
-      let evoUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
-      if (evoUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) { evoUrl = evoUrl.replace("host.docker.internal", "127.0.0.1"); }
-      const evoKey = process.env.EVOLUTION_API_KEY ?? "";
-      for (const ch of channels) {
-        if (ch.instance_name && evoKey) {
-          try {
-            await fetch(`${evoUrl}/instance/logout/${encodeURIComponent(ch.instance_name)}`, {
-              method: "DELETE",
-              headers: { apikey: evoKey }
-            });
-            await fetch(`${evoUrl}/instance/delete/${encodeURIComponent(ch.instance_name)}`, {
-              method: "DELETE",
-              headers: { apikey: evoKey }
-            });
-          } catch {}
+      if (rCh.ok) {
+        const channels = (await rCh.json()) as Array<{ instance_name: string }>;
+        for (const ch of channels) {
+          if (ch.instance_name) instancesToDelete.add(ch.instance_name);
         }
       }
     } catch {}
 
-    await fetch(url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}`, {
-      method: "DELETE",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
-    });
-    await fetch(url + `/rest/v1/crm_agents?tenant_id=eq.${tenantId}`, {
-      method: "DELETE",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
-    });
-    await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, {
-      method: "DELETE",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
-    });
-    await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}`, {
-      method: "DELETE",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
-    });
+    for (const s of potentialSlugs) {
+      instancesToDelete.add(s);
+    }
+
+    // 2. Disconnect and delete from Evolution API
+    let evoUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
+    if (evoUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+      evoUrl = evoUrl.replace("host.docker.internal", "127.0.0.1");
+    }
+    const evoKey = process.env.EVOLUTION_API_KEY ?? "";
+    if (evoKey) {
+      for (const instName of Array.from(instancesToDelete)) {
+        try {
+          await fetch(`${evoUrl}/instance/logout/${encodeURIComponent(instName)}`, {
+            method: "DELETE",
+            headers: { apikey: evoKey }
+          });
+        } catch {}
+        try {
+          await fetch(`${evoUrl}/instance/delete/${encodeURIComponent(instName)}`, {
+            method: "DELETE",
+            headers: { apikey: evoKey }
+          });
+        } catch {}
+      }
+    }
+
+    // 3. Clear Redis keys for each instance and tenant
+    try {
+      const redis = getRedis();
+      for (const instName of Array.from(instancesToDelete)) {
+        await redis.del(`crm:wa:state:${instName}`).catch(() => {});
+      }
+      for (let slot = 1; slot <= 5; slot++) {
+        await redis.del(`crm:wa:connecting_lock:${tenantId}:${slot}`).catch(() => {});
+      }
+    } catch {}
+
+    // 4. Reverse dependency deletion in Supabase:
+    // a. Outbox & Messages
+    await fetch(url + `/rest/v1/crm_outbox?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_messages?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // b. Conversations, Handoffs & Notes
+    await fetch(url + `/rest/v1/crm_handoffs?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_internal_notes?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_conversations?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // c. Contacts, Tags & Consents
+    await fetch(url + `/rest/v1/crm_contact_tags?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_contact_consents?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_contacts?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // d. Governance, attendance & AI quotas
+    await fetch(url + `/rest/v1/crm_attendance_windows?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_attendance_usage?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_ai_message_reservations?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_upgrade_requests?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_ai_usage_events?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_usage_limits?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // e. Modules: Knowledge, Tags, Automations, Campaigns, Audits
+    await fetch(url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_tags?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_automations?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_campaigns?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_audit_events?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // f. Channels & Agents (now channels won't fail because conversations are deleted!)
+    await fetch(url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // Also delete any channel by instance name that was associated with this store's slug
+    for (const slugName of Array.from(potentialSlugs)) {
+      await fetch(url + `/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(slugName)}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    }
+    await fetch(url + `/rest/v1/crm_agents?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // g. Settings & Memberships
+    await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}`, { method: "DELETE", headers: svcHeaders }).catch(() => {});
+    // h. Delete Tenant row
     const rDelTenant = await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
       method: "DELETE",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
+      headers: svcHeaders
     });
     if (!rDelTenant.ok) {
       return privateJson({ error: "tenant_delete_failed", message: "Não foi possível apagar a loja no banco de dados." }, 500);
     }
     await invalidateEffectivePlanCache(tenantId);
 
-    // Optionally delete the owner logins that are no longer linked to any store
+    // 5. Optionally delete owner logins if they are no longer linked to any store
     const deletedUsers: string[] = [];
     if (alsoDeleteLogin) {
       for (const uid of Array.from(new Set(memberIds))) {
