@@ -11,9 +11,12 @@ import {
   getDynamicMasterPassword,
   getLegacyAdminToken,
   revokeMasterToken,
-  dispatchMasterRecoveryOtp
+  dispatchMasterRecoveryOtp,
+  isLoginBlocked,
+  recordFailedLoginAttempt,
+  resetLoginAttempts,
+  getActiveMasterOtpForIp
 } from "@/lib/crm/master-auth";
-import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,36 +142,23 @@ export async function POST(request: NextRequest) {
     const scope = typeof body.scope === "string" ? body.scope.trim().toLowerCase() : "client";
     const isMasterScope = scope === "master";
 
-    const redis = getRedis();
-    const rateLimitKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
-    const maxAttempts = isMasterScope ? 5 : 8;
-
-    let attempts = 0;
-    try {
-      if (redis.status === "ready") {
-        const raw = await redis.get(rateLimitKey);
-        attempts = raw ? parseInt(raw, 10) : 0;
-      }
-    } catch {}
-
-    if (attempts >= maxAttempts) {
+    // 1. Strict Rate Limiting & Blocking (Guaranteed in memory + Redis sync)
+    const blockCheck = await isLoginBlocked(ip, isMasterScope);
+    if (blockCheck.blocked) {
       if (isMasterScope) {
-        try {
-          if (redis.status === "ready") {
-            const activeOtp = await redis.get(`crm:master_active_otp:${ip}`);
-            if (!activeOtp) {
-              await dispatchMasterRecoveryOtp(ip);
-            }
-          }
-        } catch {}
+        const activeOtp = await getActiveMasterOtpForIp(ip);
+        if (!activeOtp) {
+          await dispatchMasterRecoveryOtp(ip);
+        }
       }
 
       return privateJson({
         error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: isMasterScope,
         message: isMasterScope
           ? "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança para seu WhatsApp oficial."
-          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção.",
-        canRecoverViaWhatsapp: isMasterScope
+          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
       }, 429);
     }
 
@@ -261,16 +251,26 @@ export async function POST(request: NextRequest) {
 
         // A Master session must not leave a store session active.
         response.cookies.set(sessionCookieName(), "", { httpOnly: true, sameSite: "lax", secure: isHttps, path: "/", maxAge: 0 });
-        try { await redis.del(rateLimitKey); } catch {}
-
+        await resetLoginAttempts(ip, true);
 
         return response;
       }
 
-      try { await redis.incr(rateLimitKey); await redis.expire(rateLimitKey, 15 * 60); } catch {}
+      // Record failed attempt for Master
+      const failResult = await recordFailedLoginAttempt(ip, true);
+      if (failResult.blocked) {
+        return privateJson({
+          error: "too_many_attempts",
+          blocked: true,
+          canRecoverViaWhatsapp: true,
+          message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+        }, 429);
+      }
+
+      const remaining = Math.max(0, 5 - failResult.attempts);
       return privateJson({
         error: "invalid_master_credentials",
-        message: "Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb."
+        message: `Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
       }, 401);
     }
 
@@ -315,7 +315,7 @@ export async function POST(request: NextRequest) {
           actor: supaUserEmail || supaUserId
         });
 
-        try { await redis.del(rateLimitKey); } catch {}
+        await resetLoginAttempts(ip, false);
 
         // Set Client/Operator session cookie
         response.cookies.set(sessionCookieName(), supaAccessToken, {
@@ -347,15 +347,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Credential check failed
-    try {
-      if (redis.status === "ready") {
-        const newAttempts = await redis.incr(rateLimitKey);
-        await redis.expire(rateLimitKey, 15 * 60);
-        if (isMasterScope && newAttempts >= 5) {
-          await dispatchMasterRecoveryOtp(ip);
-        }
-      }
-    } catch {}
+    const clientFailResult = await recordFailedLoginAttempt(ip, isMasterScope);
+    if (clientFailResult.blocked) {
+      return privateJson({
+        error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: isMasterScope,
+        message: isMasterScope
+          ? "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
+      }, 429);
+    }
 
     return privateJson({
       error: "invalid_credentials",

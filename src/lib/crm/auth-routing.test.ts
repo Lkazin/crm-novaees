@@ -27,6 +27,13 @@ function fixture() {
       verifyMasterRequest: async () => ({ authorized: state.master, actor: "fixture" }),
       revokeMasterToken: async () => {},
       dispatchMasterRecoveryOtp: async () => "123456",
+      isLoginBlocked: async () => ({ blocked: state.attempts >= 5, remainingSec: 900 }),
+      recordFailedLoginAttempt: async () => {
+        state.attempts++;
+        return { attempts: state.attempts, blocked: state.attempts >= 5, otpDispatched: state.attempts >= 5 };
+      },
+      resetLoginAttempts: async () => { state.attempts = 0; },
+      getActiveMasterOtpForIp: async () => null,
     },
     "@/lib/crm/supabase-server": {
       isAllowedOrigin: () => true, privateJson: (value: unknown, status = 200) => Response.json(value, {status}),
@@ -85,7 +92,8 @@ test("Login refuses inactive memberships, unknown scope and repeated invalid Mas
   f.state.member = false;
   assert.equal((await f.post("fixture-client-password", "client", "fixture@example.invalid")).status, 403);
   assert.equal((await f.post("fixture-master-password", "unknown")).status, 400);
-  for (let i = 0; i < 5; i++) assert.equal((await f.post("incorrect", "master")).status, 401);
+  for (let i = 0; i < 4; i++) assert.equal((await f.post("incorrect", "master")).status, 401);
+  assert.equal((await f.post("incorrect", "master")).status, 429);
   assert.equal((await f.post("incorrect", "master")).status, 429);
 });
 

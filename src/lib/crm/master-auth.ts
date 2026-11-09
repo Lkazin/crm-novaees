@@ -25,11 +25,129 @@ export function getMasterSessionSecret(): string {
   return "";
 }
 
+type RateLimitRecord = {
+  attempts: number;
+  blockedUntil?: number;
+  lastAttempt: number;
+};
+
+type OtpRecord = {
+  code: string;
+  ip: string;
+  expiresAt: number;
+  createdAt: number;
+};
+
+// Global in-memory storage (singleton in Node.js process)
+const inMemoryRateLimits = new Map<string, RateLimitRecord>();
+const inMemoryOtps = new Map<string, OtpRecord>();
+const inMemoryActiveOtpsByIp = new Map<string, string>();
+let inMemoryDynamicPassword: string | null = null;
+
+export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promise<{ blocked: boolean; attempts: number; remainingSeconds: number }> {
+  const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
+  const now = Date.now();
+  const entry = inMemoryRateLimits.get(key);
+  if (entry && entry.blockedUntil && entry.blockedUntil > now) {
+    return {
+      blocked: true,
+      attempts: entry.attempts,
+      remainingSeconds: Math.ceil((entry.blockedUntil - now) / 1000)
+    };
+  }
+  if (entry && entry.blockedUntil && entry.blockedUntil <= now) {
+    inMemoryRateLimits.delete(key);
+  }
+
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
+      const count = await redis.get(redisKey);
+      const attempts = count ? parseInt(count, 10) : 0;
+      if (attempts >= (isMasterScope ? 5 : 8)) {
+        return { blocked: true, attempts, remainingSeconds: 900 };
+      }
+    }
+  } catch {}
+
+  return { blocked: false, attempts: entry?.attempts || 0, remainingSeconds: 0 };
+}
+
+export async function recordFailedLoginAttempt(ip: string, isMasterScope: boolean): Promise<{ attempts: number; blocked: boolean; otpDispatched?: boolean; otpCode?: string }> {
+  const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
+  const now = Date.now();
+  const maxAttempts = isMasterScope ? 5 : 8;
+  const ttlMs = 15 * 60 * 1000;
+
+  let entry = inMemoryRateLimits.get(key);
+  if (!entry || now - entry.lastAttempt > ttlMs) {
+    entry = { attempts: 0, lastAttempt: now };
+  }
+
+  entry.attempts += 1;
+  entry.lastAttempt = now;
+
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
+      await redis.incr(redisKey);
+      await redis.expire(redisKey, 15 * 60);
+    }
+  } catch {}
+
+  if (entry.attempts >= maxAttempts) {
+    entry.blockedUntil = now + ttlMs;
+    inMemoryRateLimits.set(key, entry);
+
+    let otpCode: string | undefined;
+    if (isMasterScope) {
+      otpCode = await dispatchMasterRecoveryOtp(ip);
+    }
+    return { attempts: entry.attempts, blocked: true, otpDispatched: true, otpCode };
+  }
+
+  inMemoryRateLimits.set(key, entry);
+  return { attempts: entry.attempts, blocked: false };
+}
+
+export async function resetLoginAttempts(ip: string, isMasterScope: boolean): Promise<void> {
+  const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
+  inMemoryRateLimits.delete(key);
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
+      await redis.del(redisKey);
+    }
+  } catch {}
+}
+
+export async function getActiveMasterOtpForIp(ip: string): Promise<string | null> {
+  const code = inMemoryActiveOtpsByIp.get(ip);
+  if (code) {
+    const record = inMemoryOtps.get(code);
+    if (record && record.expiresAt > Date.now()) return code;
+  }
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const active = await redis.get(`crm:master_active_otp:${ip}`);
+      if (active) return active;
+    }
+  } catch {}
+  return null;
+}
+
 /**
  * Retrieve administrative password for Master login verification only.
  * Supports dynamic password override in Redis if reconfigured via OTP.
  */
 export async function getDynamicMasterPassword(): Promise<string> {
+  if (inMemoryDynamicPassword && inMemoryDynamicPassword.length >= 8) {
+    return inMemoryDynamicPassword;
+  }
   try {
     const redis = getRedis();
     if (redis.status === "ready") {
@@ -41,6 +159,9 @@ export async function getDynamicMasterPassword(): Promise<string> {
 }
 
 export function getMasterPassword(): string {
+  if (inMemoryDynamicPassword && inMemoryDynamicPassword.length >= 8) {
+    return inMemoryDynamicPassword;
+  }
   return process.env.CRM_MASTER_PASSWORD?.trim() || "";
 }
 
@@ -49,6 +170,7 @@ export function getMasterPassword(): string {
  */
 export async function saveMasterPassword(newPassword: string): Promise<boolean> {
   if (!newPassword || newPassword.trim().length < 8) return false;
+  inMemoryDynamicPassword = newPassword.trim();
   try {
     const redis = getRedis();
     if (redis.status === "ready") {
@@ -56,7 +178,7 @@ export async function saveMasterPassword(newPassword: string): Promise<boolean> 
       return true;
     }
   } catch {}
-  return false;
+  return true;
 }
 
 /**
@@ -64,29 +186,81 @@ export async function saveMasterPassword(newPassword: string): Promise<boolean> 
  */
 export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   const otpCode = String(crypto.randomInt(100000, 999999));
+  const now = Date.now();
+  const ttlMs = 15 * 60 * 1000;
+
+  inMemoryOtps.set(otpCode, {
+    code: otpCode,
+    ip,
+    createdAt: now,
+    expiresAt: now + ttlMs
+  });
+  inMemoryActiveOtpsByIp.set(ip, otpCode);
+
   const redis = getRedis();
   try {
     if (redis.status === "ready") {
-      await redis.set(`crm:master_otp:${otpCode}`, JSON.stringify({ ip, createdAt: Date.now() }), "EX", 900);
+      await redis.set(`crm:master_otp:${otpCode}`, JSON.stringify({ ip, createdAt: now }), "EX", 900);
       await redis.set(`crm:master_active_otp:${ip}`, otpCode, "EX", 900);
     }
   } catch {}
 
-  const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "5551991189293";
+  const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "555191189293";
   const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
   const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
-  const instance = process.env.EVOLUTION_INSTANCE || "novaesweb";
+  const instance = process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
+  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp ${masterPhone}`);
   if (evolutionUrl && evolutionKey) {
     const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas a partir do IP: ${ip}.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;
     import("@/lib/agent/evolution").then(({ sendText }) => {
-      sendText(masterPhone, msg, { evolutionUrl, evolutionKey, instance, sendFormat: "v2" }, instance).catch(err => {
+      sendText(masterPhone, msg, { evolutionUrl, evolutionKey, instance, sendFormat: "v2" }, instance).then(() => {
+        console.log(`[master-otp-delivered] WhatsApp message with OTP delivered to ${masterPhone}`);
+      }).catch(err => {
         console.error("[master-otp-send-error]", err);
       });
     }).catch(() => {});
   }
 
   return otpCode;
+}
+
+export async function validateAndConsumeMasterOtp(code: string, ip: string): Promise<boolean> {
+  const cleanCode = code.trim();
+  const now = Date.now();
+
+  let valid = false;
+  const memoryRecord = inMemoryOtps.get(cleanCode);
+  if (memoryRecord && memoryRecord.expiresAt > now) {
+    valid = true;
+  }
+
+  if (!valid) {
+    try {
+      const redis = getRedis();
+      if (redis.status === "ready") {
+        const raw = await redis.get(`crm:master_otp:${cleanCode}`);
+        if (raw) valid = true;
+      }
+    } catch {}
+  }
+
+  if (!valid) return false;
+
+  inMemoryOtps.delete(cleanCode);
+  inMemoryActiveOtpsByIp.delete(ip);
+  inMemoryRateLimits.delete(`master:${ip}`);
+
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      await redis.del(`crm:master_otp:${cleanCode}`);
+      await redis.del(`crm:master_active_otp:${ip}`);
+      await redis.del(`crm:ratelimit:master_login:${ip}`);
+    }
+  } catch {}
+
+  return true;
 }
 
 /**

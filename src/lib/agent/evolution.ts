@@ -30,8 +30,20 @@ export async function sendText(number: string, text: string, cfg: EvolutionSendC
     });
     if (!response.ok) {
       console.error(`[evolution-send-error] HTTP ${response.status}`);
+      let detail = "";
+      try {
+        const errJson = await response.json();
+        detail = Array.isArray(errJson?.response?.message)
+          ? errJson.response.message.join("; ")
+          : (errJson?.message || errJson?.error || "");
+      } catch {
+        try {
+          detail = await response.text();
+        } catch {}
+      }
+      const fullMsg = `Evolution retornou HTTP ${response.status}${detail ? `: ${detail}` : ""}`;
       // A timeout or server error may happen after provider acceptance: do not retry/refund automatically.
-      throw new EvolutionSendError(`Evolution retornou HTTP ${response.status}`, response.status >= 400 && response.status < 500 && response.status !== 408 ? "rejected" : "uncertain");
+      throw new EvolutionSendError(fullMsg, response.status >= 400 && response.status < 500 && response.status !== 408 ? "rejected" : "uncertain");
     }
     try {
       const data = await response.json();

@@ -1,11 +1,13 @@
 "use client";
 import {useEffect,useState,type FormEvent} from "react";
 import Link from "next/link";
-import {ArrowRight,LockKeyhole,Eye,EyeOff,ShieldCheck,CheckCircle2,CircleAlert} from "lucide-react";
+import {ArrowRight,LockKeyhole,Eye,EyeOff,ShieldCheck,CircleAlert} from "lucide-react";
 import styles from "./reset-password.module.css";
 
 export default function ResetPasswordPage(){
   const [token,setToken]=useState("");
+  const [whatsappTicket,setWhatsappTicket]=useState("");
+  const [redirectDestination,setRedirectDestination]=useState("/");
   const [checking,setChecking]=useState(true);
   const [password,setPassword]=useState("");
   const [confirm,setConfirm]=useState("");
@@ -14,12 +16,17 @@ export default function ResetPasswordPage(){
   const [done,setDone]=useState(false);
   const [error,setError]=useState("");
   useEffect(()=>{
+    const search = new URLSearchParams(window.location.search);
+    const ticketParam = search.get("ticket") || "";
+    if (ticketParam && ticketParam.length >= 32) {
+      setWhatsappTicket(ticketParam);
+    }
     // Supabase password-recovery links carry an access token in the URL fragment.
     const hash=new URLSearchParams(window.location.hash.replace(/^#/,""));
     const type=hash.get("type");
     const access=hash.get("access_token");
     if(type==="recovery" && access && access.length>=30 && access.length<=4096)setToken(access);
-    // Drop the bearer token from the visible URL and browser history immediately.
+    // Drop token / ticket from the visible URL immediately.
     window.history.replaceState(null,"",window.location.pathname);
     setChecking(false);
   },[]);
@@ -29,6 +36,21 @@ export default function ResetPasswordPage(){
     if(password.length<8||password.length>256){setError("Use uma senha de 8 a 256 caracteres.");return;}
     setLoading(true);
     try{
+      if (whatsappTicket) {
+        const response = await fetch("/api/crm/auth/whatsapp-recover/confirm", {
+          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticket: whatsappTicket, newPassword: password })
+        });
+        const resData = await response.json();
+        if (!response.ok) {
+          setError(resData.message || "Link ou código de recuperação expirado. Solicite uma nova recuperação.");
+          return;
+        }
+        if (resData.redirectTo) setRedirectDestination(resData.redirectTo);
+        setWhatsappTicket("");setPassword("");setConfirm("");setDone(true);
+        return;
+      }
+
       const response=await fetch("/api/crm/auth/reset",{
         method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({token,password})
@@ -46,8 +68,8 @@ export default function ResetPasswordPage(){
         <h1 id="reset-title">Nova senha</h1>
         <p className={styles.description}>{done?"Sua senha foi alterada. Agora você pode entrar no CRM.":"Crie uma nova senha para sua conta autorizada."}</p>
         {checking?<p className={styles.description}>Verificando link...</p>
-        :done?<Link className={styles.submit} href="/">Ir para o login <ArrowRight size={23}/></Link>
-        :!token?<p className={styles.alert} role="alert"><CircleAlert size={18}/>Link de recuperação ausente ou inválido. Solicite outro na tela de login.</p>
+        :done?<Link className={styles.submit} href={redirectDestination}>{redirectDestination === "/admin" ? "Ir para o Painel Master" : "Ir para o Login"} <ArrowRight size={23}/></Link>
+        :(!token && !whatsappTicket)?<p className={styles.alert} role="alert"><CircleAlert size={18}/>Link de recuperação ausente ou inválido. Solicite outro na tela de login.</p>
         :<form className={styles.form} onSubmit={submit}>
           <div className={styles.field}><label htmlFor="new-password">Nova senha</label>
             <div className={styles.inputShell}><LockKeyhole size={21}/><input id="new-password" type={show?"text":"password"} required minLength={8} maxLength={256} autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Nova senha"/>

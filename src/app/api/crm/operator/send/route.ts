@@ -76,25 +76,40 @@ export async function POST(request: NextRequest) {
       );
       if (rChannel.ok) {
         const channels = (await rChannel.json()) as Array<{ instance_name: string; status: string }>;
-        if (channels[0]?.status === "paused") return privateJson({ error: "channel_paused" }, 403);
-        if (channels[0]?.instance_name) targetInstance = channels[0].instance_name;
+        if (channels[0]?.status === "paused") {
+          return privateJson({
+            error: "channel_paused",
+            message: "O canal WhatsApp desta conversa está pausado no painel."
+          }, 403);
+        }
+        if (channels[0]?.status === "connected" && channels[0]?.instance_name) {
+          targetInstance = channels[0].instance_name;
+        }
       }
     }
     if (!targetInstance) {
       const rTenantChannels = await fetch(
-        url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=instance_name,status&order=updated_at.desc&limit=5`,
+        url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=id,instance_name,status&order=updated_at.desc&limit=5`,
         { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
       );
       if (rTenantChannels.ok) {
-        const tChannels = (await rTenantChannels.json()) as Array<{ instance_name: string; status: string }>;
+        const tChannels = (await rTenantChannels.json()) as Array<{ id: string; instance_name: string; status: string }>;
         const connected = tChannels.find((c) => c.status === "connected" && extractSlotFromInstanceName(c.instance_name) <= featureGuard.effectivePlan.maxWhatsappConnections);
-        targetInstance = connected?.instance_name;
+        if (connected) {
+          targetInstance = connected.instance_name;
+          // Re-bind conversation to active connected channel
+          void fetch(url + `/rest/v1/crm_conversations?id=eq.${conversationId}&tenant_id=eq.${tenantId}`, {
+            method: "PATCH",
+            headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+            body: JSON.stringify({ channel_id: connected.id })
+          }).catch(() => {});
+        }
       }
     }
     if (!targetInstance || extractSlotFromInstanceName(targetInstance) > featureGuard.effectivePlan.maxWhatsappConnections) {
       return privateJson({
         error: "channel_unavailable_or_locked",
-        message: "Nenhum canal WhatsApp conectado e ativo para esta empresa ou limite de conexões do plano atingido."
+        message: "O WhatsApp desta empresa está desconectado ou indisponível. Conecte o WhatsApp na aba WhatsApp para responder aos clientes."
       }, 403);
     }
 
@@ -138,9 +153,17 @@ export async function POST(request: NextRequest) {
     } catch (sendErr) {
       if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
       console.error("[operator-send-error] Failed to send via Evolution:", sendErr);
+      const rawMessage = sendErr instanceof Error ? sendErr.message : "WhatsApp delivery failed";
+      let friendlyMessage = "Falha ao enviar mensagem pelo WhatsApp. Verifique se o aparelho está conectado à internet.";
+      if (rawMessage.includes("Connection Closed") || rawMessage.includes("HTTP 400") || rawMessage.includes("close")) {
+        friendlyMessage = "A conexão com o WhatsApp foi encerrada ou expirou. Por favor, reconecte o QR Code na aba WhatsApp.";
+      } else if (rawMessage.includes("fetch failed") || rawMessage.includes("ECONNREFUSED")) {
+        friendlyMessage = "Serviço do WhatsApp temporariamente indisponível. Tente novamente em alguns instantes.";
+      }
       return privateJson({
         error: "evolution_send_failed",
-        details: sendErr instanceof Error ? sendErr.message : "WhatsApp delivery failed"
+        details: rawMessage,
+        message: friendlyMessage
       }, 502);
     }
 

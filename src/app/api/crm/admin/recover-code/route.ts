@@ -4,9 +4,9 @@ import {
   MASTER_COOKIE_NAME,
   MASTER_SESSION_TTL_SEC,
   signMasterToken,
-  saveMasterPassword
+  saveMasterPassword,
+  validateAndConsumeMasterOtp
 } from "@/lib/crm/master-auth";
-import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,38 +46,23 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
 
-    const redis = getRedis();
-    let otpPayloadRaw: string | null = null;
-    try {
-      if (redis.status === "ready") {
-        otpPayloadRaw = await redis.get(`crm:master_otp:${code}`);
-      }
-    } catch {}
-
-    if (!otpPayloadRaw) {
+    // Validate OTP and consume it atomically (memory + Redis)
+    const isValid = await validateAndConsumeMasterOtp(code, ip);
+    if (!isValid) {
       return privateJson({
         error: "invalid_or_expired_code",
-        message: "Código de segurança incorreto ou expirado. Verifique a mensagem no seu WhatsApp."
+        message: "Código de segurança incorreto ou expirado. Verifique a mensagem mais recente no seu WhatsApp."
       }, 400);
     }
 
-    // Save new master password in Redis cache
+    // Save new master password in cache and memory
     await saveMasterPassword(newPassword);
 
-    // Clean rate limit and invalidate used OTP
-    try {
-      if (redis.status === "ready") {
-        await redis.del(`crm:master_otp:${code}`);
-        await redis.del(`crm:master_active_otp:${ip}`);
-        await redis.del(`crm:ratelimit:master_login:${ip}`);
-      }
-    } catch {}
-
     // Dispatch WhatsApp confirmation
-    const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "5551991189293";
+    const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "555191189293";
     const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
     const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
-    const instance = process.env.EVOLUTION_INSTANCE || "novaesweb";
+    const instance = process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
     if (evolutionUrl && evolutionKey) {
       const confirmMsg = `✅ *NovaesWeb CRM - Senha Master Atualizada*\n\nA senha de administrador Master foi redefinida com sucesso a partir do IP: ${ip}.\nSeu acesso administrativo foi desbloqueado com segurança.`;

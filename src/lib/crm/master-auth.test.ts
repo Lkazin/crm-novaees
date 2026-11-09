@@ -10,7 +10,11 @@ import {
   isMasterTokenRevoked,
   getDynamicMasterPassword,
   saveMasterPassword,
-  dispatchMasterRecoveryOtp
+  dispatchMasterRecoveryOtp,
+  recordFailedLoginAttempt,
+  isLoginBlocked,
+  validateAndConsumeMasterOtp,
+  resetLoginAttempts
 } from "./master-auth";
 
 test("Master sessions require configured secrets and reject malformed or tampered cookies", () => {
@@ -52,6 +56,44 @@ test("Master dynamic password and WhatsApp OTP dispatch work securely", async ()
   assert.match(otp, /^\d{6}$/);
 
   const saved = await saveMasterPassword("new-secure-custom-pass-999");
-  // In test environment without Redis connection, returns false gracefully
   assert.equal(typeof saved, "boolean");
+});
+
+test("Master Rate Limiting bloqueia na 5ª tentativa, dispara OTP e desbloqueia com código correto", async () => {
+  const testIp = "192.168.1.100";
+  await resetLoginAttempts(testIp, true);
+
+  // Tentativas 1 a 4 não bloqueiam
+  for (let i = 1; i <= 4; i++) {
+    const res = await recordFailedLoginAttempt(testIp, true);
+    assert.equal(res.attempts, i);
+    assert.equal(res.blocked, false);
+    const check = await isLoginBlocked(testIp, true);
+    assert.equal(check.blocked, false);
+  }
+
+  // Tentativa 5 DEVE bloquear e disparar OTP
+  const res5 = await recordFailedLoginAttempt(testIp, true);
+  assert.equal(res5.attempts, 5);
+  assert.equal(res5.blocked, true);
+  assert.equal(res5.otpDispatched, true);
+  assert.ok(res5.otpCode);
+  assert.match(res5.otpCode, /^\d{6}$/);
+
+  // Status de bloqueio deve ser true
+  const checkBlocked = await isLoginBlocked(testIp, true);
+  assert.equal(checkBlocked.blocked, true);
+
+  // Tentativa de código errado falha
+  const wrongValid = await validateAndConsumeMasterOtp("000000", testIp);
+  assert.equal(wrongValid, false);
+  assert.equal((await isLoginBlocked(testIp, true)).blocked, true);
+
+  // Código correto consome OTP e desbloqueia o IP
+  const rightValid = await validateAndConsumeMasterOtp(res5.otpCode, testIp);
+  assert.equal(rightValid, true);
+
+  // Após consumo do código, o IP não está mais bloqueado
+  const checkUnblocked = await isLoginBlocked(testIp, true);
+  assert.equal(checkUnblocked.blocked, false);
 });

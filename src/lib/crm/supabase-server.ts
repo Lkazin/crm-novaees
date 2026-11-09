@@ -12,7 +12,12 @@ export function supabaseSettings() {
 }
 export function sessionCookieName() { return COOKIE; }
 export async function verifyOperator() {
-  const token = (await cookies()).get(COOKIE)?.value;
+  let token: string | undefined;
+  try {
+    token = (await cookies()).get(COOKIE)?.value;
+  } catch {
+    token = undefined;
+  }
   if (!token || token.length > 4096) return null;
   const {url,key} = supabaseSettings();
   const res = await fetch(url+"/auth/v1/user", {

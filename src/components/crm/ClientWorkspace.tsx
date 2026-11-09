@@ -11,7 +11,8 @@ import {
   Mail, MessageSquare, RefreshCw, Search, ShieldCheck, Users, UserPlus,
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
-  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, Copy, MessageCircle, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle
+  Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, Copy, MessageCircle, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle,
+  KeyRound, Lock, AlertTriangle, X
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
@@ -105,7 +106,7 @@ type Data = {
   note?: string;
 };
 
-type Tab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
+type Tab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano" | "seguranca";
 
 function dateTime(s: string | null) {
   if (!s) return "—";
@@ -245,6 +246,109 @@ export default function ClientWorkspace({
   // Suspension state
   const [isSuspended, setIsSuspended] = useState(false);
   const [suspensionReason, setSuspensionReason] = useState("");
+
+  // Security & WhatsApp Recovery State (Client Workspace)
+  const [clientRecoveryPhone, setClientRecoveryPhone] = useState("");
+  const [clientRecoveryMasked, setClientRecoveryMasked] = useState("");
+  const [clientRecoveryVerified, setClientRecoveryVerified] = useState(false);
+  const [clientSecurityModalOpen, setClientSecurityModalOpen] = useState(false);
+  const [newClientPhoneInput, setNewClientPhoneInput] = useState("");
+  const [clientChallengeId, setClientChallengeId] = useState("");
+  const [clientVerificationCode, setClientVerificationCode] = useState("");
+  const [clientSecurityStep, setClientSecurityStep] = useState<1 | 2>(1);
+  const [clientSecurityLoading, setClientSecurityLoading] = useState(false);
+  const [clientSecurityMsg, setClientSecurityMsg] = useState("");
+  const [clientSecurityErr, setClientSecurityErr] = useState("");
+
+  const fetchClientRecoverySettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm/operator/security/recovery-phone", { credentials: "same-origin" });
+      if (res.ok) {
+        const data = await res.json();
+        setClientRecoveryPhone(data.phone || "");
+        setClientRecoveryMasked(data.maskedPhone || "");
+        setClientRecoveryVerified(data.verified === true);
+      }
+    } catch {}
+  }, []);
+
+  const handleRequestClientPhoneChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (clientSecurityLoading) return;
+    setClientSecurityLoading(true);
+    setClientSecurityErr("");
+    setClientSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/operator/security/recovery-phone", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPhone: newClientPhoneInput.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Falha ao enviar código.");
+      setClientChallengeId(data.challengeId);
+      setClientSecurityStep(2);
+      setClientSecurityMsg(data.message || "Código enviado para o seu novo WhatsApp.");
+    } catch (err) {
+      setClientSecurityErr(err instanceof Error ? err.message : "Erro ao solicitar código.");
+    } finally {
+      setClientSecurityLoading(false);
+    }
+  };
+
+  const handleConfirmClientPhoneCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (clientSecurityLoading) return;
+    setClientSecurityLoading(true);
+    setClientSecurityErr("");
+    setClientSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/operator/security/verify-phone", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeId: clientChallengeId, code: clientVerificationCode.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Código incorreto.");
+      setClientRecoveryPhone(data.phone);
+      setClientRecoveryMasked(data.maskedPhone);
+      setClientRecoveryVerified(true);
+      setClientSecurityMsg(data.message || "WhatsApp verificado com sucesso!");
+      setTimeout(() => {
+        setClientSecurityModalOpen(false);
+        setClientSecurityStep(1);
+        setClientVerificationCode("");
+        setNewClientPhoneInput("");
+      }, 1500);
+    } catch (err) {
+      setClientSecurityErr(err instanceof Error ? err.message : "Erro ao validar código.");
+    } finally {
+      setClientSecurityLoading(false);
+    }
+  };
+
+  const handleTestClientRecoveryOtp = async () => {
+    setClientSecurityLoading(true);
+    setClientSecurityErr("");
+    setClientSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/auth/whatsapp-recover/request", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "client" })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Falha ao enviar teste.");
+      setClientSecurityMsg(`✅ Código de teste disparado com sucesso para ${data.maskedPhone}!`);
+    } catch (err) {
+      setClientSecurityErr(err instanceof Error ? err.message : "Erro ao disparar teste.");
+    } finally {
+      setClientSecurityLoading(false);
+    }
+  };
 
   // AI Configuration state (Store Owner inputs what the AI says)
   const [agentLabel, setAgentLabel] = useState("Assistente Virtual");
@@ -395,7 +499,13 @@ export default function ClientWorkspace({
   const [tagFilter, setTagFilter] = useState<string>("all");
 
   // Notifications & Sound state
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("nw_sound_enabled");
+      if (saved !== null) return saved === "true";
+    }
+    return true;
+  });
   const [bellOpen, setBellOpen] = useState(false);
 
   // Plan Allowed Features & 4-State Governance
@@ -661,6 +771,9 @@ export default function ClientWorkspace({
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -770,7 +883,9 @@ export default function ClientWorkspace({
           const pulse = await res.json();
           const count = Number(pulse.waitingCount) || 0;
           if (count > prevHandoffCountRef.current) {
-            playNotificationSound();
+            if (soundEnabled) {
+              playNotificationSound();
+            }
             if (pulse.latestHandoff) {
               setUrgentHandoffAlert(pulse.latestHandoff);
             }
@@ -789,7 +904,7 @@ export default function ClientWorkspace({
       } catch {}
     }, 1500);
     return () => clearInterval(pulseInterval);
-  }, [authenticated, tenant, playNotificationSound, fetchData]);
+  }, [authenticated, tenant, playNotificationSound, fetchData, soundEnabled]);
 
   // Request browser desktop notification permission on user interaction
   useEffect(() => {
@@ -856,6 +971,7 @@ export default function ClientWorkspace({
         setAuthenticated(true);
         const requestedTenant = initialTenant || new URLSearchParams(window.location.search).get("tenant") || "";
         void fetchData(requestedTenant);
+        void fetchClientRecoverySettings();
       } catch {
         if (active) setError("Não foi possível verificar a sessão.");
       } finally {
@@ -1191,6 +1307,7 @@ export default function ClientWorkspace({
       content: prompt,
       time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
     };
+    const priorHistory = simMessages.map(m => ({ role: m.role, content: m.content }));
     const nextHistory = [...simMessages, userMsg];
     setSimMessages(nextHistory);
     setSimLoading(true);
@@ -1198,20 +1315,22 @@ export default function ClientWorkspace({
     try {
       const res = await fetch("/api/crm/operator/simulator", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: tenant,
           message: prompt,
-          history: nextHistory.map(m => ({ role: m.role, content: m.content }))
+          history: priorHistory
         })
       });
       const data = await res.json();
-      if (res.ok && data.answer) {
+      const replyContent = data.answer || data.reply;
+      if (res.ok && replyContent) {
         setSimMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: data.answer,
+            content: replyContent,
             time: data.timestamp || new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
             latency: data.latencyMs,
             isEscalation: data.isEscalation,
@@ -1220,21 +1339,22 @@ export default function ClientWorkspace({
           }
         ]);
       } else {
+        const errorMsg = data.message || data.error || "Não foi possível simular a resposta no momento. Confira se você preencheu o cardápio e regras da loja na aba 'Minha IA'.";
         setSimMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: "Não foi possível simular a resposta no momento. Confira se você preencheu o cardápio e regras da loja na aba 'Minha IA'.",
+            content: typeof errorMsg === "string" ? errorMsg : "Erro ao consultar o simulador de IA.",
             time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
           }
         ]);
       }
-    } catch {
+    } catch (err) {
       setSimMessages(prev => [
         ...prev,
         {
           role: "assistant",
-          content: "Falha na comunicação com o simulador.",
+          content: "Falha na comunicação com o simulador: " + (err instanceof Error ? err.message : "conexão interrompida"),
           time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
         }
       ]);
@@ -1307,7 +1427,7 @@ export default function ClientWorkspace({
         body: JSON.stringify({ tenantId: tenant, conversationId: current.id, message: text })
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.details || json.error || "Falha ao enviar mensagem.");
+      if (!res.ok) throw new Error(json.message || json.details || json.error || "Falha ao enviar mensagem.");
       setHumanInput("");
       await fetchData(tenant, true);
     } catch (e) {
@@ -1660,9 +1780,11 @@ Endereço: ${wizardData.address || ""}
 Perguntas Frequentes: ${wizardData.faqs || ""}`;
       const res = await fetch("/api/crm/operator/simulator", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tenantId: tenant,
+          message: q,
           question: q,
           context: {
             storeName: currentTenantObj?.name,
@@ -1673,10 +1795,11 @@ Perguntas Frequentes: ${wizardData.faqs || ""}`;
         })
       });
       const data = await res.json();
-      if (res.ok && data.reply) {
-        setMiniSimHistory(prev => [...prev, { role: "assistant", text: data.reply }]);
+      const replyText = data.reply || data.answer;
+      if (res.ok && replyText) {
+        setMiniSimHistory(prev => [...prev, { role: "assistant", text: replyText }]);
       } else {
-        setMiniSimHistory(prev => [...prev, { role: "assistant", text: data.message || "Não foi possível gerar resposta no simulador." }]);
+        setMiniSimHistory(prev => [...prev, { role: "assistant", text: data.message || data.error || "Não foi possível gerar resposta no simulador." }]);
       }
     } catch {
       setMiniSimHistory(prev => [...prev, { role: "assistant", text: "Erro ao conectar com o simulador de IA." }]);
@@ -1844,7 +1967,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   const tabFeatures: Partial<Record<Tab,string>> = {whatsapp:"ai_chat",conhecimento:"ai_chat",artigos:"ai_chat",simulador:"simulator",horarios:"business_hours_basic",atendimentos:"human_handoff",contatos:"human_handoff",equipe:"human_handoff",relatorios:"basic_indicators"};
   const activeFeatureState = tabFeatures[activeTab] ? featureStates[tabFeatures[activeTab]!] : undefined;
-  const activeFeatureBlocked = activeTab !== "plano" && (isSuspended || !activeFeatureState || activeFeatureState.state !== "allowed");
+  const activeFeatureBlocked = activeTab !== "plano" && activeTab !== "seguranca" && (isSuspended || !activeFeatureState || activeFeatureState.state !== "allowed");
   const Content = embedded ? "section" : "main";
   const WorkspaceHeading = embedded ? "h2" : "h1";
   const workspaceSections: Array<{ id: Tab; label: string }> = [
@@ -1857,7 +1980,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     { id: "equipe", label: "Equipe" },
     { id: "relatorios", label: "Relatórios" },
     { id: "contatos", label: "Contatos" },
-    { id: "plano", label: "Plano" }
+    { id: "plano", label: "Plano" },
+    { id: "seguranca", label: "Segurança" }
   ];
 
   return (
@@ -2035,6 +2159,27 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 )}
               </button>
 
+              <button
+                type="button"
+                className={`nw-nav-button ${activeTab === "seguranca" ? "active" : ""}`}
+                onClick={() => {
+                  setActiveTab("seguranca");
+                  void fetchClientRecoverySettings();
+                }}
+              >
+                <KeyRound size={19}/>
+                <span>Recuperação de Senha</span>
+                {clientRecoveryVerified ? (
+                  <span style={{marginLeft: "auto", color: "#34d399", fontSize: "10px", fontWeight: 700}}>
+                    ATIVO
+                  </span>
+                ) : (
+                  <span style={{marginLeft: "auto", color: "#f59e0b", fontSize: "10px", fontWeight: 700}}>
+                    PENDENTE
+                  </span>
+                )}
+              </button>
+
               <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
               <Link
@@ -2163,6 +2308,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     }
                     const next = !soundEnabled;
                     setSoundEnabled(next);
+                    try { localStorage.setItem("nw_sound_enabled", String(next)); } catch {}
                     if (next) playNotificationSound();
                   }}
                   className="op-refresh"
@@ -6537,6 +6683,202 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
             {embedded && activeTab === "artigos" && <KnowledgeWorkspace embedded tenantId={tenant} />}
 
+            {/* SEÇÃO SEGURANÇA & RECUPERAÇÃO DE SENHA */}
+            {activeTab === "seguranca" && (
+              <section className="op-section animate-fade-in" style={{ display: "grid", gap: "24px" }}>
+                {/* CARDS DE STATUS RÁPIDO */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
+                  <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(168, 85, 247, 0.15)", display: "grid", placeItems: "center" }}>
+                        <Smartphone size={20} color="#c084fc" />
+                      </div>
+                      <div>
+                        <span style={{ fontSize: "11px", color: "#a855f7", fontWeight: 800, textTransform: "uppercase" }}>WhatsApp Cadastrado</span>
+                        <strong style={{ display: "block", fontSize: "18px", color: "#fff", marginTop: "2px" }}>
+                          {clientRecoveryMasked || "Nenhum número cadastrado"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: clientRecoveryVerified ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)", display: "grid", placeItems: "center" }}>
+                        {clientRecoveryVerified ? <ShieldCheck size={20} color="#34d399" /> : <AlertTriangle size={20} color="#f59e0b" />}
+                      </div>
+                      <div>
+                        <span style={{ fontSize: "11px", color: clientRecoveryVerified ? "#34d399" : "#f59e0b", fontWeight: 800, textTransform: "uppercase" }}>Status da Verificação</span>
+                        <strong style={{ display: "block", fontSize: "18px", color: clientRecoveryVerified ? "#34d399" : "#f59e0b", marginTop: "2px" }}>
+                          {clientRecoveryVerified ? "WhatsApp Verificado ✅" : "Pendente de Validação ⚠️"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center" }}>
+                        <KeyRound size={20} color="#f472b6" />
+                      </div>
+                      <div>
+                        <span style={{ fontSize: "11px", color: "#f472b6", fontWeight: 800, textTransform: "uppercase" }}>Proteção da Conta</span>
+                        <strong style={{ display: "block", fontSize: "18px", color: "#fff", marginTop: "2px" }}>
+                          Código OTP em 5 tentativas
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CARD PRINCIPAL */}
+                <div className="op-card" style={{
+                  padding: "28px",
+                  borderRadius: "20px",
+                  background: "linear-gradient(135deg, rgba(26, 20, 48, 0.95), rgba(18, 12, 33, 0.98))",
+                  border: "1px solid rgba(168, 85, 247, 0.3)",
+                  boxShadow: "0 12px 36px rgba(0,0,0,0.4)"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <KeyRound size={22} color="#ec4899" />
+                        <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
+                          Recuperação de Senha por WhatsApp
+                        </h3>
+                      </div>
+                      <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#c4bed6", maxWidth: "680px", lineHeight: "1.5" }}>
+                        Vincule seu número pessoal ou corporativo de WhatsApp para recuperar o acesso à sua conta e definir uma nova senha definitiva caso esqueça suas credenciais ou o acesso seja bloqueado.
+                      </p>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewClientPhoneInput("");
+                          setClientVerificationCode("");
+                          setClientSecurityStep(1);
+                          setClientSecurityErr("");
+                          setClientSecurityMsg("");
+                          setClientSecurityModalOpen(true);
+                        }}
+                        className="op-primary"
+                        style={{
+                          padding: "10px 18px",
+                          borderRadius: "10px",
+                          fontWeight: 700,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          background: "linear-gradient(135deg, #a855f7, #ec4899)"
+                        }}
+                      >
+                        <Smartphone size={16} />
+                        {clientRecoveryPhone ? "Alterar Número de WhatsApp" : "Cadastrar WhatsApp"}
+                      </button>
+
+                      {clientRecoveryVerified && (
+                        <button
+                          type="button"
+                          disabled={clientSecurityLoading}
+                          onClick={() => void handleTestClientRecoveryOtp()}
+                          className="op-refresh"
+                          style={{
+                            padding: "10px 18px",
+                            borderRadius: "10px",
+                            fontWeight: 700,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            border: "1px solid rgba(255, 255, 255, 0.15)",
+                            background: "rgba(255, 255, 255, 0.05)",
+                            color: "#fff"
+                          }}
+                        >
+                          <RefreshCw size={15} className={clientSecurityLoading ? "animate-spin" : ""} />
+                          {clientSecurityLoading ? "Enviando..." : "Testar Envio no WhatsApp"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* MENSAGENS DE FEEDBACK */}
+                  {clientSecurityMsg && (
+                    <div style={{
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      background: "rgba(16, 185, 129, 0.15)",
+                      border: "1px solid rgba(16, 185, 129, 0.4)",
+                      color: "#34d399",
+                      fontSize: "13px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      marginBottom: "16px"
+                    }}>
+                      <CheckCircle2 size={16} />
+                      <span>{clientSecurityMsg}</span>
+                    </div>
+                  )}
+
+                  {clientSecurityErr && (
+                    <div style={{
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      background: "rgba(244, 63, 94, 0.15)",
+                      border: "1px solid rgba(244, 63, 94, 0.4)",
+                      color: "#f87171",
+                      fontSize: "13px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      marginBottom: "16px"
+                    }}>
+                      <AlertTriangle size={16} />
+                      <span>{clientSecurityErr}</span>
+                    </div>
+                  )}
+
+                  {/* QUADRO DE POLÍTICA DE SEGURANÇA */}
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                    gap: "14px",
+                    padding: "18px",
+                    borderRadius: "14px",
+                    background: "rgba(15, 11, 28, 0.6)",
+                    border: "1px solid rgba(255, 255, 255, 0.08)"
+                  }}>
+                    <div>
+                      <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <ShieldCheck size={15} color="#c084fc" /> Isolamento Multi-Empresa
+                      </strong>
+                      <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                        Seu WhatsApp fica vinculado estritamente à sua conta autorizada. Nenhuma outra empresa tem acesso ao seu número.
+                      </p>
+                    </div>
+                    <div>
+                      <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Lock size={15} color="#f472b6" /> Validade &amp; Uso Único
+                      </strong>
+                      <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                        Código de 6 dígitos válido por 10 minutos com proteção anti-replay e bloqueio por tentativas excessivas.
+                      </p>
+                    </div>
+                    <div>
+                      <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Check size={15} color="#34d399" /> Nova Senha Definitiva
+                      </strong>
+                      <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                        A nova senha cadastrada é definitiva e permanente, gravada com segurança no Supabase.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
             </fieldset>
             <RechargeMessagesModal
               open={rechargeModalOpen}
@@ -6561,6 +6903,193 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               onClose={() => setUpgradeModal(prev => ({ ...prev, open: false }))}
               onSubmitUpgrade={handleSubmitUpgradeRequest}
             />
+
+            {/* MODAL CONFIGURAR WHATSAPP DE RECUPERAÇÃO CLIENTE */}
+            {clientSecurityModalOpen && (
+              <div style={{
+                position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+                display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
+              }}>
+                <div className="op-card" style={{
+                  width: "100%", maxWidth: "480px", padding: "28px",
+                  borderColor: "#ec4899", borderRadius: "20px",
+                  boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)"
+                }}>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px"}}>
+                    <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                      <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "rgba(236,72,153,0.15)", display: "grid", placeItems: "center"}}>
+                        <KeyRound size={20} color="#ec4899"/>
+                      </div>
+                      <div>
+                        <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                          {clientSecurityStep === 1 ? "WhatsApp de Recuperação" : "Confirmar Código de Segurança"}
+                        </h3>
+                        <span style={{fontSize: "12px", color: "#c4bed6"}}>
+                          {clientSecurityStep === 1 ? "Passo 1 de 2: Informe o número" : "Passo 2 de 2: Validação por OTP"}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setClientSecurityModalOpen(false)}
+                      style={{background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: "4px"}}
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  {clientSecurityMsg && (
+                    <div style={{
+                      padding: "10px 14px", borderRadius: "8px",
+                      background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.4)",
+                      color: "#34d399", fontSize: "12px", marginBottom: "14px"
+                    }}>
+                      {clientSecurityMsg}
+                    </div>
+                  )}
+
+                  {clientSecurityErr && (
+                    <div style={{
+                      padding: "10px 14px", borderRadius: "8px",
+                      background: "rgba(244, 63, 94, 0.15)", border: "1px solid rgba(244, 63, 94, 0.4)",
+                      color: "#f87171", fontSize: "12px", marginBottom: "14px"
+                    }}>
+                      {clientSecurityErr}
+                    </div>
+                  )}
+
+                  {clientSecurityStep === 1 ? (
+                    <form onSubmit={handleRequestClientPhoneChange} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                      <p style={{margin: 0, fontSize: "13px", color: "#c4bed6", lineHeight: "1.5"}}>
+                        Digite seu número de WhatsApp com DDD para vincular à sua conta. Enviaremos um código de 6 dígitos via WhatsApp para validar a linha.
+                      </p>
+                      <div>
+                        <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px", fontWeight: 700}}>
+                          Número de WhatsApp (com DDD)
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          value={newClientPhoneInput}
+                          onChange={e => setNewClientPhoneInput(e.target.value)}
+                          placeholder="(51) 99118-9293"
+                          style={{
+                            width: "100%", padding: "12px", borderRadius: "10px",
+                            background: "#1c182c", border: "1px solid #4a3c68",
+                            color: "#fff", fontSize: "15px", letterSpacing: "0.5px"
+                          }}
+                        />
+                      </div>
+
+                      <div style={{display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px"}}>
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => setClientSecurityModalOpen(false)}
+                          style={{padding: "10px 16px", borderRadius: "10px"}}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={clientSecurityLoading || !newClientPhoneInput.trim()}
+                          className="op-primary"
+                          style={{
+                            padding: "10px 20px", borderRadius: "10px", fontWeight: 800,
+                            background: "linear-gradient(135deg, #a855f7, #ec4899)",
+                            color: "#fff", display: "flex", alignItems: "center", gap: "8px"
+                          }}
+                        >
+                          {clientSecurityLoading ? (
+                            <>
+                              <RefreshCw size={15} className="animate-spin" />
+                              <span>Enviando código...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Receber Código no WhatsApp</span>
+                              <ChevronRight size={16} />
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleConfirmClientPhoneCode} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                      <p style={{margin: 0, fontSize: "13px", color: "#c4bed6", lineHeight: "1.5"}}>
+                        Insira o código de 6 dígitos que enviamos no WhatsApp <strong>{newClientPhoneInput}</strong> para concluir a vinculação.
+                      </p>
+                      <div>
+                        <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px", fontWeight: 700}}>
+                          Código de 6 dígitos
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          required
+                          autoFocus
+                          value={clientVerificationCode}
+                          onChange={e => setClientVerificationCode(e.target.value.replace(/\D/g, ""))}
+                          placeholder="123456"
+                          style={{
+                            width: "100%", padding: "14px", borderRadius: "10px",
+                            background: "#120e24", border: "1px solid #a855f7",
+                            color: "#fff", fontSize: "24px", letterSpacing: "8px",
+                            textAlign: "center", fontWeight: 800
+                          }}
+                        />
+                      </div>
+
+                      <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px"}}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setClientSecurityStep(1);
+                            setClientVerificationCode("");
+                          }}
+                          style={{background: "none", border: "none", color: "#a855f7", fontSize: "12px", cursor: "pointer", textDecoration: "underline"}}
+                        >
+                          Voltar e trocar número
+                        </button>
+
+                        <div style={{display: "flex", gap: "10px"}}>
+                          <button
+                            type="button"
+                            className="op-refresh"
+                            onClick={() => setClientSecurityModalOpen(false)}
+                            style={{padding: "10px 16px", borderRadius: "10px"}}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={clientSecurityLoading || clientVerificationCode.length < 6}
+                            className="op-primary"
+                            style={{
+                              padding: "10px 20px", borderRadius: "10px", fontWeight: 800,
+                              background: "linear-gradient(135deg, #10b981, #059669)",
+                              color: "#fff", display: "flex", alignItems: "center", gap: "8px"
+                            }}
+                          >
+                            {clientSecurityLoading ? (
+                              <>
+                                <RefreshCw size={15} className="animate-spin" />
+                                <span>Validando...</span>
+                              </>
+                            ) : (
+                              <>
+                                <ShieldCheck size={16} />
+                                <span>Confirmar e Ativar</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              </div>
+            )}
           </Content>
         </>
       )}

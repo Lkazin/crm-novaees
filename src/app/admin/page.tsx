@@ -13,8 +13,8 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
   loading: () => <ClientWorkspaceSkeleton embedded />,
 });
 
-type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast";
+type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano" | "seguranca";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "security";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
   radar: { title: "Radar de WhatsApp (Tempo Real)", description: "Monitore a integridade e o status de conexão de todas as instâncias de WhatsApp de todos os clientes." },
@@ -23,6 +23,7 @@ const MASTER_SECTIONS: Record<MasterSection, { title: string; description: strin
   kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
   providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
   recharges: { title: "Central de Recargas & Chave PIX", description: "Aprove manualmente as recargas de mensagens após conferir o comprovante PIX e configure a chave de pagamento." },
+  security: { title: "Segurança & Recuperação de Senha", description: "Cadastre e gerencie o número de WhatsApp verificado para recuperação de senha do administrador Master." },
   crm: { title: "CRM NovaesWeb", description: "Atendimento, WhatsApp e inteligência artificial da própria NovaesWeb." },
 };
 import {
@@ -495,6 +496,110 @@ export default function AdminCRM() {
       setSavingPix(false);
     }
   };
+
+  // Security & WhatsApp Recovery State
+  const [masterRecoveryPhone, setMasterRecoveryPhone] = useState("");
+  const [masterRecoveryMasked, setMasterRecoveryMasked] = useState("");
+  const [masterRecoveryVerified, setMasterRecoveryVerified] = useState(false);
+  const [securityModalOpen, setSecurityModalOpen] = useState(false);
+  const [newMasterPhoneInput, setNewMasterPhoneInput] = useState("");
+  const [masterChallengeId, setMasterChallengeId] = useState("");
+  const [masterVerificationCode, setMasterVerificationCode] = useState("");
+  const [masterSecurityStep, setMasterSecurityStep] = useState<1 | 2>(1);
+  const [masterSecurityLoading, setMasterSecurityLoading] = useState(false);
+  const [masterSecurityMsg, setMasterSecurityMsg] = useState("");
+  const [masterSecurityErr, setMasterSecurityErr] = useState("");
+
+  const fetchMasterRecoverySettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm/admin/security/recovery-phone", { credentials: "same-origin" });
+      if (res.ok) {
+        const data = await res.json();
+        setMasterRecoveryPhone(data.phone || "");
+        setMasterRecoveryMasked(data.maskedPhone || "");
+        setMasterRecoveryVerified(data.verified === true);
+      }
+    } catch {}
+  }, []);
+
+  const handleRequestMasterPhoneChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (masterSecurityLoading) return;
+    setMasterSecurityLoading(true);
+    setMasterSecurityErr("");
+    setMasterSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/admin/security/recovery-phone", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPhone: newMasterPhoneInput.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Falha ao enviar código.");
+      setMasterChallengeId(data.challengeId);
+      setMasterSecurityStep(2);
+      setMasterSecurityMsg(data.message || "Código enviado para o novo WhatsApp.");
+    } catch (err) {
+      setMasterSecurityErr(err instanceof Error ? err.message : "Erro ao solicitar código.");
+    } finally {
+      setMasterSecurityLoading(false);
+    }
+  };
+
+  const handleConfirmMasterPhoneCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (masterSecurityLoading) return;
+    setMasterSecurityLoading(true);
+    setMasterSecurityErr("");
+    setMasterSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/admin/security/verify-phone", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeId: masterChallengeId, code: masterVerificationCode.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Código incorreto.");
+      setMasterRecoveryPhone(data.phone);
+      setMasterRecoveryMasked(data.maskedPhone);
+      setMasterRecoveryVerified(true);
+      setMasterSecurityMsg(data.message || "WhatsApp verificado com sucesso!");
+      setTimeout(() => {
+        setSecurityModalOpen(false);
+        setMasterSecurityStep(1);
+        setMasterVerificationCode("");
+        setNewMasterPhoneInput("");
+      }, 1500);
+    } catch (err) {
+      setMasterSecurityErr(err instanceof Error ? err.message : "Erro ao validar código.");
+    } finally {
+      setMasterSecurityLoading(false);
+    }
+  };
+
+  const handleTestMasterRecoveryOtp = async () => {
+    setMasterSecurityLoading(true);
+    setMasterSecurityErr("");
+    setMasterSecurityMsg("");
+    try {
+      const res = await fetch("/api/crm/auth/whatsapp-recover/request", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "master" })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Falha ao enviar teste.");
+      setMasterSecurityMsg(`✅ Código de teste disparado com sucesso para ${data.maskedPhone}!`);
+    } catch (err) {
+      setMasterSecurityErr(err instanceof Error ? err.message : "Erro ao disparar teste.");
+    } finally {
+      setMasterSecurityLoading(false);
+    }
+  };
+
   const [plans, setPlans] = useState<PlanItem[]>([]);
   const [clientCountsMap, setClientCountsMap] = useState<Record<string, number>>({});
   const [enrolledStoresMap, setEnrolledStoresMap] = useState<Record<string, Array<{ id: string; name: string; customQuotaOverride?: number; exceptionReason?: string }>>>({});
@@ -688,6 +793,7 @@ export default function AdminCRM() {
             setAuthenticated(true);
             void fetchClients();
             void fetchPlans();
+            void fetchMasterRecoverySettings();
             return;
           }
         }
@@ -699,7 +805,7 @@ export default function AdminCRM() {
       }
     }
     void checkMasterSession();
-  }, [fetchClients, fetchPlans]);
+  }, [fetchClients, fetchPlans, fetchMasterRecoverySettings]);
 
   // Master Login
   const handleMasterLogin = async (e: React.FormEvent) => {
@@ -2225,6 +2331,22 @@ export default function AdminCRM() {
           >
             <Megaphone size={18}/>
             <span>Avisos Globais</span>
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "security" ? "active" : ""}`}
+            aria-current={currentNav === "security" ? "page" : undefined}
+            title="Segurança & Recuperação de Senha"
+            onClick={() => { navigateSection("security"); void fetchMasterRecoverySettings(); }}
+          >
+            <KeyRound size={18}/>
+            <span>Recuperação de Senha</span>
+            {masterRecoveryVerified ? (
+              !sidebarCollapsed && <span style={{marginLeft: "auto", color: "#34d399", fontSize: "11px", fontWeight: 700}}>✅ Ativo</span>
+            ) : (
+              !sidebarCollapsed && <span style={{marginLeft: "auto", color: "#f59e0b", fontSize: "11px", fontWeight: 700}}>⚠️ Pendente</span>
+            )}
           </button>
 
           {/* DIVISOR DE GRUPO */}
@@ -3840,6 +3962,202 @@ export default function AdminCRM() {
           </section>
         )}
 
+        {/* ===================== SEÇÃO: SEGURANÇA & RECUPERAÇÃO DE SENHA ===================== */}
+        {currentNav === "security" && (
+          <section className="op-section animate-fade-in" style={{ display: "grid", gap: "24px" }}>
+            {/* CARDS DE STATUS RÁPIDO */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
+              <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(168, 85, 247, 0.15)", display: "grid", placeItems: "center" }}>
+                    <Smartphone size={20} color="#c084fc" />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#a855f7", fontWeight: 800, textTransform: "uppercase" }}>WhatsApp Cadastrado</span>
+                    <strong style={{ display: "block", fontSize: "18px", color: "#fff", marginTop: "2px" }}>
+                      {masterRecoveryMasked || "Nenhum número cadastrado"}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: masterRecoveryVerified ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)", display: "grid", placeItems: "center" }}>
+                    {masterRecoveryVerified ? <ShieldCheck size={20} color="#34d399" /> : <AlertTriangle size={20} color="#f59e0b" />}
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: masterRecoveryVerified ? "#34d399" : "#f59e0b", fontWeight: 800, textTransform: "uppercase" }}>Status da Verificação</span>
+                    <strong style={{ display: "block", fontSize: "18px", color: masterRecoveryVerified ? "#34d399" : "#f59e0b", marginTop: "2px" }}>
+                      {masterRecoveryVerified ? "WhatsApp Verificado ✅" : "Pendente de Validação ⚠️"}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="op-card" style={{ padding: "20px", borderRadius: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(236, 72, 153, 0.15)", display: "grid", placeItems: "center" }}>
+                    <KeyRound size={20} color="#f472b6" />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#f472b6", fontWeight: 800, textTransform: "uppercase" }}>Proteção de Autenticação</span>
+                    <strong style={{ display: "block", fontSize: "18px", color: "#fff", marginTop: "2px" }}>
+                      Bloqueio em 5 tentativas
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* CARD PRINCIPAL */}
+            <div className="op-card" style={{
+              padding: "28px",
+              borderRadius: "20px",
+              background: "linear-gradient(135deg, rgba(26, 20, 48, 0.95), rgba(18, 12, 33, 0.98))",
+              border: "1px solid rgba(168, 85, 247, 0.3)",
+              boxShadow: "0 12px 36px rgba(0,0,0,0.4)"
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <KeyRound size={22} color="#ec4899" />
+                    <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff" }}>
+                      Recuperação de Senha do Administrador Master
+                    </h3>
+                  </div>
+                  <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#c4bed6", maxWidth: "680px", lineHeight: "1.5" }}>
+                    Vincule o WhatsApp exclusivo do administrador autorizado para receber o código seguro de 6 dígitos em caso de bloqueio por tentativas incorretas ou redefinição autorizada.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewMasterPhoneInput("");
+                      setMasterVerificationCode("");
+                      setMasterSecurityStep(1);
+                      setMasterSecurityErr("");
+                      setMasterSecurityMsg("");
+                      setSecurityModalOpen(true);
+                    }}
+                    className="op-primary"
+                    style={{
+                      padding: "10px 18px",
+                      borderRadius: "10px",
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      background: "linear-gradient(135deg, #a855f7, #ec4899)"
+                    }}
+                  >
+                    <Smartphone size={16} />
+                    {masterRecoveryPhone ? "Alterar Número de WhatsApp" : "Cadastrar WhatsApp"}
+                  </button>
+
+                  {masterRecoveryVerified && (
+                    <button
+                      type="button"
+                      disabled={masterSecurityLoading}
+                      onClick={() => void handleTestMasterRecoveryOtp()}
+                      className="op-refresh"
+                      style={{
+                        padding: "10px 18px",
+                        borderRadius: "10px",
+                        fontWeight: 700,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                        background: "rgba(255, 255, 255, 0.05)",
+                        color: "#fff"
+                      }}
+                    >
+                      <RefreshCw size={15} className={masterSecurityLoading ? "animate-spin" : ""} />
+                      {masterSecurityLoading ? "Enviando..." : "Testar Envio no WhatsApp"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* MENSAGENS DE FEEDBACK */}
+              {masterSecurityMsg && (
+                <div style={{
+                  padding: "12px 16px",
+                  borderRadius: "10px",
+                  background: "rgba(16, 185, 129, 0.15)",
+                  border: "1px solid rgba(16, 185, 129, 0.4)",
+                  color: "#34d399",
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  marginBottom: "16px"
+                }}>
+                  <CheckCircle2 size={16} />
+                  <span>{masterSecurityMsg}</span>
+                </div>
+              )}
+
+              {masterSecurityErr && (
+                <div style={{
+                  padding: "12px 16px",
+                  borderRadius: "10px",
+                  background: "rgba(244, 63, 94, 0.15)",
+                  border: "1px solid rgba(244, 63, 94, 0.4)",
+                  color: "#f87171",
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  marginBottom: "16px"
+                }}>
+                  <AlertTriangle size={16} />
+                  <span>{masterSecurityErr}</span>
+                </div>
+              )}
+
+              {/* QUADRO DE POLÍTICA DE SEGURANÇA */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                gap: "14px",
+                padding: "18px",
+                borderRadius: "14px",
+                background: "rgba(15, 11, 28, 0.6)",
+                border: "1px solid rgba(255, 255, 255, 0.08)"
+              }}>
+                <div>
+                  <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <ShieldCheck size={15} color="#c084fc" /> Código Criptográfico de 6 Dígitos
+                  </strong>
+                  <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                    Gerado com entropia criptográfica e enviado instantaneamente via canal oficial da Evolution API.
+                  </p>
+                </div>
+                <div>
+                  <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Lock size={15} color="#f472b6" /> Validade &amp; Uso Único
+                  </strong>
+                  <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                    Válido por 10 minutos, com limite máximo de 3 tentativas para evitar força bruta.
+                  </p>
+                </div>
+                <div>
+                  <strong style={{ fontSize: "13px", color: "#e2e8f0", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Check size={15} color="#34d399" /> Nova Senha Definitiva
+                  </strong>
+                  <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", lineHeight: "1.4" }}>
+                    A nova senha é definitiva, permanente e nunca expira por tempo decorrido.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ===================== MODAIS ===================== */}
 
         {/* MODAL CONFIGURAR CHAVE PIX */}
@@ -4769,6 +5087,193 @@ export default function AdminCRM() {
                       : "Confirmar Suspensão"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL CONFIGURAR WHATSAPP DE RECUPERAÇÃO MASTER */}
+        {securityModalOpen && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 120, padding: "20px"
+          }}>
+            <div className="op-card" style={{
+              width: "100%", maxWidth: "480px", padding: "28px",
+              borderColor: "#ec4899", borderRadius: "20px",
+              boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)"
+            }}>
+              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px"}}>
+                <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                  <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "rgba(236,72,153,0.15)", display: "grid", placeItems: "center"}}>
+                    <KeyRound size={20} color="#ec4899"/>
+                  </div>
+                  <div>
+                    <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                      {masterSecurityStep === 1 ? "WhatsApp de Recuperação Master" : "Confirmar Código de Segurança"}
+                    </h3>
+                    <span style={{fontSize: "12px", color: "#c4bed6"}}>
+                      {masterSecurityStep === 1 ? "Passo 1 de 2: Informe o número" : "Passo 2 de 2: Validação por OTP"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSecurityModalOpen(false)}
+                  style={{background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: "4px"}}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {masterSecurityMsg && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: "8px",
+                  background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.4)",
+                  color: "#34d399", fontSize: "12px", marginBottom: "14px"
+                }}>
+                  {masterSecurityMsg}
+                </div>
+              )}
+
+              {masterSecurityErr && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: "8px",
+                  background: "rgba(244, 63, 94, 0.15)", border: "1px solid rgba(244, 63, 94, 0.4)",
+                  color: "#f87171", fontSize: "12px", marginBottom: "14px"
+                }}>
+                  {masterSecurityErr}
+                </div>
+              )}
+
+              {masterSecurityStep === 1 ? (
+                <form onSubmit={handleRequestMasterPhoneChange} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                  <p style={{margin: 0, fontSize: "13px", color: "#c4bed6", lineHeight: "1.5"}}>
+                    Digite o número de WhatsApp com DDD para vincular à conta Master. Um código de 6 dígitos será enviado instantaneamente para comprovar a posse do aparelho.
+                  </p>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px", fontWeight: 700}}>
+                      Número de WhatsApp (com DDD)
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      value={newMasterPhoneInput}
+                      onChange={e => setNewMasterPhoneInput(e.target.value)}
+                      placeholder="(51) 99118-9293"
+                      style={{
+                        width: "100%", padding: "12px", borderRadius: "10px",
+                        background: "#1c182c", border: "1px solid #4a3c68",
+                        color: "#fff", fontSize: "15px", letterSpacing: "0.5px"
+                      }}
+                    />
+                  </div>
+
+                  <div style={{display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px"}}>
+                    <button
+                      type="button"
+                      className="op-refresh"
+                      onClick={() => setSecurityModalOpen(false)}
+                      style={{padding: "10px 16px", borderRadius: "10px"}}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={masterSecurityLoading || !newMasterPhoneInput.trim()}
+                      className="op-primary"
+                      style={{
+                        padding: "10px 20px", borderRadius: "10px", fontWeight: 800,
+                        background: "linear-gradient(135deg, #a855f7, #ec4899)",
+                        color: "#fff", display: "flex", alignItems: "center", gap: "8px"
+                      }}
+                    >
+                      {masterSecurityLoading ? (
+                        <>
+                          <RefreshCw size={15} className="animate-spin" />
+                          <span>Enviando código...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Receber Código no WhatsApp</span>
+                          <ChevronRight size={16} />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleConfirmMasterPhoneCode} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                  <p style={{margin: 0, fontSize: "13px", color: "#c4bed6", lineHeight: "1.5"}}>
+                    Insira o código de 6 dígitos que enviamos no WhatsApp <strong>{newMasterPhoneInput}</strong> para concluir a vinculação.
+                  </p>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px", fontWeight: 700}}>
+                      Código de 6 dígitos
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      required
+                      autoFocus
+                      value={masterVerificationCode}
+                      onChange={e => setMasterVerificationCode(e.target.value.replace(/\D/g, ""))}
+                      placeholder="123456"
+                      style={{
+                        width: "100%", padding: "14px", borderRadius: "10px",
+                        background: "#120e24", border: "1px solid #a855f7",
+                        color: "#fff", fontSize: "24px", letterSpacing: "8px",
+                        textAlign: "center", fontWeight: 800
+                      }}
+                    />
+                  </div>
+
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px"}}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMasterSecurityStep(1);
+                        setMasterVerificationCode("");
+                      }}
+                      style={{background: "none", border: "none", color: "#a855f7", fontSize: "12px", cursor: "pointer", textDecoration: "underline"}}
+                    >
+                      Voltar e trocar número
+                    </button>
+
+                    <div style={{display: "flex", gap: "10px"}}>
+                      <button
+                        type="button"
+                        className="op-refresh"
+                        onClick={() => setSecurityModalOpen(false)}
+                        style={{padding: "10px 16px", borderRadius: "10px"}}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={masterSecurityLoading || masterVerificationCode.length < 6}
+                        className="op-primary"
+                        style={{
+                          padding: "10px 20px", borderRadius: "10px", fontWeight: 800,
+                          background: "linear-gradient(135deg, #10b981, #059669)",
+                          color: "#fff", display: "flex", alignItems: "center", gap: "8px"
+                        }}
+                      >
+                        {masterSecurityLoading ? (
+                          <>
+                            <RefreshCw size={15} className="animate-spin" />
+                            <span>Validando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck size={16} />
+                            <span>Confirmar e Ativar</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         )}
