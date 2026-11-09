@@ -821,6 +821,121 @@ export async function PATCH(request: NextRequest) {
       return privateJson({ updated: true, converted: true, plan: result.plan });
     }
 
+    // 7. Action: Extend Due Date / Conceder Prazo Adicional (com auditoria)
+    if (action === "extend_due_date") {
+      const newDueDate = typeof body.newDueDate === "string" ? body.newDueDate.trim() : "";
+      const reason = typeof body.reason === "string" ? body.reason.trim() : "Prazo concedido administrativamente";
+      const graceDays = typeof body.graceDays === "number" ? Math.max(0, Math.min(60, body.graceDays)) : undefined;
+
+      if (!newDueDate && graceDays === undefined) {
+        return privateJson({ error: "invalid_extension_data", message: "Informe a nova data de vencimento ou dias de carência." }, 400);
+      }
+
+      const dataObj = await loadSettingsObj();
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
+      const previousDueDate = planObj.dueDate;
+
+      if (newDueDate) {
+        planObj.dueDate = newDueDate;
+        planObj.isOverdue = false;
+      }
+      if (graceDays !== undefined) {
+        (planObj as Record<string, unknown>).graceDays = graceDays;
+      }
+
+      // Adiciona ao histórico de extensões no próprio tenant
+      const extensionHistory = Array.isArray((dataObj as Record<string, unknown>).extensionHistory)
+        ? ((dataObj as Record<string, unknown>).extensionHistory as Array<Record<string, unknown>>)
+        : [];
+
+      extensionHistory.unshift({
+        id: `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        previousDueDate,
+        newDueDate: planObj.dueDate,
+        graceDays,
+        reason,
+        authorizedBy: auth.actor || "master_admin",
+        createdAt: new Date().toISOString()
+      });
+
+      (dataObj as Record<string, unknown>).extensionHistory = extensionHistory.slice(0, 30);
+      dataObj.plan = planObj;
+
+      await saveSettingsObj(dataObj, {}, ["plan", "extensionHistory"]);
+
+      await recordPlanAudit({
+        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        actor: auth.actor || "master_admin",
+        planId: String(planObj.planId || "crm-start"),
+        planName: String(planObj.name || "CRM Start"),
+        action: "extension_granted",
+        vigencia: "immediate",
+        newValues: {
+          previousDueDate,
+          newDueDate: planObj.dueDate,
+          graceDays,
+          reason
+        },
+        affectedTenantsCount: 1,
+        affectedTenants: [tenantId],
+        timestamp: new Date().toISOString()
+      });
+
+      return privateJson({
+        updated: true,
+        dueDate: planObj.dueDate,
+        graceDays: (planObj as Record<string, unknown>).graceDays,
+        extensionHistory: (dataObj as Record<string, unknown>).extensionHistory
+      });
+    }
+
+    // 8. Action: Apply Discount / Conceder Desconto na Mensalidade
+    if (action === "apply_discount") {
+      const discountPrice = typeof body.discountPrice === "string" ? body.discountPrice.trim() : "";
+      const reason = typeof body.reason === "string" ? body.reason.trim() : "Desconto autorizado pelo Master";
+
+      if (!discountPrice) {
+        return privateJson({ error: "invalid_discount_data", message: "Informe o novo valor da mensalidade." }, 400);
+      }
+
+      const dataObj = await loadSettingsObj();
+      const planObj = (dataObj.plan as StoredTenantPlan) ?? {};
+      const originalPrice = planObj.contractedPlan?.price || planObj.price;
+
+      planObj.price = discountPrice;
+      if (planObj.contractedPlan) {
+        planObj.contractedPlan.price = discountPrice;
+      }
+      (planObj as Record<string, unknown>).discountReason = reason;
+      (planObj as Record<string, unknown>).discountAppliedAt = new Date().toISOString();
+
+      dataObj.plan = planObj;
+      await saveSettingsObj(dataObj);
+
+      await recordPlanAudit({
+        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        actor: auth.actor || "master_admin",
+        planId: String(planObj.planId || "crm-start"),
+        planName: String(planObj.name || "CRM Start"),
+        action: "discount_applied",
+        vigencia: "immediate",
+        newValues: {
+          originalPrice,
+          discountPrice,
+          reason
+        },
+        affectedTenantsCount: 1,
+        affectedTenants: [tenantId],
+        timestamp: new Date().toISOString()
+      });
+
+      return privateJson({
+        updated: true,
+        price: discountPrice,
+        discountReason: reason
+      });
+    }
+
     return privateJson({ error: "invalid_action" }, 400);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "patch_failed" }, 503);

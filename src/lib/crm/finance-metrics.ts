@@ -52,6 +52,16 @@ export type FinanceClient = {
   };
 };
 
+export type FinanceExpense = {
+  id: string;
+  description: string;
+  category: string;
+  amount: number;
+  dueDate: string;
+  paymentDate?: string | null;
+  status: "paid" | "pending";
+};
+
 export type FinanceRecharge = {
   id: string;
   tenantId: string;
@@ -273,6 +283,7 @@ function addMonthsKeepingDay(d: Date, months: number): Date {
 export function computeFinanceMetrics(input: {
   clients: FinanceClient[];
   recharges?: FinanceRecharge[];
+  expenses?: FinanceExpense[];
   planCatalog: FinancePlanCatalogItem[];
   filters: FinanceFilters;
   now?: Date;
@@ -390,6 +401,22 @@ export function computeFinanceMetrics(input: {
   const trialsEndingSoon = scoped.filter(x => x.cls.trial && !x.cls.canceled &&
     (x.c.plan?.trialStatus === "expiring_soon")).length;
 
+  // Despesas registradas e pagas no período
+  const paidExpensesInPeriod = (input.expenses ?? []).filter(e => {
+    if (e.status !== "paid") return false;
+    const pDate = parseDate(e.paymentDate || e.dueDate);
+    return inRange(pDate, from, to);
+  });
+  const totalExpenses = input.expenses !== undefined
+    ? paidExpensesInPeriod.reduce((s, e) => s + (Number(e.amount) || 0), 0)
+    : null;
+
+  const totalRealizedRevenue = receivedInPeriod + rechargeRevenue;
+  const operatingProfit = totalExpenses !== null ? totalRealizedRevenue - totalExpenses : null;
+  const operatingMargin = totalExpenses !== null && totalRealizedRevenue > 0
+    ? (operatingProfit! / totalRealizedRevenue) * 100
+    : null;
+
   return {
     generatedAt: now.toISOString(),
     totals,
@@ -406,9 +433,9 @@ export function computeFinanceMetrics(input: {
       extrasRevenue: null,
       rechargeRevenue,
       averageTicket: payingRows.length ? mrr / payingRows.length : null,
-      expenses: null,
-      operatingProfit: null,
-      operatingMargin: null
+      expenses: totalExpenses,
+      operatingProfit,
+      operatingMargin
     },
     forecast,
     plans,

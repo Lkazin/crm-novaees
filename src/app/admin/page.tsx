@@ -9,8 +9,9 @@ import { MasterAdminSkeleton, ClientWorkspaceSkeleton } from "@/components/crm/C
 import { WhatsAppRadarSection } from "@/components/crm/WhatsAppRadarSection";
 import {
   computeFinanceMetrics, resolvePeriod,
-  type PeriodPreset, type FinanceSubscriptionStatus
+  type PeriodPreset, type FinanceSubscriptionStatus, type FinanceExpense
 } from "@/lib/crm/finance-metrics";
+import { type OperationalExpense } from "@/app/api/crm/admin/finance/route";
 import { BroadcastManagerSection } from "@/components/crm/BroadcastManagerSection";
 
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
@@ -130,6 +131,14 @@ type Client = {
       planVersion: number;
     } | null;
   };
+  paymentHistory?: Array<{
+    id?: string;
+    billingCycleKey?: string;
+    amount?: string | number;
+    dueDate?: string;
+    paidAt?: string;
+    status?: string;
+  }>;
 };
 
 type UpgradeRequestItem = {
@@ -749,6 +758,27 @@ export default function AdminCRM() {
   const [finTenant, setFinTenant] = useState("");
   const [finLoading, setFinLoading] = useState(false);
   const [finRefreshedAt, setFinRefreshedAt] = useState<Date | null>(null);
+  const [operationalExpenses, setOperationalExpenses] = useState<OperationalExpense[]>([]);
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [newExpDesc, setNewExpDesc] = useState("");
+  const [newExpCat, setNewExpCat] = useState<OperationalExpense["category"]>("other");
+  const [newExpAmount, setNewExpAmount] = useState("");
+  const [newExpDueDate, setNewExpDueDate] = useState("");
+  const [newExpPaid, setNewExpPaid] = useState(false);
+  const [newExpSupplier, setNewExpSupplier] = useState("");
+  const [savingExpense, setSavingExpense] = useState(false);
+
+  // Ficha Financeira do Cliente (Modal)
+  const [financeModalClient, setFinanceModalClient] = useState<Client | null>(null);
+  const [extensionModalOpen, setExtensionModalOpen] = useState(false);
+  const [extensionNewDueDate, setExtensionNewDueDate] = useState("");
+  const [extensionReason, setExtensionReason] = useState("");
+  const [extensionGraceDays, setExtensionGraceDays] = useState<number>(3);
+  const [savingExtension, setSavingExtension] = useState(false);
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [discountNewPrice, setDiscountNewPrice] = useState("");
+  const [discountReason, setDiscountReason] = useState("");
+  const [savingDiscount, setSavingDiscount] = useState(false);
 
   // Administrative Suspension Modal state (with public reason + internal note)
   const [blockModalOpen, setBlockModalOpen] = useState(false);
@@ -965,20 +995,33 @@ export default function AdminCRM() {
     return computeFinanceMetrics({
       clients,
       recharges: adminRecharges,
+      expenses: operationalExpenses as FinanceExpense[],
       planCatalog: plans.map(p => ({ id: p.id, name: p.name, price: p.price })),
       filters: { from, to, planId: finPlan || undefined, subscriptionStatus: finStatus, tenantId: finTenant || undefined }
     });
-  }, [clients, adminRecharges, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant]);
+  }, [clients, adminRecharges, operationalExpenses, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant]);
+
+  const fetchFinanceSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm/admin/finance", { credentials: "same-origin", cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.expenses)) {
+          setOperationalExpenses(data.expenses);
+        }
+      }
+    } catch {}
+  }, []);
 
   const refreshFinance = useCallback(async () => {
     setFinLoading(true);
     try {
-      await Promise.all([fetchClients(), fetchPlans(), fetchRecharges()]);
+      await Promise.all([fetchClients(), fetchPlans(), fetchRecharges(), fetchFinanceSettings()]);
       setFinRefreshedAt(new Date());
     } finally {
       setFinLoading(false);
     }
-  }, [fetchClients, fetchPlans, fetchRecharges]);
+  }, [fetchClients, fetchPlans, fetchRecharges, fetchFinanceSettings]);
 
   // Client counts per plan
   const planDistribution = useMemo(() => {
@@ -4350,6 +4393,16 @@ export default function AdminCRM() {
                           <button
                             type="button"
                             className="op-refresh"
+                            title="Ficha Financeira e Cobrança"
+                            style={{padding: "8px 12px", color: "#ec4899", borderColor: "rgba(236,72,153,0.3)"}}
+                            onClick={() => setFinanceModalClient(client)}
+                          >
+                            <DollarSign size={15}/>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="op-refresh"
                             title="Alterar Plano da Loja"
                             style={{padding: "8px 12px"}}
                             onClick={() => handleOpenAssignModal(client)}
@@ -4522,9 +4575,9 @@ export default function AdminCRM() {
                     <FinCard label="Adicionais/serviços extras" value="Indisponível" unavailable hint="Sem registro de serviços extras" />
                     <FinCard label="Recargas de IA (receita)" value={brl(finance.money.rechargeRevenue)} color="#00db8c" hint="Recargas aprovadas no período" />
                     <FinCard label="Ticket médio contratado" value={brl(finance.money.averageTicket)} hint="MRR ÷ clientes pagantes" />
-                    <FinCard label="Despesas" value="Em breve" unavailable hint="Cadastro de despesas na próxima fase" />
-                    <FinCard label="Lucro operacional estimado" value="Em breve" unavailable hint="Depende do cadastro de despesas" />
-                    <FinCard label="Margem operacional" value="Em breve" unavailable hint="Depende do cadastro de despesas" />
+                    <FinCard label="Despesas (período)" value={brl(finance.money.expenses)} color="#f43f5e" hint="Despesas pagas registradas" />
+                    <FinCard label="Lucro operacional estimado" value={brl(finance.money.operatingProfit)} color={finance.money.operatingProfit !== null && finance.money.operatingProfit >= 0 ? "#00db8c" : "#f43f5e"} hint="Receita realizada − despesas" />
+                    <FinCard label="Margem operacional" value={finance.money.operatingMargin !== null ? `${finance.money.operatingMargin.toFixed(1)}%` : "—"} color="#a855f7" hint="Lucro ÷ receita realizada" />
                   </div>
                 </div>
 
@@ -4581,19 +4634,142 @@ export default function AdminCRM() {
                   <div className="op-card" style={{padding: "20px", borderRadius: "14px"}}>
                     <h3 style={{fontSize: "16px", fontWeight: 800, margin: "0 0 10px", color: "white"}}>Atrasos e próximos vencimentos</h3>
                     <div style={{display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px"}}>
-                      {finance.alerts.overdueClients.map(o => (
-                        <div key={o.id} style={{display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: "8px", background: "rgba(244,63,94,0.08)", color: "#fca5a5"}}>
-                          <span>🔴 {o.name} — {o.daysOverdue} dia(s) em atraso</span><strong>{brl(o.amount)}</strong>
-                        </div>
-                      ))}
+                      {finance.alerts.overdueClients.map(o => {
+                        const targetClient = clients.find(c => c.id === o.id);
+                        return (
+                          <div key={o.id} style={{display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: "8px", background: "rgba(244,63,94,0.08)", color: "#fca5a5", flexWrap: "wrap", gap: "8px"}}>
+                            <div>
+                              <span>🔴 <strong>{o.name}</strong> — {o.daysOverdue} dia(s) em atraso</span>
+                              <span style={{marginLeft: "10px", color: "#f43f5e", fontWeight: 700}}>{brl(o.amount)}</span>
+                            </div>
+                            <div style={{display: "flex", gap: "6px"}}>
+                              {targetClient && (
+                                <button
+                                  type="button"
+                                  className="op-refresh"
+                                  onClick={() => setFinanceModalClient(targetClient)}
+                                  style={{padding: "4px 8px", fontSize: "11px", borderRadius: "6px"}}
+                                >
+                                  Ver Ficha
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="op-primary"
+                                onClick={() => {
+                                  const name = targetClient?.businessDetails?.ownerName || o.name;
+                                  const phone = (targetClient?.businessDetails?.businessWhatsapp || "").replace(/\D/g, "");
+                                  const msg = `Olá, ${name}! Identificamos uma pendência financeira referente à sua assinatura do NovaesWeb CRM AI. Podemos ajudar você a regularizar o pagamento?`;
+                                  if (phone) window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+                                  else alert("WhatsApp não cadastrado na ficha da empresa.");
+                                }}
+                                style={{padding: "4px 8px", fontSize: "11px", borderRadius: "6px", background: "#22c55e", color: "#fff"}}
+                              >
+                                Cobrar no WhatsApp
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                       {finance.alerts.dueSoon.map(o => (
-                        <div key={o.tenantId} style={{display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.08)", color: "#fcd34d"}}>
+                        <div key={o.tenantId} style={{display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: "8px", background: "rgba(245,158,11,0.08)", color: "#fcd34d", flexWrap: "wrap", gap: "8px"}}>
                           <span>🟡 {o.name} — vence em {o.dueDate.split("-").reverse().join("/")}</span><strong>{brl(o.amount)}</strong>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* Gestão de Despesas Operacionais */}
+                <div className="op-card" style={{padding: "20px", borderRadius: "14px"}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px"}}>
+                    <div>
+                      <h3 style={{fontSize: "16px", fontWeight: 800, margin: 0, color: "white"}}>Despesas Operacionais NovaesWeb</h3>
+                      <small style={{color: "#9ca3af", fontSize: "12px"}}>Custos de IA, servidores, infraestrutura e ferramentas para apuração do lucro real.</small>
+                    </div>
+                    <button
+                      type="button"
+                      className="op-primary"
+                      onClick={() => setExpenseModalOpen(true)}
+                      style={{padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px"}}
+                    >
+                      <PlusCircle size={14}/> Nova Despesa
+                    </button>
+                  </div>
+
+                  {operationalExpenses.length === 0 ? (
+                    <div style={{padding: "16px", textAlign: "center", color: "#71717a", fontSize: "13px"}}>
+                      Nenhuma despesa cadastrada ainda. Clique em &quot;Nova Despesa&quot; para registrar seus custos operacionais.
+                    </div>
+                  ) : (
+                    <div style={{overflowX: "auto"}}>
+                      <table style={{width: "100%", borderCollapse: "collapse", fontSize: "13px", color: "#c4bed6"}}>
+                        <thead>
+                          <tr style={{borderBottom: "1px solid #332b49", textAlign: "left", color: "#9ca3af", fontSize: "11px", textTransform: "uppercase"}}>
+                            <th style={{padding: "8px 10px"}}>Descrição</th>
+                            <th style={{padding: "8px 10px"}}>Categoria</th>
+                            <th style={{padding: "8px 10px"}}>Valor</th>
+                            <th style={{padding: "8px 10px"}}>Vencimento</th>
+                            <th style={{padding: "8px 10px"}}>Status</th>
+                            <th style={{padding: "8px 10px"}}>Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {operationalExpenses.map(exp => (
+                            <tr key={exp.id} style={{borderBottom: "1px solid rgba(255,255,255,0.04)"}}>
+                              <td style={{padding: "8px 10px", color: "white", fontWeight: 600}}>
+                                {exp.description}
+                                {exp.supplier && <span style={{display: "block", fontSize: "11px", color: "#9ca3af"}}>{exp.supplier}</span>}
+                              </td>
+                              <td style={{padding: "8px 10px", textTransform: "capitalize"}}>{exp.category}</td>
+                              <td style={{padding: "8px 10px", color: "#f43f5e", fontWeight: 700}}>{brl(exp.amount)}</td>
+                              <td style={{padding: "8px 10px"}}>{exp.dueDate.split("-").reverse().join("/")}</td>
+                              <td style={{padding: "8px 10px"}}>
+                                <span style={{
+                                  padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700,
+                                  background: exp.status === "paid" ? "rgba(0,219,140,0.15)" : "rgba(245,158,11,0.15)",
+                                  color: exp.status === "paid" ? "#00db8c" : "#fcd34d"
+                                }}>
+                                  {exp.status === "paid" ? "Paga" : "Pendente"}
+                                </span>
+                              </td>
+                              <td style={{padding: "8px 10px"}}>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const nextStatus = exp.status === "paid" ? "pending" : "paid";
+                                    await fetch("/api/crm/admin/finance", {
+                                      method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ action: "update_expense", id: exp.id, status: nextStatus })
+                                    });
+                                    await fetchFinanceSettings();
+                                  }}
+                                  style={{background: "none", border: "none", color: "#a855f7", cursor: "pointer", fontSize: "12px", textDecoration: "underline", marginRight: "10px"}}
+                                >
+                                  {exp.status === "paid" ? "Marcar Pendente" : "Marcar Paga"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!confirm(`Excluir a despesa "${exp.description}"?`)) return;
+                                    await fetch("/api/crm/admin/finance", {
+                                      method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ action: "delete_expense", id: exp.id })
+                                    });
+                                    await fetchFinanceSettings();
+                                  }}
+                                  style={{background: "none", border: "none", color: "#f43f5e", cursor: "pointer", fontSize: "12px"}}
+                                >
+                                  Excluir
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </section>
@@ -5971,7 +6147,488 @@ export default function AdminCRM() {
           </div>
         )}
 
-        {/* MODAL CONFIGURAR WHATSAPP DE RECUPERAÇÃO MASTER */}
+        {/* MODAL FICHA FINANCEIRA DO CLIENTE */}
+        {financeModalClient && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 125, padding: "20px"
+          }}>
+            <div className="op-card" style={{
+              width: "100%", maxWidth: "680px", maxHeight: "90vh", overflowY: "auto", padding: "28px",
+              borderColor: "#ec4899", borderRadius: "20px", boxShadow: "0 25px 60px rgba(0,0,0,0.75)"
+            }}>
+              <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
+                <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                  <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(236,72,153,0.15)", display: "grid", placeItems: "center"}}>
+                    <DollarSign size={20} color="#ec4899"/>
+                  </div>
+                  <div>
+                    <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                      Ficha Financeira: {financeModalClient.name}
+                    </h3>
+                    <span style={{fontSize: "12px", color: "#a1a1aa"}}>
+                      Responsável: {financeModalClient.businessDetails?.ownerName || financeModalClient.ownerName || "Não informado"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFinanceModalClient(null)}
+                  style={{background: "none", border: "none", color: "#94a3b8", cursor: "pointer"}}
+                >
+                  <X size={20}/>
+                </button>
+              </div>
+
+              {/* Bento Grid da Situação Atual */}
+              <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "18px"}}>
+                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
+                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>Plano Atual</span>
+                  <strong style={{display: "block", fontSize: "16px", color: "#fff", marginTop: "2px"}}>{financeModalClient.plan.name}</strong>
+                  <small style={{color: "#ec4899"}}>R$ {financeModalClient.plan.price}/mês</small>
+                </div>
+                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
+                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>Situação</span>
+                  <strong style={{
+                    display: "block", fontSize: "16px", marginTop: "2px",
+                    color: financeModalClient.plan.status === "paid" ? "#00db8c" : (financeModalClient.plan.isOverdue ? "#f43f5e" : "#fcd34d")
+                  }}>
+                    {financeModalClient.plan.status === "paid" ? "🟢 Em Dia" : (financeModalClient.plan.isOverdue ? "🔴 Em Atraso" : "🟡 Pendente")}
+                  </strong>
+                  <small style={{color: "#9ca3af"}}>Vencimento: {financeModalClient.plan.dueDate || "—"}</small>
+                </div>
+                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
+                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>WhatsApp Comercial</span>
+                  <strong style={{display: "block", fontSize: "14px", color: "#fff", marginTop: "2px"}}>
+                    {financeModalClient.businessDetails?.businessWhatsapp || "Não informado"}
+                  </strong>
+                  <small style={{color: "#9ca3af"}}>{financeModalClient.businessDetails?.document || "Sem CNPJ/CPF"}</small>
+                </div>
+              </div>
+
+              {/* Ações Administrativas Rápidas */}
+              <div style={{display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "20px"}}>
+                {financeModalClient.plan.status === "paid" ? (
+                  <button
+                    type="button"
+                    className="op-refresh"
+                    onClick={async () => {
+                      await handleSetPaymentStatus(financeModalClient, "pending");
+                      setFinanceModalClient(null);
+                    }}
+                    style={{fontSize: "12px", padding: "8px 12px", color: "#f59e0b"}}
+                  >
+                    Marcar como Pendente
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="op-primary"
+                    onClick={async () => {
+                      await handleSetPaymentStatus(financeModalClient, "paid");
+                      setFinanceModalClient(null);
+                    }}
+                    style={{fontSize: "12px", padding: "8px 12px", background: "#00db8c", color: "#000"}}
+                  >
+                    Confirmar Pagamento Recebido
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => {
+                    setExtensionNewDueDate(financeModalClient.plan.dueDate || "");
+                    setExtensionGraceDays(3);
+                    setExtensionReason("Acordo comercial");
+                    setExtensionModalOpen(true);
+                  }}
+                  style={{fontSize: "12px", padding: "8px 12px"}}
+                >
+                  Conceder Prazo Adicional
+                </button>
+
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => {
+                    setDiscountNewPrice(financeModalClient.plan.price || "");
+                    setDiscountReason("Desconto de fidelidade");
+                    setDiscountModalOpen(true);
+                  }}
+                  style={{fontSize: "12px", padding: "8px 12px"}}
+                >
+                  Aplicar Desconto
+                </button>
+
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => {
+                    const name = financeModalClient.businessDetails?.ownerName || financeModalClient.name;
+                    const phone = (financeModalClient.businessDetails?.businessWhatsapp || "").replace(/\D/g, "");
+                    const msg = `Olá, ${name}! Tudo bem?\nSua mensalidade da NovaesWeb CRM AI referente à empresa ${financeModalClient.name} (R$ ${financeModalClient.plan.price}) venceu ou está com pendência.\nSe precisar, podemos encaminhar a chave PIX para pagamento: ${pixConfig.pixKey} (${pixConfig.beneficiaryName}).\nQualquer dúvida, estamos à disposição!`;
+                    if (phone) window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+                    else alert("WhatsApp comercial não informado no cadastro desta empresa.");
+                  }}
+                  style={{fontSize: "12px", padding: "8px 12px", color: "#22c55e", borderColor: "rgba(34,197,94,0.4)"}}
+                >
+                  Cobrar no WhatsApp
+                </button>
+              </div>
+
+              {/* Histórico de Pagamentos Confirmados */}
+              <div>
+                <h4 style={{fontSize: "14px", fontWeight: 700, margin: "0 0 8px", color: "#fff"}}>Histórico de Pagamentos</h4>
+                {(financeModalClient.paymentHistory || []).length === 0 ? (
+                  <p style={{fontSize: "12px", color: "#71717a", margin: 0}}>Nenhum pagamento registrado no histórico desta loja.</p>
+                ) : (
+                  <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                    {(financeModalClient.paymentHistory || []).map((p, idx) => (
+                      <div key={idx} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "8px 12px", borderRadius: "8px", background: "rgba(255,255,255,0.03)", fontSize: "12px"
+                      }}>
+                        <div>
+                          <strong style={{color: "#00db8c"}}>R$ {String(p.amount || "0,00")}</strong>
+                          <span style={{color: "#9ca3af", marginLeft: "10px"}}>Vencimento: {String(p.dueDate || "—")}</span>
+                        </div>
+                        <span style={{color: "#71717a"}}>
+                          Pago em: {p.paidAt ? new Date(String(p.paidAt)).toLocaleDateString("pt-BR") : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL CONCEDER PRAZO ADICIONAL */}
+        {extensionModalOpen && financeModalClient && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 135, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "460px", padding: "24px", borderRadius: "16px"}}>
+              <h3 style={{margin: "0 0 12px", fontSize: "16px", fontWeight: 800, color: "#fff"}}>
+                Conceder Prazo Adicional: {financeModalClient.name}
+              </h3>
+              <p style={{fontSize: "12px", color: "#9ca3af", marginBottom: "16px"}}>
+                Altere a data de vencimento ou defina dias de carência sem suspender o atendimento do cliente. A operação será registrada na auditoria.
+              </p>
+              <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Nova Data de Vencimento</label>
+                  <input
+                    type="date"
+                    value={extensionNewDueDate}
+                    onChange={e => setExtensionNewDueDate(e.target.value)}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Dias de Carência (Grace Period)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={extensionGraceDays}
+                    onChange={e => setExtensionGraceDays(Number(e.target.value))}
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Motivo da Concessão</label>
+                  <input
+                    type="text"
+                    value={extensionReason}
+                    onChange={e => setExtensionReason(e.target.value)}
+                    placeholder="Ex: Cliente solicitou 5 dias a mais para faturar"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+              </div>
+
+              <div style={{display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setExtensionModalOpen(false)}
+                  style={{padding: "8px 14px", borderRadius: "8px"}}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={savingExtension}
+                  className="op-primary"
+                  onClick={async () => {
+                    setSavingExtension(true);
+                    try {
+                      const res = await fetch("/api/crm/admin/clients", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          tenantId: financeModalClient.id,
+                          action: "extend_due_date",
+                          newDueDate: extensionNewDueDate,
+                          graceDays: extensionGraceDays,
+                          reason: extensionReason
+                        })
+                      });
+                      if (res.ok) {
+                        setNotice(`Prazo adicional concedido para ${financeModalClient.name}!`);
+                        setExtensionModalOpen(false);
+                        setFinanceModalClient(null);
+                        await fetchClients();
+                      } else {
+                        setError("Falha ao conceder prazo adicional.");
+                      }
+                    } finally {
+                      setSavingExtension(false);
+                    }
+                  }}
+                  style={{padding: "8px 16px", borderRadius: "8px", fontWeight: 700}}
+                >
+                  {savingExtension ? "Salvando..." : "Confirmar Prazo"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL APLICAR DESCONTO */}
+        {discountModalOpen && financeModalClient && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 135, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "440px", padding: "24px", borderRadius: "16px"}}>
+              <h3 style={{margin: "0 0 12px", fontSize: "16px", fontWeight: 800, color: "#fff"}}>
+                Aplicar Desconto: {financeModalClient.name}
+              </h3>
+              <p style={{fontSize: "12px", color: "#9ca3af", marginBottom: "16px"}}>
+                Altere o valor da mensalidade contratada do cliente. A alteração afeta o MRR real e é auditada.
+              </p>
+              <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Novo Valor da Mensalidade (R$)</label>
+                  <input
+                    type="text"
+                    value={discountNewPrice}
+                    onChange={e => setDiscountNewPrice(e.target.value)}
+                    placeholder="Ex: 119,90"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Justificativa do Desconto</label>
+                  <input
+                    type="text"
+                    value={discountReason}
+                    onChange={e => setDiscountReason(e.target.value)}
+                    placeholder="Ex: Parceria anual, cupom promocional"
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+              </div>
+
+              <div style={{display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setDiscountModalOpen(false)}
+                  style={{padding: "8px 14px", borderRadius: "8px"}}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={savingDiscount || !discountNewPrice}
+                  className="op-primary"
+                  onClick={async () => {
+                    setSavingDiscount(true);
+                    try {
+                      const res = await fetch("/api/crm/admin/clients", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          tenantId: financeModalClient.id,
+                          action: "apply_discount",
+                          discountPrice: discountNewPrice,
+                          reason: discountReason
+                        })
+                      });
+                      if (res.ok) {
+                        setNotice(`Desconto aplicado para ${financeModalClient.name}!`);
+                        setDiscountModalOpen(false);
+                        setFinanceModalClient(null);
+                        await fetchClients();
+                      } else {
+                        setError("Falha ao aplicar desconto.");
+                      }
+                    } finally {
+                      setSavingDiscount(false);
+                    }
+                  }}
+                  style={{padding: "8px 16px", borderRadius: "8px", fontWeight: 700}}
+                >
+                  {savingDiscount ? "Salvando..." : "Aplicar Desconto"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL NOVA DESPESA OPERACIONAL */}
+        {expenseModalOpen && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)",
+            display: "grid", placeItems: "center", zIndex: 130, padding: "20px"
+          }}>
+            <div className="op-card" style={{width: "100%", maxWidth: "480px", padding: "26px", borderRadius: "18px"}}>
+              <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px"}}>
+                <h3 style={{margin: 0, fontSize: "16px", fontWeight: 800, color: "#fff"}}>
+                  Cadastrar Despesa Operacional
+                </h3>
+                <button type="button" onClick={() => setExpenseModalOpen(false)} style={{background: "none", border: "none", color: "#9ca3af", cursor: "pointer"}}>
+                  <X size={18}/>
+                </button>
+              </div>
+
+              <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
+                <div>
+                  <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Descrição da Despesa</label>
+                  <input
+                    type="text"
+                    value={newExpDesc}
+                    onChange={e => setNewExpDesc(e.target.value)}
+                    placeholder="Ex: API OpenAI / Anthropic, Servidor VPS, etc."
+                    style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                  />
+                </div>
+
+                <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px"}}>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Categoria</label>
+                    <select
+                      value={newExpCat}
+                      onChange={e => setNewExpCat(e.target.value as OperationalExpense["category"])}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                    >
+                      <option value="ai">Provedores de IA</option>
+                      <option value="servers">Servidores / VPS</option>
+                      <option value="database">Banco de Dados</option>
+                      <option value="whatsapp">Serviços WhatsApp</option>
+                      <option value="apis">APIs Externas</option>
+                      <option value="domains">Domínios</option>
+                      <option value="marketing">Marketing</option>
+                      <option value="taxes">Impostos</option>
+                      <option value="tools">Ferramentas</option>
+                      <option value="other">Outros</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Valor (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newExpAmount}
+                      onChange={e => setNewExpAmount(e.target.value)}
+                      placeholder="Ex: 250.00"
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                    />
+                  </div>
+                </div>
+
+                <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px"}}>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Vencimento</label>
+                    <input
+                      type="date"
+                      value={newExpDueDate}
+                      onChange={e => setNewExpDueDate(e.target.value)}
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                    />
+                  </div>
+                  <div>
+                    <label style={{fontSize: "12px", color: "#9ca3af", display: "block", marginBottom: "4px"}}>Fornecedor (Opcional)</label>
+                    <input
+                      type="text"
+                      value={newExpSupplier}
+                      onChange={e => setNewExpSupplier(e.target.value)}
+                      placeholder="Ex: Hetzner, Vercel"
+                      style={{width: "100%", padding: "10px", borderRadius: "8px", background: "#121222", border: "1px solid #443c5e", color: "#fff"}}
+                    />
+                  </div>
+                </div>
+
+                <div style={{display: "flex", alignItems: "center", gap: "8px", marginTop: "4px"}}>
+                  <input
+                    type="checkbox"
+                    id="exp_paid"
+                    checked={newExpPaid}
+                    onChange={e => setNewExpPaid(e.target.checked)}
+                  />
+                  <label htmlFor="exp_paid" style={{fontSize: "12px", color: "#c4bed6", cursor: "pointer"}}>
+                    Despesa já está paga
+                  </label>
+                </div>
+              </div>
+
+              <div style={{display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px"}}>
+                <button
+                  type="button"
+                  className="op-refresh"
+                  onClick={() => setExpenseModalOpen(false)}
+                  style={{padding: "8px 14px", borderRadius: "8px"}}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={savingExpense || !newExpDesc || !newExpAmount}
+                  className="op-primary"
+                  onClick={async () => {
+                    setSavingExpense(true);
+                    try {
+                      const res = await fetch("/api/crm/admin/finance", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          action: "add_expense",
+                          description: newExpDesc,
+                          category: newExpCat,
+                          amount: Number(newExpAmount),
+                          dueDate: newExpDueDate || new Date().toISOString().slice(0, 10),
+                          status: newExpPaid ? "paid" : "pending",
+                          supplier: newExpSupplier
+                        })
+                      });
+                      if (res.ok) {
+                        setNotice("Despesa cadastrada com sucesso!");
+                        setExpenseModalOpen(false);
+                        setNewExpDesc("");
+                        setNewExpAmount("");
+                        setNewExpSupplier("");
+                        await fetchFinanceSettings();
+                      } else {
+                        setError("Falha ao salvar despesa.");
+                      }
+                    } finally {
+                      setSavingExpense(false);
+                    }
+                  }}
+                  style={{padding: "8px 16px", borderRadius: "8px", fontWeight: 700}}
+                >
+                  {savingExpense ? "Salvando..." : "Salvar Despesa"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {securityModalOpen && (
           <div style={{
             position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",

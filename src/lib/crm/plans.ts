@@ -75,10 +75,10 @@ export type PlanAuditEntry = {
   actor: string;
   planId: string;
   planName: string;
-  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard" | "upgrade_approved" | "upgrade_rejected" | "payment_marked_paid" | "suspension_updated" | "delete";
+  action: "create" | "update" | "duplicate" | "toggle_status" | "apply_bulk" | "draft_save" | "draft_discard" | "upgrade_approved" | "upgrade_rejected" | "payment_marked_paid" | "suspension_updated" | "delete" | "extension_granted" | "discount_applied";
   vigencia: "immediate" | "new_clients" | "next_cycle";
-  previousValues?: Partial<CrmPlan>;
-  newValues?: Partial<CrmPlan>;
+  previousValues?: Record<string, unknown>;
+  newValues?: Record<string, unknown>;
   affectedTenantsCount: number;
   affectedTenants: string[];
   failedTenantsCount?: number;
@@ -602,7 +602,7 @@ export function getRedis(providedRedis?: Redis): Redis {
   return client;
 }
 
-function getSupabaseConfig() {
+export function getSupabaseConfig() {
   const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)?.trim() ?? "";
   return { url, serviceKey };
@@ -661,7 +661,7 @@ export async function enforceTenantOperatorLimit(tenantId: string, limit: number
  * NEVER returns draft versions. Runtime and customer execution must use this exclusively.
  */
 
-async function catalogOwnerId(): Promise<string> {
+export async function catalogOwnerId(): Promise<string> {
   const config = getSupabaseConfig();
   if (!config.url || !config.serviceKey) throw new Error("plan_service_not_configured");
   const tenant = await resolveMasterOwnTenant<{id:string}>(async query => {
@@ -1701,7 +1701,9 @@ export async function getEffectiveTenantPlan(
   parsePlanEffectiveDate(dueDate);
   const paymentStatus = isTrial ? "trial" : (rawTenantPlan.status === "pending" ? "pending" : "paid");
   const autoBlock = rawTenantPlan.autoBlock !== false;
-  const isOverdue = !isTrial && autoBlock && paymentStatus !== "paid" && new Date(dueDate) < now;
+  const graceDaysRaw = Number((rawTenantPlan as { graceDays?: unknown }).graceDays);
+  const graceDays = Number.isFinite(graceDaysRaw) && graceDaysRaw > 0 ? Math.min(60, Math.floor(graceDaysRaw)) : 0;
+  const isOverdue = !isTrial && autoBlock && paymentStatus !== "paid" && new Date(dueDate).getTime() + graceDays * 86400000 < now.getTime();
 
   if (isOverdue) {
     isSuspended = true;
