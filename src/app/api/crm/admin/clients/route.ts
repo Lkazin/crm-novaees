@@ -839,7 +839,22 @@ export async function DELETE(request: NextRequest) {
     if (!serviceKey) return privateJson({ error: "backend_not_configured" }, 503);
 
     const tenantId = request.nextUrl.searchParams.get("tenantId") || "";
-    if (!tenantId) return privateJson({ error: "missing_tenant_id" }, 400);
+    if (!tenantId || !TENANT_UUID.test(tenantId)) return privateJson({ error: "missing_tenant_id" }, 400);
+    const alsoDeleteLogin = request.nextUrl.searchParams.get("deleteLogin") === "true";
+    const svcHeaders = { apikey: serviceKey, Authorization: "Bearer " + serviceKey };
+
+    // Protect the master's own tenant from accidental deletion
+    const rT = await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}&select=id,name`, { headers: svcHeaders, cache: "no-store" });
+    const tRows = rT.ok ? ((await rT.json()) as Array<{ id: string; name: string }>) : [];
+    if (!tRows.length) return privateJson({ error: "tenant_not_found" }, 404);
+    const isMasterOwn = process.env.CRM_MASTER_OWN_TENANT_ID
+      ? tenantId === process.env.CRM_MASTER_OWN_TENANT_ID.trim()
+      : tRows[0].name.trim().toLowerCase() === "novaesweb";
+    if (isMasterOwn) return privateJson({ error: "master_tenant_protected", message: "A loja principal da NovaesWeb não pode ser apagada." }, 403);
+
+    // Remember members so their logins can be removed afterwards (optional)
+    const rM = await fetch(url + `/rest/v1/crm_tenant_memberships?tenant_id=eq.${tenantId}&select=user_id`, { headers: svcHeaders, cache: "no-store" });
+    const memberIds = rM.ok ? ((await rM.json()) as Array<{ user_id: string }>).map(m => m.user_id) : [];
 
     try {
       const rCh = await fetch(url + `/rest/v1/crm_channels?tenant_id=eq.${tenantId}&select=instance_name`, {
@@ -881,13 +896,29 @@ export async function DELETE(request: NextRequest) {
       method: "DELETE",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
     });
-    await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
+    const rDelTenant = await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
       method: "DELETE",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }
     });
+    if (!rDelTenant.ok) {
+      return privateJson({ error: "tenant_delete_failed", message: "Não foi possível apagar a loja no banco de dados." }, 500);
+    }
     await invalidateEffectivePlanCache(tenantId);
 
-    return privateJson({ deleted: true, tenantId });
+    // Optionally delete the owner logins that are no longer linked to any store
+    const deletedUsers: string[] = [];
+    if (alsoDeleteLogin) {
+      for (const uid of Array.from(new Set(memberIds))) {
+        if (!TENANT_UUID.test(uid)) continue;
+        const rLeft = await fetch(url + `/rest/v1/crm_tenant_memberships?user_id=eq.${uid}&select=tenant_id&limit=1`, { headers: svcHeaders, cache: "no-store" });
+        const left = rLeft.ok ? ((await rLeft.json()) as unknown[]) : [{}];
+        if (left.length) continue; // still linked to another store
+        const rDelUser = await fetch(url + `/auth/v1/admin/users/${uid}`, { method: "DELETE", headers: svcHeaders });
+        if (rDelUser.ok) deletedUsers.push(uid);
+      }
+    }
+
+    return privateJson({ deleted: true, tenantId, deletedUsers });
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "delete_failed" }, 503);
   }

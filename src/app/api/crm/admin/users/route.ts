@@ -206,6 +206,45 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * DELETE /api/crm/admin/users?userId=...
+ * Permanently deletes a client login. Refuses if the user still has linked stores.
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await verifyMasterRequest(request);
+    if (!auth.authorized) {
+      return privateJson({ error: "unauthorized" }, 401);
+    }
+
+    const { url, serviceKey } = getAdminConfig();
+    if (!serviceKey) return privateJson({ error: "backend_not_configured" }, 503);
+
+    const userId = request.nextUrl.searchParams.get("userId")?.trim() || "";
+    if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+      return privateJson({ error: "invalid_user_id" }, 400);
+    }
+    const headers = { apikey: serviceKey, Authorization: "Bearer " + serviceKey };
+
+    const rMemb = await fetch(url + `/rest/v1/crm_tenant_memberships?user_id=eq.${userId}&select=tenant_id&limit=1`, { headers, cache: "no-store" });
+    if (!rMemb.ok) return privateJson({ error: "membership_check_failed" }, 500);
+    if (((await rMemb.json()) as unknown[]).length > 0) {
+      return privateJson({
+        error: "user_has_linked_stores",
+        message: "Este cliente ainda possui loja vinculada. Apague a loja primeiro (marcando a opção de apagar o login) e depois o cliente."
+      }, 409);
+    }
+
+    const rDel = await fetch(url + `/auth/v1/admin/users/${userId}`, { method: "DELETE", headers });
+    if (!rDel.ok) {
+      return privateJson({ error: "delete_failed", detail: await rDel.text() }, 500);
+    }
+    return privateJson({ success: true, deleted: true, userId });
+  } catch (err) {
+    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  }
+}
+
+/**
  * PATCH /api/crm/admin/users
  * Updates a client user profile, block status, or password.
  */

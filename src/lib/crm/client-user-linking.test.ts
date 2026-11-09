@@ -47,9 +47,13 @@ function setupUsersFixture() {
     }
 
     if (u.pathname === "/rest/v1/crm_tenant_memberships" && method === "GET") {
-      return Response.json([
-        { tenant_id: TENANT, user_id: USER, role: "admin", is_active: true }
-      ]);
+      const rows = [{ tenant_id: TENANT, user_id: USER, role: "admin", is_active: true }];
+      const filter = u.searchParams.get("user_id");
+      return Response.json(filter ? rows.filter(r => `eq.${r.user_id}` === filter) : rows);
+    }
+
+    if (u.pathname.startsWith("/auth/v1/admin/users/") && method === "DELETE") {
+      return Response.json({});
     }
 
     if (u.pathname === "/rest/v1/crm_tenants" && method === "GET") {
@@ -105,9 +109,22 @@ function setupUsersFixture() {
     })),
     patch: (data: Record<string, unknown>) => fixtureModule.exports.PATCH(new NextRequest("http://fixture.invalid/api/crm/admin/users", {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(data)
-    }))
+    })),
+    del: (userId: string) => fixtureModule.exports.DELETE(new NextRequest(`http://fixture.invalid/api/crm/admin/users?userId=${userId}`, { method: "DELETE" }))
   };
 }
+
+test("DELETE /api/crm/admin/users refuses linked users and deletes unlinked ones", async () => {
+  const fx = setupUsersFixture();
+  const linked = await fx.del(USER);
+  assert.equal(linked.status, 409);
+  assert.equal(fx.calls.some(c => c.method === "DELETE"), false);
+
+  const free = "55555555-5555-4555-8555-555555555555";
+  const ok = await fx.del(free);
+  assert.equal(ok.status, 200);
+  assert.ok(fx.calls.some(c => c.method === "DELETE" && c.path === `/auth/v1/admin/users/${free}`));
+});
 
 test("GET /api/crm/admin/users correctly categorizes linked, blocked, and waiting_store users", async () => {
   const f = setupUsersFixture();

@@ -1605,18 +1605,53 @@ export default function AdminCRM() {
   };
 
   const handleDeleteClient = async (client: Client) => {
-    if (!window.confirm(`Tem certeza que deseja APAGAR permanentemente a loja "${client.name}" e desconectar a instância WhatsApp dela? Esta ação não pode ser desfeita.`)) return;
+    const typed = window.prompt(`ATENÇÃO: apagar PERMANENTEMENTE a loja "${client.name}" (conversas, configurações, agentes e instância WhatsApp). Esta ação não pode ser desfeita.\n\nDigite o nome da loja para confirmar:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== client.name.trim().toLowerCase()) {
+      setError("Nome digitado não confere. Exclusão cancelada.");
+      return;
+    }
+    const deleteLogin = window.confirm(`Apagar também o LOGIN do cliente responsável (se ele não tiver outras lojas)?\n\nOK = apagar loja e login\nCancelar = apagar só a loja (o login continua como "Aguardando Vinculação")`);
 
     try {
-      const res = await fetch(`/api/crm/admin/clients?tenantId=${encodeURIComponent(client.id)}`, {
+      const res = await fetch(`/api/crm/admin/clients?tenantId=${encodeURIComponent(client.id)}&deleteLogin=${deleteLogin}`, {
         method: "DELETE",
         credentials: "same-origin"
       });
-      if (!res.ok) throw new Error();
-      setNotice(`Loja "${client.name}" e sua instância apagadas com sucesso.`);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setError(errJson.message || "Falha ao apagar cliente.");
+        return;
+      }
+      setNotice(`Loja "${client.name}" apagada permanentemente${deleteLogin ? " (login removido quando possível)" : ""}.`);
       await fetchClients();
+      await fetchUsers();
     } catch {
       setError("Falha ao apagar cliente.");
+    }
+  };
+
+  const handleDeleteUser = async (user: ClientUser) => {
+    const typed = window.prompt(`ATENÇÃO: apagar PERMANENTEMENTE o login de "${user.name}" (${user.email}). Esta ação não pode ser desfeita.\n\nDigite o e-mail do cliente para confirmar:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+      setError("E-mail digitado não confere. Exclusão cancelada.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/crm/admin/users?userId=${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setError(errJson.message || "Falha ao apagar o cliente.");
+        return;
+      }
+      setNotice(`Cliente "${user.name}" apagado permanentemente.`);
+      await fetchUsers();
+    } catch {
+      setError("Falha ao apagar o cliente.");
     }
   };
 
@@ -3720,6 +3755,16 @@ export default function AdminCRM() {
                           style={{color: isBlocked ? "#00db8c" : "#f43f5e", borderColor: isBlocked ? "rgba(0,219,140,0.4)" : "rgba(244,63,94,0.4)", padding: "8px 12px", borderRadius: "8px", fontSize: "12px"}}
                         >
                           {isBlocked ? "Reativar" : "Bloquear"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          title="Apagar cliente permanentemente"
+                          onClick={() => handleDeleteUser(user)}
+                          style={{color: "#f43f5e", borderColor: "rgba(244,63,94,0.4)", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px"}}
+                        >
+                          <Trash2 size={14}/> Apagar
                         </button>
                       </div>
                     </div>
