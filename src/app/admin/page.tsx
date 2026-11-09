@@ -4770,6 +4770,155 @@ export default function AdminCRM() {
                     </div>
                   )}
                 </div>
+
+                {/* CENTRAL GERAL DE COBRANÇAS DAS LOJAS */}
+                <div className="op-card" style={{padding: "24px", borderRadius: "16px"}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px"}}>
+                    <div>
+                      <h3 style={{fontSize: "18px", fontWeight: 800, margin: 0, color: "white"}}>Central Geral de Cobranças das Lojas</h3>
+                      <small style={{color: "#9ca3af", fontSize: "12px"}}>Controle consolidado das faturas e mensalidades de todos os lojistas do CRM.</small>
+                    </div>
+                    <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                      <button
+                        type="button"
+                        className="op-refresh"
+                        onClick={() => {
+                          const headers = ["Empresa", "Responsavel", "Plano", "Mensalidade (R$)", "Vencimento", "Situacao", "WhatsApp"];
+                          const rows = clients.filter(c => !c.isMasterOwnTenant).map(c => [
+                            `"${c.name.replace(/"/g, '""')}"`,
+                            `"${(c.businessDetails?.ownerName || c.ownerName || "").replace(/"/g, '""')}"`,
+                            `"${(c.plan.name || "").replace(/"/g, '""')}"`,
+                            `"${c.plan.price || "0,00"}"`,
+                            `"${c.plan.dueDate || ""}"`,
+                            c.plan.status === "paid" ? "Paga / Em Dia" : (c.plan.isOverdue ? "Em Atraso" : "Pendente"),
+                            `"${c.businessDetails?.businessWhatsapp || ""}"`
+                          ]);
+                          const csv = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.join(";"))].join("\r\n");
+                          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                          const link = document.createElement("a");
+                          link.href = URL.createObjectURL(blob);
+                          link.download = `relatorio-cobrancas-${new Date().toISOString().slice(0, 10)}.csv`;
+                          link.click();
+                        }}
+                        style={{padding: "8px 12px", borderRadius: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px"}}
+                      >
+                        <Download size={14}/> Exportar CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{overflowX: "auto"}}>
+                    <table style={{width: "100%", borderCollapse: "collapse", fontSize: "13px", color: "#c4bed6"}}>
+                      <thead>
+                        <tr style={{borderBottom: "1px solid #332b49", textAlign: "left", color: "#9ca3af", fontSize: "11px", textTransform: "uppercase"}}>
+                          <th style={{padding: "10px"}}>Loja / Empresa</th>
+                          <th style={{padding: "10px"}}>Responsável</th>
+                          <th style={{padding: "10px"}}>Plano</th>
+                          <th style={{padding: "10px"}}>Valor</th>
+                          <th style={{padding: "10px"}}>Vencimento</th>
+                          <th style={{padding: "10px"}}>Situação</th>
+                          <th style={{padding: "10px"}}>Ações Rápidas</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clients.filter(c => !c.isMasterOwnTenant).map(c => {
+                          const isPaid = c.plan.status === "paid";
+                          const isOverdue = c.plan.isOverdue;
+                          return (
+                            <tr key={c.id} style={{borderBottom: "1px solid rgba(255,255,255,0.04)"}}>
+                              <td style={{padding: "10px", color: "white", fontWeight: 700}}>
+                                {c.name}
+                                {c.businessDetails?.document && (
+                                  <span style={{display: "block", fontSize: "11px", color: "#9ca3af", fontWeight: 400}}>
+                                    {c.businessDetails.document}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{padding: "10px"}}>
+                                {c.businessDetails?.ownerName || c.ownerName || c.email || "—"}
+                              </td>
+                              <td style={{padding: "10px"}}>
+                                <span style={{color: "#ec4899", fontWeight: 600}}>
+                                  {c.plan.isTrial ? "Teste Grátis" : c.plan.name}
+                                </span>
+                              </td>
+                              <td style={{padding: "10px", color: "#fff", fontWeight: 700}}>
+                                {c.plan.isTrial ? "R$ 0,00" : `R$ ${c.plan.price}`}
+                              </td>
+                              <td style={{padding: "10px"}}>
+                                {c.plan.dueDate ? c.plan.dueDate.split("-").reverse().join("/") : "—"}
+                              </td>
+                              <td style={{padding: "10px"}}>
+                                <span style={{
+                                  padding: "3px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700,
+                                  background: c.plan.isTrial
+                                    ? "rgba(168, 85, 247, 0.15)"
+                                    : isPaid ? "rgba(0,219,140,0.15)" : isOverdue ? "rgba(244,63,94,0.15)" : "rgba(245,158,11,0.15)",
+                                  color: c.plan.isTrial
+                                    ? "#a855f7"
+                                    : isPaid ? "#00db8c" : isOverdue ? "#f43f5e" : "#fcd34d"
+                                }}>
+                                  {c.plan.isTrial ? "Teste" : isPaid ? "Paga" : isOverdue ? "Vencida" : "A Vencer"}
+                                </span>
+                              </td>
+                              <td style={{padding: "10px"}}>
+                                <div style={{display: "flex", gap: "6px"}}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setFinanceModalClient(c)}
+                                    style={{
+                                      padding: "4px 8px", borderRadius: "6px", fontSize: "11px",
+                                      background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                                      color: "#fff", cursor: "pointer"
+                                    }}
+                                  >
+                                    Ficha
+                                  </button>
+
+                                  {!isPaid && !c.plan.isTrial && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await handleSetPaymentStatus(c, "paid");
+                                      }}
+                                      style={{
+                                        padding: "4px 8px", borderRadius: "6px", fontSize: "11px",
+                                        background: "rgba(0,219,140,0.15)", border: "1px solid rgba(0,219,140,0.3)",
+                                        color: "#00db8c", cursor: "pointer", fontWeight: 700
+                                      }}
+                                    >
+                                      Dar Baixa
+                                    </button>
+                                  )}
+
+                                  {!isPaid && !c.plan.isTrial && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const name = c.businessDetails?.ownerName || c.name;
+                                        const phone = (c.businessDetails?.businessWhatsapp || "").replace(/\D/g, "");
+                                        const msg = `Olá, ${name}! Tudo bem?\nSua mensalidade da NovaesWeb CRM AI referente à empresa ${c.name} (R$ ${c.plan.price}) está com vencimento pendente.\nChave PIX: ${pixConfig.pixKey} (${pixConfig.beneficiaryName}).\nQualquer dúvida, estamos à disposição!`;
+                                        if (phone) window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+                                        else alert("WhatsApp comercial não informado para esta empresa.");
+                                      }}
+                                      style={{
+                                        padding: "4px 8px", borderRadius: "6px", fontSize: "11px",
+                                        background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)",
+                                        color: "#22c55e", cursor: "pointer"
+                                      }}
+                                    >
+                                      Cobrar
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </>
             )}
           </section>

@@ -92,6 +92,21 @@ type Data = {
       paymentMethod?: string;
       txId?: string;
     }>;
+    paymentHistory?: Array<{
+      id?: string;
+      billingCycleKey?: string;
+      planName?: string;
+      amount?: string | number;
+      dueDate?: string;
+      paidAt?: string;
+      status?: string;
+    }>;
+    pixConfig?: {
+      keyType: string;
+      pixKey: string;
+      beneficiaryName: string;
+      bankName: string;
+    };
   };
   commercialPlans?: CommercialPlanItem[];
   allowedFeatures?: string[];
@@ -6671,6 +6686,124 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
                 {/* Histórico de Recargas Adicionais */}
                 <RechargeHistoryTable recharges={data?.plan?.rechargesHistory} />
+
+                {/* HISTÓRICO DE FATURAS E MENSALIDADES DA EMPRESA */}
+                <div className="op-card" style={{padding: "24px", borderRadius: "16px"}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px"}}>
+                    <div>
+                      <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                        Faturas & Histórico de Mensalidades
+                      </h3>
+                      <p style={{margin: "4px 0 0", fontSize: "13px", color: "#aba8bf"}}>
+                        Consulte as cobranças do seu plano e realize o pagamento via PIX com segurança.
+                      </p>
+                    </div>
+
+                    {data?.plan?.status !== "paid" && !data?.plan?.isTrial && (
+                      <span style={{
+                        padding: "6px 14px", borderRadius: "999px", fontSize: "12px", fontWeight: 800,
+                        background: "rgba(244, 63, 94, 0.15)", color: "#f43f5e", border: "1px solid rgba(244, 63, 94, 0.3)"
+                      }}>
+                        ⚠️ Mensalidade Pendente (R$ {data?.plan?.price || "—"})
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Card PIX para Pagamento da Mensalidade Atual */}
+                  {data?.plan?.status !== "paid" && !data?.plan?.isTrial && data?.plan?.pixConfig?.pixKey && (
+                    <div style={{
+                      padding: "18px 20px", borderRadius: "14px", marginBottom: "20px",
+                      background: "linear-gradient(135deg, rgba(236,72,153,0.1), rgba(139,92,246,0.1))",
+                      border: "1px solid rgba(236,72,153,0.35)", display: "flex", flexDirection: "column", gap: "12px"
+                    }}>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px"}}>
+                        <div>
+                          <span style={{fontSize: "11px", color: "#ec4899", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px"}}>
+                            Pagamento via PIX Oficial da NovaesWeb
+                          </span>
+                          <div style={{display: "flex", alignItems: "center", gap: "10px", marginTop: "4px"}}>
+                            <strong style={{fontSize: "17px", color: "#fff"}}>{data.plan.pixConfig.pixKey}</strong>
+                            <span style={{fontSize: "11px", background: "rgba(255,255,255,0.1)", padding: "2px 8px", borderRadius: "6px", color: "#d1c8e6", textTransform: "uppercase", fontWeight: 700}}>
+                              {data.plan.pixConfig.keyType}
+                            </span>
+                          </div>
+                          <div style={{fontSize: "12px", color: "#c4bed6", marginTop: "2px"}}>
+                            Favorecido: <strong>{data.plan.pixConfig.beneficiaryName}</strong> {data.plan.pixConfig.bankName ? `(${data.plan.pixConfig.bankName})` : ""}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (data?.plan?.pixConfig?.pixKey) {
+                              navigator.clipboard.writeText(data.plan.pixConfig.pixKey);
+                              alert("Chave PIX copiada para a área de transferência!");
+                            }
+                          }}
+                          className="op-primary"
+                          style={{
+                            padding: "9px 16px", borderRadius: "8px", fontWeight: 700, fontSize: "13px",
+                            display: "flex", alignItems: "center", gap: "6px"
+                          }}
+                        >
+                          <Copy size={14}/> Copiar Chave PIX
+                        </button>
+                      </div>
+
+                      <p style={{margin: 0, fontSize: "12px", color: "#aba8bf"}}>
+                        ℹ️ Após realizar a transferência do valor de <strong>R$ {data.plan.price}</strong>, o recebimento é conferido e a renovação liberada automaticamente.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Tabela de Mensalidades */}
+                  {(data?.plan?.paymentHistory || []).length === 0 ? (
+                    <div style={{padding: "20px", textAlign: "center", color: "#71717a", fontSize: "13px"}}>
+                      {data?.plan?.isTrial
+                        ? "Sua empresa está utilizando o período de Teste Grátis de 7 dias (sem faturas geradas)."
+                        : "Nenhum histórico de mensalidade anterior registrado."}
+                    </div>
+                  ) : (
+                    <div style={{overflowX: "auto"}}>
+                      <table style={{width: "100%", borderCollapse: "collapse", fontSize: "13px", color: "#c4bed6"}}>
+                        <thead>
+                          <tr style={{borderBottom: "1px solid #332b49", textAlign: "left", color: "#9ca3af", fontSize: "11px", textTransform: "uppercase"}}>
+                            <th style={{padding: "10px"}}>Fatura / Ciclo</th>
+                            <th style={{padding: "10px"}}>Plano</th>
+                            <th style={{padding: "10px"}}>Valor</th>
+                            <th style={{padding: "10px"}}>Vencimento</th>
+                            <th style={{padding: "10px"}}>Situação</th>
+                            <th style={{padding: "10px"}}>Data do Pagamento</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(data?.plan?.paymentHistory || []).map((pay: Record<string, unknown>, idx: number) => (
+                            <tr key={idx} style={{borderBottom: "1px solid rgba(255,255,255,0.04)"}}>
+                              <td style={{padding: "10px", color: "white", fontWeight: 600}}>
+                                #{String(pay.id || `fat-${idx + 1}`)}
+                              </td>
+                              <td style={{padding: "10px"}}>{String(pay.planName || data?.plan?.name || "CRM")}</td>
+                              <td style={{padding: "10px", color: "#00db8c", fontWeight: 700}}>R$ {String(pay.amount || "0,00")}</td>
+                              <td style={{padding: "10px"}}>{String(pay.dueDate || "—")}</td>
+                              <td style={{padding: "10px"}}>
+                                <span style={{
+                                  padding: "3px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700,
+                                  background: pay.status === "paid" ? "rgba(0,219,140,0.15)" : "rgba(244,63,94,0.15)",
+                                  color: pay.status === "paid" ? "#00db8c" : "#f43f5e"
+                                }}>
+                                  {pay.status === "paid" ? "Pago" : "Pendente"}
+                                </span>
+                              </td>
+                              <td style={{padding: "10px", color: "#9ca3af"}}>
+                                {pay.paidAt ? new Date(String(pay.paidAt)).toLocaleDateString("pt-BR") : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
 
                 <CommercialPlansComparison
                   plans={data?.commercialPlans ?? []}
