@@ -24,7 +24,9 @@ jobs:
       - name: Install dependencies (clean install)
         run: npm ci --no-audit --no-fund
       - name: Agent unit tests
-        run: npm run test:agent
+        run: npx tsx --conditions=react-server --test src/lib/agent/*.test.ts
+      - name: CRM unit tests
+        run: npx tsx --conditions=react-server --test src/lib/crm/*.test.ts
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Lint
