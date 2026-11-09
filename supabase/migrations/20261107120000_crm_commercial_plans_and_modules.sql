@@ -9,22 +9,22 @@
 --       mesmo antes da aplicação desta migration no Supabase remoto.
 -- ============================================================================
 
--- 1. Suporte explícito de slot_index (1..5) em whatsapp_channels
-ALTER TABLE IF EXISTS public.whatsapp_channels
+-- 1. Suporte explícito de slot_index (1..5) em crm_channels
+ALTER TABLE IF EXISTS public.crm_channels
   ADD COLUMN IF NOT EXISTS slot_index smallint DEFAULT 1 CHECK (slot_index >= 1 AND slot_index <= 5),
   ADD COLUMN IF NOT EXISTS paused_reason text;
 
-CREATE INDEX IF NOT EXISTS idx_whatsapp_channels_tenant_slot
-  ON public.whatsapp_channels (tenant_id, slot_index);
+CREATE INDEX IF NOT EXISTS idx_crm_channels_tenant_slot
+  ON public.crm_channels (tenant_id, slot_index);
 
--- 2. Índices para prioridade e etiquetas em conversations (metadata JSONB)
-CREATE INDEX IF NOT EXISTS idx_conversations_tenant_status_updated
-  ON public.conversations (tenant_id, status, last_message_at DESC);
+-- 2. Índices para prioridade e etiquetas em crm_conversations (metadata JSONB)
+CREATE INDEX IF NOT EXISTS idx_crm_conversations_tenant_status_updated
+  ON public.crm_conversations (tenant_id, status, last_message_at DESC);
 
--- 3. Tabela opcional dedicada para Solicitações de Upgrade (além de tenants.settings->upgradeRequests)
+-- 3. Tabela opcional dedicada para Solicitações de Upgrade (além de crm_tenants.settings->upgradeRequests)
 CREATE TABLE IF NOT EXISTS public.crm_upgrade_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+  tenant_id uuid NOT NULL REFERENCES public.crm_tenants(id) ON DELETE CASCADE,
   current_plan_id text NOT NULL,
   requested_plan_id text NOT NULL,
   reason text,
@@ -37,4 +37,7 @@ CREATE TABLE IF NOT EXISTS public.crm_upgrade_requests (
 
 CREATE INDEX IF NOT EXISTS idx_crm_upgrade_requests_tenant_status
   ON public.crm_upgrade_requests (tenant_id, status, requested_at DESC);
+
+ALTER TABLE IF EXISTS public.crm_upgrade_requests ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public.crm_upgrade_requests TO service_role;
 
