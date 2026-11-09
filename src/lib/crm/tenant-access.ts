@@ -35,7 +35,7 @@ async function serviceRows<T>(path: string): Promise<T> {
 }
 
 /** Master CRM privileges are limited to the single agency tenant, resolved server-side. */
-type AccessChecks = {
+export type AccessChecks = {
   verifyMaster?: typeof verifyMasterRequest;
   verifyOperator?: typeof verifyOperator;
   rows?: typeof supabaseRows;
@@ -69,8 +69,8 @@ export function selectCrmTenant(access: CrmAccess, requested?: string | null): C
   return access.tenants[0];
 }
 
-export async function authorizeCrmTenant(request: NextRequest, tenantId: string, roles?: string[]) {
-  const access = await getCrmAccess(request);
+export async function authorizeCrmTenant(request: NextRequest, tenantId: string, roles?: string[], checks: AccessChecks = {}) {
+  const access = await getCrmAccess(request, checks);
   if (!access || !TENANT_UUID.test(tenantId) || !access.tenants.some(t => t.id === tenantId)) return null;
   if (roles && !access.memberships.some(m => m.tenant_id === tenantId && roles.includes(m.role))) return null;
   return access;
@@ -83,8 +83,8 @@ export async function ownsCrmResource(tenantId: string, table: "crm_conversation
 }
 
 /** Validate channel ownership before any Evolution or cached QR operation. */
-export async function authorizeCrmInstance(request: NextRequest, tenantId: string | undefined, instanceName: string, allowNew = false) {
-  const access = await getCrmAccess(request);
+export async function authorizeCrmInstance(request: NextRequest, tenantId: string | undefined, instanceName: string, allowNew = false, checks: AccessChecks = {}) {
+  const access = await getCrmAccess(request, checks);
   if (!access) return null;
   const tenant = selectCrmTenant(access, tenantId);
   if (!tenant) return null;

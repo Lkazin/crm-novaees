@@ -157,6 +157,8 @@ async function getStoreAiContext(instanceName: string): Promise<{
   channelFound?: boolean;
   tenantId?: string;
   quotaLimit?: number;
+  baseQuotaLimit?: number;
+  rechargeCreditsBalance?: number;
   isTrial?: boolean;
   quotaUsed?: number;
   quotaPeriod?: string;
@@ -281,6 +283,8 @@ async function getStoreAiContext(instanceName: string): Promise<{
     return {
       channelFound: true,
       tenantId,
+      baseQuotaLimit: effectivePlan.quotaLimit,
+      rechargeCreditsBalance: effectivePlan.rechargeCreditsBalance || 0,
       quotaLimit,
       isTrial: effectivePlan.isTrial,
       quotaUsed: effectivePlan.quotaUsed || 0,
@@ -330,21 +334,38 @@ export async function processWebhook(
   if (!matchesAllowedNumber(incoming.number, cfg.allowedNumber)) return { status: "ignored", reason: "number_not_allowed" };
   if (!cfg.sendEnabled) return { status: "disabled", reason: "reply_switch_off" };
   const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
-  const { context = {}, isBlocked, blockedReason, tenantId, quotaLimit, isTrial, quotaUsed = 0, quotaPeriod, allowAdvancedHours = false } = storeCtx;
+  const {
+    context = {},
+    isBlocked,
+    blockedReason,
+    tenantId,
+    baseQuotaLimit,
+    rechargeCreditsBalance = 0,
+    quotaLimit,
+    isTrial,
+    quotaUsed = 0,
+    quotaPeriod,
+    allowAdvancedHours = false
+  } = storeCtx;
   if (isBlocked || !tenantId) return { status: "disabled", reason: blockedReason || "store_context_unavailable" };
   const quotaStore = deps.quota ?? attendanceQuota();
 
   const redis = deps.redis ?? new Redis(cfg.redisUrl, { maxRetriesPerRequest: 1, connectTimeout: 3000, lazyConnect: true });
   const ownsClient = !deps.redis;
   const doneKey = `crm:lab:done:${incoming.instance}:${incoming.id}`;
+  const inflightKey = `crm:lab:inflight:${incoming.instance}:${incoming.id}`;
   const bufferKey = `crm:buf:${incoming.instance}:${incoming.number}`;
   const debounceKey = `crm:dblock:${incoming.instance}:${incoming.number}`;
 
   try {
     if (ownsClient) await redis.connect();
 
-    // 1. Anti-duplication check: if exact message was already processed (never consumes quota twice)
+    // 1. Anti-duplication check: if exact message was already processed or is currently in flight
     if (await redis.exists(doneKey)) return { status: "duplicate" };
+    if (incoming.id) {
+      const isNew = await redis.set(inflightKey, "1", "EX", 60, "NX");
+      if (isNew !== "OK") return { status: "duplicate" };
+    }
 
     // 2. Add message to buffer for this contact
     await redis.rpush(bufferKey, JSON.stringify({ id: incoming.id, text: incoming.text }));
@@ -363,13 +384,14 @@ export async function processWebhook(
       // 5. Collect all buffered messages for this user atomically via Lua script
       let rawList: string[] = [];
       try {
-        if (typeof (redis as any).eval === "function") {
-          const evalResult = await (redis as any).eval(
+        const clientWithEval = redis as unknown as { eval?: (script: string, numKeys: number, ...args: (string | number)[]) => Promise<unknown> };
+        if (typeof clientWithEval.eval === "function") {
+          const evalResult = await clientWithEval.eval(
             "local msgs = redis.call('LRANGE', KEYS[1], 0, -1); redis.call('DEL', KEYS[1]); return msgs;",
             1,
             bufferKey
           );
-          if (Array.isArray(evalResult)) rawList = evalResult;
+          if (Array.isArray(evalResult)) rawList = evalResult as string[];
         } else {
           rawList = await redis.lrange(bufferKey, 0, -1);
           await redis.del(bufferKey);
@@ -392,6 +414,7 @@ export async function processWebhook(
         for (const it of items) {
           if (it.id) {
             await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
+            await redis.del(`crm:lab:inflight:${incoming.instance}:${it.id}`);
           }
         }
       };
@@ -535,6 +558,9 @@ export async function processWebhook(
         try {
           const quotaKey = committed.period === "trial" ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${committed.period}`;
           await redis.set(quotaKey, String(committed.used));
+          if (baseQuotaLimit && committed.used > baseQuotaLimit && rechargeCreditsBalance > 0) {
+            await redis.incr(`crm:recharges:consumed:${tenantId}`);
+          }
           if (!await redis.exists(sessionKey)) {
             await redis.set(sessionKey, "1", "EX", 86400);
             await redis.set(sessionMsgsKey, "1", "EX", 86400);
@@ -550,6 +576,32 @@ export async function processWebhook(
             : undefined;
           await persistOutboundInSupabase(incoming.instance, incoming.number, answer, externalId);
         } catch {}
+
+        // 12. Queue drain: check if consecutive messages arrived while AI was generating/sending
+        try {
+          const remainingCount = await redis.llen(bufferKey);
+          if (remainingCount > 0) {
+            const extraRaw = await redis.lrange(bufferKey, 0, -1);
+            await redis.del(bufferKey);
+            const extraItems: Array<{ id: string; text: string }> = [];
+            for (const it of extraRaw) {
+              try { extraItems.push(JSON.parse(it)); } catch { extraItems.push({ id: "", text: it }); }
+            }
+            const extraText = extraItems.map(it => it.text.trim()).filter(Boolean).join("\n");
+            if (extraText) {
+              for (const it of extraItems) {
+                if (it.id) {
+                  await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
+                  await redis.del(`crm:lab:inflight:${incoming.instance}:${it.id}`);
+                }
+              }
+              const followUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context);
+              await (deps.send ?? sendText)(incoming.number, followUp, cfg, incoming.instance);
+              await persistOutboundInSupabase(incoming.instance, incoming.number, followUp);
+            }
+          }
+        } catch {}
+
         return { status: "sent" };
       } finally {
         // Unknown provider outcome stays reserved for reconciliation. Confirmed rejection or
@@ -558,18 +610,14 @@ export async function processWebhook(
       }
     } finally {
       try {
-        const remaining = await redis.llen(bufferKey);
-        if (remaining > 0) {
-          await redis.expire(debounceKey, 2);
-        } else {
-          await redis.del(debounceKey);
-        }
-      } catch {
         await redis.del(debounceKey);
-      }
+      } catch {}
     }
   } catch (err) {
     console.error("[processor-error]", err);
+    if (incoming.id) {
+      await redis.del(inflightKey).catch(() => {});
+    }
     throw err;
   } finally {
     if (ownsClient) redis.disconnect();

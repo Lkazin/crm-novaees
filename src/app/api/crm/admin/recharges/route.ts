@@ -5,6 +5,7 @@ import {
   getMasterPixConfig,
   saveMasterPixConfig,
   invalidateEffectivePlanCache,
+  getRedis,
   type MessageRechargeItem,
   type MasterPixConfig
 } from "@/lib/crm/plans";
@@ -166,35 +167,67 @@ export async function POST(request: NextRequest) {
         return privateJson({ error: "missing_parameters", message: "Identificador da loja e da recarga são obrigatórios." }, 400);
       }
 
-      const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-        cache: "no-store"
-      });
-      if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
-      const rows = (await rGet.json()) as Array<{ business_description: string }>;
-      const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
-      const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+      const redis = getRedis();
+      let redisConnected = false;
+      let lockAcquired = false;
+      const lockKey = `crm:lock:recharge_mutation:${tenantId}`;
 
-      const target = recharges.find(r => r.id === rechargeId);
-      if (!target) {
-        return privateJson({ error: "recharge_not_found", message: "Solicitação de recarga não encontrada." }, 404);
+      try {
+        if (redis.status !== "ready" && redis.status !== "connecting") {
+          await redis.connect();
+          redisConnected = true;
+        }
+        if (redis.status === "ready" || redis.status === "connecting") {
+          const acquired = await redis.set(lockKey, "1", "EX", 15, "NX");
+          if (!acquired) {
+            return privateJson({
+              error: "concurrent_modification",
+              message: "Operação concorrente em andamento para esta loja. Aguarde alguns instantes."
+            }, 409);
+          }
+          lockAcquired = true;
+        }
+
+        const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
+          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+          cache: "no-store"
+        });
+        if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
+        const rows = (await rGet.json()) as Array<{ business_description: string }>;
+        const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
+        const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+
+        const target = recharges.find(r => r.id === rechargeId);
+        if (!target) {
+          return privateJson({ error: "recharge_not_found", message: "Solicitação de recarga não encontrada." }, 404);
+        }
+        if (target.status === "paid") {
+          return privateJson({ error: "already_approved", message: "Esta recarga já foi aprovada anteriormente." }, 409);
+        }
+        if (target.status === "rejected") {
+          return privateJson({ error: "already_rejected", message: "Esta recarga já foi rejeitada anteriormente e não pode ser re-aprovada." }, 409);
+        }
+
+        target.status = "paid";
+        target.approvedAt = new Date().toISOString();
+        target.approvedBy = auth.actor || "Master";
+
+        await patchCrmConfig(tenantId, { recharges });
+        await invalidateEffectivePlanCache(tenantId);
+
+        return privateJson({
+          ok: true,
+          recharge: target,
+          message: `Recarga de ${target.messagesAdded} mensagens aprovada com sucesso! Créditos liberados para o lojista.`
+        });
+      } finally {
+        if (lockAcquired) {
+          try { await redis.del(lockKey); } catch {}
+        }
+        if (redisConnected) {
+          try { redis.disconnect(); } catch {}
+        }
       }
-      if (target.status === "paid") {
-        return privateJson({ error: "already_approved", message: "Esta recarga já foi aprovada anteriormente." }, 409);
-      }
-
-      target.status = "paid";
-      target.approvedAt = new Date().toISOString();
-      target.approvedBy = auth.actor || "Master";
-
-      await patchCrmConfig(tenantId, { recharges });
-      await invalidateEffectivePlanCache(tenantId);
-
-      return privateJson({
-        ok: true,
-        recharge: target,
-        message: `Recarga de ${target.messagesAdded} mensagens aprovada com sucesso! Créditos liberados para o lojista.`
-      });
     }
 
     // ACTION 3: REJECT RECHARGE
@@ -207,33 +240,68 @@ export async function POST(request: NextRequest) {
         return privateJson({ error: "missing_parameters", message: "Identificador da loja e da recarga são obrigatórios." }, 400);
       }
 
-      const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
-        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-        cache: "no-store"
-      });
-      if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
-      const rows = (await rGet.json()) as Array<{ business_description: string }>;
-      const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
-      const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+      const redis = getRedis();
+      let redisConnected = false;
+      let lockAcquired = false;
+      const lockKey = `crm:lock:recharge_mutation:${tenantId}`;
 
-      const target = recharges.find(r => r.id === rechargeId);
-      if (!target) {
-        return privateJson({ error: "recharge_not_found", message: "Solicitação de recarga não encontrada." }, 404);
+      try {
+        if (redis.status !== "ready" && redis.status !== "connecting") {
+          await redis.connect();
+          redisConnected = true;
+        }
+        if (redis.status === "ready" || redis.status === "connecting") {
+          const acquired = await redis.set(lockKey, "1", "EX", 15, "NX");
+          if (!acquired) {
+            return privateJson({
+              error: "concurrent_modification",
+              message: "Operação concorrente em andamento para esta loja. Aguarde alguns instantes."
+            }, 409);
+          }
+          lockAcquired = true;
+        }
+
+        const rGet = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=business_description&limit=1`, {
+          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+          cache: "no-store"
+        });
+        if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
+        const rows = (await rGet.json()) as Array<{ business_description: string }>;
+        const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
+        const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
+
+        const target = recharges.find(r => r.id === rechargeId);
+        if (!target) {
+          return privateJson({ error: "recharge_not_found", message: "Solicitação de recarga não encontrada." }, 404);
+        }
+        if (target.status === "paid") {
+          return privateJson({ error: "already_approved", message: "Esta recarga já foi aprovada anteriormente e não pode ser rejeitada." }, 409);
+        }
+        if (target.status === "rejected") {
+          return privateJson({ error: "already_rejected", message: "Esta recarga já foi rejeitada anteriormente." }, 409);
+        }
+
+        target.status = "rejected";
+        target.rejectionReason = reason;
+        target.approvedAt = undefined;
+        target.approvedBy = auth.actor || "Master";
+
+        await patchCrmConfig(tenantId, { recharges });
+        await invalidateEffectivePlanCache(tenantId);
+
+        return privateJson({
+          ok: true,
+          recharge: target,
+          message: "Solicitação de recarga recusada."
+        });
+      } finally {
+        if (lockAcquired) {
+          try { await redis.del(lockKey); } catch {}
+        }
+        if (redisConnected) {
+          try { redis.disconnect(); } catch {}
+        }
       }
-
-      target.status = "rejected";
-      target.rejectionReason = reason;
-      target.approvedAt = undefined;
-      target.approvedBy = auth.actor || "Master";
-
-      await patchCrmConfig(tenantId, { recharges });
-      await invalidateEffectivePlanCache(tenantId);
-
-      return privateJson({
-        ok: true,
-        recharge: target,
-        message: "Solicitação de recarga recusada."
-      });
     }
 
     return privateJson({ error: "unknown_action", message: "Ação não reconhecida." }, 400);

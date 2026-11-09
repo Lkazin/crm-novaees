@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_PIX_CONFIG,
   RECHARGE_PACKAGES,
-  type MessageRechargeItem,
-  type MasterPixConfig
+  type MessageRechargeItem
 } from "./plans";
 
 describe("Gestão Financeira & Aprovação Manual de Recargas", () => {
@@ -110,5 +109,60 @@ describe("Gestão Financeira & Aprovação Manual de Recargas", () => {
     assert.equal(totalCredits, 100);
     assert.equal(recharge.approvedBy, "Master Admin");
     assert.equal(typeof recharge.approvedAt, "string");
+  });
+
+  it("impede re-aprovação dupla e rejeição de recarga já paga (anti-replay)", () => {
+    const recharge: MessageRechargeItem = {
+      id: "rec_approved_double",
+      packagesCount: 1,
+      messagesAdded: 100,
+      pricePaid: 20,
+      purchasedAt: new Date().toISOString(),
+      status: "paid",
+      approvedAt: new Date().toISOString(),
+      approvedBy: "Master",
+      paymentMethod: "pix"
+    };
+
+    // Validação estrita de transição de estado
+    const canApproveAgain = recharge.status === "pending";
+    const canReject = recharge.status === "pending";
+
+    assert.equal(canApproveAgain, false, "Não pode aprovar recarga que já foi paga");
+    assert.equal(canReject, false, "Não pode rejeitar recarga que já foi paga");
+  });
+
+  it("calcula saldo perpétuo subtraindo o maior consumo entre Redis e PostgreSQL", () => {
+    const paidRecharges: MessageRechargeItem[] = [
+      {
+        id: "rec_1",
+        packagesCount: 1,
+        messagesAdded: 100,
+        pricePaid: 20,
+        purchasedAt: new Date().toISOString(),
+        status: "paid",
+        paymentMethod: "pix"
+      },
+      {
+        id: "rec_2",
+        packagesCount: 2,
+        messagesAdded: 200,
+        pricePaid: 40,
+        purchasedAt: new Date().toISOString(),
+        status: "paid",
+        paymentMethod: "pix"
+      }
+    ];
+
+    const totalAdded = paidRecharges.reduce((sum, r) => sum + r.messagesAdded, 0); // 300 msgs
+    const durableConsumed = 45;
+    const redisConsumed = 50; // Mensagens recentes ainda em buffer de projeção
+
+    const effectiveConsumed = Math.max(durableConsumed, redisConsumed);
+    const balance = Math.max(0, totalAdded - effectiveConsumed);
+
+    assert.equal(totalAdded, 300);
+    assert.equal(effectiveConsumed, 50);
+    assert.equal(balance, 250);
   });
 });

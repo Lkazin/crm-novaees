@@ -209,37 +209,59 @@ export async function POST(request: NextRequest) {
 
       return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "ai" });
     } else {
-      const r = access.isMaster ? await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversation}&tenant_id=eq.${tenant}`, {
-        method: "PATCH", cache: "no-store", signal: AbortSignal.timeout(9000),
-        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "human", status: "open", assigned_to: null })
-      }) : await fetch(url + "/rest/v1/rpc/crm_operator_claim_conversation", {
-        method: "POST", cache: "no-store", signal: AbortSignal.timeout(9000),
-        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ p_tenant: tenant, p_conversation: conversation, p_actor: operator.id })
-      });
-      // Always ensure conversation status is "open", mode is "human", and assigned_to is operator.id
-      await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
-        method: "PATCH",
-        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "human", status: "open", assigned_to: operator.id })
-      });
-      if (!r.ok) {
-        await fetch(
-          `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
-          {
-            method: "PATCH",
-            headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status: "accepted",
-              accepted_by: operator.id,
-              accepted_at: new Date().toISOString()
-            })
-          }
-        ).catch(() => {});
+      const validOperatorId = operator.id && UUID.test(operator.id) ? operator.id : null;
+
+      // 1. Direct resilient table update: switch conversation mode to human immediately
+      const patchData: Record<string, unknown> = {
+        mode: "human",
+        status: "open",
+        updated_at: new Date().toISOString()
+      };
+      if (validOperatorId) {
+        patchData.assigned_to = validOperatorId;
       }
 
-      // Check if there was an active escalation detected
+      await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversation}&tenant_id=eq.${tenant}`, {
+        method: "PATCH",
+        cache: "no-store",
+        signal: AbortSignal.timeout(6000),
+        headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+        body: JSON.stringify(patchData)
+      }).catch(err => {
+        console.warn("[handoff-patch-conv-warn]", err);
+      });
+
+      // 2. Try atomic RPC claim as audit enhancement without failing if unavailable
+      if (!access.isMaster && validOperatorId) {
+        await fetch(url + "/rest/v1/rpc/crm_operator_claim_conversation", {
+          method: "POST",
+          cache: "no-store",
+          signal: AbortSignal.timeout(4000),
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_tenant: tenant, p_conversation: conversation, p_actor: validOperatorId })
+        }).catch(() => {});
+      }
+
+      // 3. Update pending handoffs to accepted
+      const handoffUpdate: Record<string, unknown> = {
+        status: "accepted",
+        accepted_at: new Date().toISOString()
+      };
+      if (validOperatorId) {
+        handoffUpdate.accepted_by = validOperatorId;
+      }
+      await fetch(
+        `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
+        {
+          method: "PATCH",
+          cache: "no-store",
+          signal: AbortSignal.timeout(4000),
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify(handoffUpdate)
+        }
+      ).catch(() => {});
+
+      // 4. Check if there was an active escalation detected
       let escalationHeader = "";
       if (redisUrl) {
         try {
@@ -255,14 +277,14 @@ export async function POST(request: NextRequest) {
         } catch {}
       }
 
-      // Generate 3-line structured handoff summary only if allowed by plan
+      // 5. Generate 3-line structured handoff summary only if allowed by plan
       let summary = "";
       try {
         const effectivePlan = await getEffectiveTenantPlan(tenant);
         if (crmFeatureAllowed(effectivePlan, "handoff_summary")) {
           const rMsgs = await fetch(
             url + `/rest/v1/crm_messages?conversation_id=eq.${conversation}&tenant_id=eq.${tenant}&select=direction,body,sender_type&order=created_at.desc&limit=8`,
-            { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store" }
+            { headers: { apikey: secret, Authorization: "Bearer " + secret }, cache: "no-store", signal: AbortSignal.timeout(3000) }
           );
           if (rMsgs.ok) {
             const msgs = (await rMsgs.json()) as Array<{ direction: string; body: string; sender_type: string }>;
@@ -279,10 +301,14 @@ export async function POST(request: NextRequest) {
         claimed: true,
         conversationId: conversation,
         mode: "human",
-        summary
+        summary: summary || `${escalationHeader}👤 Atendimento assumido pelo operador humano. A IA pausou as respostas automáticas.`
       });
     }
-  } catch {
-    return privateJson({ error: "handoff_unavailable" }, 503);
+  } catch (err) {
+    console.error("[handoff-error]", err);
+    return privateJson({
+      error: "handoff_unavailable",
+      message: err instanceof Error ? err.message : "Não foi possível transferir o atendimento no momento."
+    }, 503);
   }
 }

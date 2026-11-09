@@ -20,19 +20,19 @@ Este documento mapeia **exatamente onde está cada arquivo, regra de negócio, t
 
 ---
 
-## Master unificado (atualização de 07/11/2026)
+## Master unificado (atualização de 07/11/2026 e 08/11/2026)
 
-O Master usa uma única estrutura e menu em `/admin`: Clientes, Planos, Faturamento, Provedores de IA e CRM NovaesWeb. A seção selecionada fica em `?section=clients|plans|kpis|providers|crm`, com suporte a recarregar e voltar no navegador.
+O Master usa uma única estrutura e menu em `/admin`: Clientes, Planos, Central de Recargas & PIX, Provedores de IA, Radar WhatsApp, Mensagem Geral e CRM NovaesWeb. A seção selecionada fica em `?section=clients|plans|recharges|providers|radar|broadcast|crm`, com suporte a recarregar e voltar no navegador.
 
 - `src/components/crm/ProvidersWorkspace.tsx`: conteúdo de provedores, incorporado ao Master.
 - `src/components/crm/ClientWorkspace.tsx`: CRM reutilizado no painel cliente e no Master. No modo `embedded`, usa navegação operacional local e não cria outra sidebar, marca, seletor de empresa ou saída.
 - `src/components/crm/KnowledgeWorkspace.tsx`: editor de artigos reutilizado na aba Base de conhecimento do CRM integrado, com empresa fixa e sem sair do Master. A entrada independente dos clientes permanece em `src/app/cliente/knowledge/page.tsx`.
 - `src/app/cliente/page.tsx`: entrada do cliente; o link antigo `?tenant=novaesweb` redireciona para `/admin?section=crm`.
 - `src/app/admin/ai-providers/page.tsx`: redireciona o link antigo para `/admin?section=providers`.
-- `src/lib/crm/tenant-access.ts`: autorização das operações CRM. O Master resolve somente sua própria empresa no servidor; nenhuma chave privilegiada é enviada ao navegador. A identificação usa `CRM_MASTER_OWN_TENANT_ID` quando configurado ou o nome exato NovaesWeb (sem distinção de maiúsculas), recusando ausência ou ambiguidade. Operadores continuam limitados aos seus vínculos.
+- `src/lib/crm/master-auth.ts`: autenticação Master com proteção de rate limit em Redis (5 tentativas / 15 min), envio de código OTP de 6 dígitos via WhatsApp em caso de bloqueio, redefinição dinâmica de senha em `crm:master:password` e revogação atômica de tokens em blacklist no Redis (`revokeMasterToken`).
+- `src/lib/crm/tenant-access.ts`: autorização das operações CRM. O Master resolve somente sua própria empresa no servidor; nenhuma chave privilegiada é enviada ao navegador. Operadores continuam estritamente limitados aos seus vínculos em `crm_tenant_memberships`.
 - O CRM usa o UUID `selectedTenant` retornado pela API; um tenant solicitado inválido não seleciona outra empresa por padrão.
-- `tests/unified-master.spec.ts`: navegação e links antigos com APIs simuladas; não envia WhatsApp nem altera dados reais.
-- `src/lib/crm/tenant-access.test.ts`: verificações de autorização com respostas simuladas. Estes testes não comprovam RLS entre usuários reais.
+- `src/lib/crm/tenant-isolation.test.ts`: suíte de testes de isolamento multi-tenant garantindo que a Empresa A não lê, não envia mensagens e não acessa canais ou recursos da Empresa B.
 
 ## 2. Mapa Rápido: "Onde Mexer Quando Eu Quiser Alterar..."
 
@@ -218,29 +218,51 @@ O Master usa uma única estrutura e menu em `/admin`: Clientes, Planos, Faturame
 - `crm_tenant_members`: Vínculo entre usuários (`auth.users`) e empresas (`tenant_id`, `role`).
 
 ### 4.2. Chaves Principais no Redis
-- `crm:master:plans`: Catálogo publicado de planos Master (`CATALOG_SCHEMA_VERSION = 2`).
-- `crm:master:plans:draft:${planId}`: Rascunhos de planos ainda não publicados.
-- `crm:master:plans:audit`: Histórico de auditoria comercial do Master.
+- `crm:master:plans`: Catálogo publicado de planos Master (`CATALOG_SCHEMA_VERSION = 3`).
+- `crm:master:plans:drafts`: Hash com rascunhos de planos comerciais em edição.
+- `crm:master:plan_history`: Histórico de auditoria de alterações de planos (últimas 100 alterações).
+- `crm:master:pix_config`: Configuração oficial da chave PIX Master (chave, tipo, beneficiário, banco, instruções).
+- `crm:ratelimit:master_login:${ip}`: Contador de tentativas de login Master (máximo 5 em 15 minutos).
+- `crm:master_active_otp:${ip}`: Código OTP de recuperação de 6 dígitos gerado ao bloquear o login Master (TTL 15 min).
+- `crm:master:password`: Senha Master dinâmica atualizada após troca segura via OTP.
+- `crm:blacklist:master_token:${jti}`: Blacklist de tokens Master revogados no logout (TTL 24h).
+- `crm:lock:recharge_mutation:${tenantId}`: Lock distribuído anti-concorrência para aprovação/rejeição de recargas PIX (TTL 15s, NX).
+- `crm:recharges:consumed:${tenantId}`: Contador atômico de créditos de recarga consumidos quando a franquia base é excedida.
+- `crm:lab:inflight:${instance}:${id}`: Reserva antecipada anti-duplicação de webhooks concorrentes da IA (TTL 60s, NX).
+- `crm:buf:${instance}:${number}`: Fila de buffer com drenagem secundária pós-geração para mensagens consecutivas do cliente.
 - `crm:tenant:effective_plan:${tenantId}`: Cache de 60s do plano efetivo da empresa (invalidado automaticamente a cada mudança).
-- `quota_window:v2:${tenantId}:${phone}`: Janela ativa de 24h de atendimento com IA daquele cliente (TTL de 86.400s).
-- `quota_used:v2:${tenantId}:${YYYY_MM}`: Contador mensal de atendimentos consumidos pela IA no fuso `America/Sao_Paulo`.
-- `ai_loop_count:${tenantId}:${phone}`: Contador de respostas da IA na janela ativa (limite de segurança = 25).
+- `crm:quota:${tenantId}:${monthKey}`: Contador mensal de franquia de mensagens IA no fuso `America/Sao_Paulo`.
+- `crm:quota:trial:${tenantId}`: Contador total de franquia do Teste Grátis (50 mensagens).
 - `crm:whatsapp:connect_lock:${tenantId}:${slot}`: Lock de 15s contra tentativas simultâneas de geração de QR Code.
 
 ---
 
-## 5. Comandos de Validação e Testes (Obrigatórios para o Codex)
+## 5. Governança Oficial das Funcionalidades (Os 4 Estados)
 
-Sempre que o Codex fizer qualquer alteração no projeto, ele deve rodar estes 3 comandos na pasta `C:\Users\camil\novaesweb-crm-ai`:
+Toda funcionalidade no sistema é avaliada pela função `buildFeatureGovernanceMap()` e segue estritamente um dos 4 estados oficiais:
+
+1. **`allowed` (Liberado)**: O plano da empresa inclui o recurso ou a empresa está no Teste Grátis (onde todos os recursos técnicos são liberados). O botão e a tela funcionam normalmente.
+2. **`locked_by_plan` (Bloqueado por Plano)**: O recurso pertence a um plano superior (ex: CRM Business ou CRM Premium). O frontend exibe o badge de bloqueio com tooltip explicativo e abre o modal de solicitação de upgrade. O backend bloqueia chamadas diretas via `requireTenantFeature()`.
+3. **`maintenance` (Manutenção Técnica)**: O recurso foi temporariamente colocado em manutenção pelo Master. Fica visualmente indicado e inativo até ser reativado.
+4. **`suspended` (Suspensão Administrativa)**: A empresa está bloqueada por inadimplência ou decisão administrativa do Master. Exibe o motivo público cadastrado pelo Master e preserva integralmente os dados.
+
+---
+
+## 6. Comandos de Validação e Testes (Obrigatórios para o Codex)
+
+Sempre que o Codex fizer qualquer alteração no projeto, ele deve rodar estes comandos na pasta `C:\Users\camil\novaesweb-crm-ai`:
 
 ```powershell
-# 1. Validar tipagem TypeScript em todo o projeto (deve retornar 0 erros)
+# 1. Validar linter ESLint (deve retornar 0 erros)
+npm.cmd run lint
+
+# 2. Rodar a suíte completa de 137 testes automatizados (todas as 7 suítes)
+npm.cmd run test:agent
+
+# 3. Validar tipagem TypeScript
 npx.cmd tsc --noEmit
 
-# 2. Rodar as 3 suítes de testes automatizados (processador/franquia, planos/5 slots e horários/QR/handoff)
-npx.cmd tsx --conditions react-server --test src/lib/agent/processor.test.ts src/lib/crm/plans.test.ts src/lib/crm/live-chat-hours.test.ts
-
-# 3. Validar o build de produção do Next.js
+# 4. Validar o build de produção do Next.js
 npm.cmd run build
 ```
 

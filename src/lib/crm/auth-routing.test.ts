@@ -20,9 +20,13 @@ function fixture() {
     "@/lib/crm/plans": { getRedis: () => redis },
     "@/lib/crm/master-auth": {
       MASTER_COOKIE_NAME: "nw_master_session", MASTER_SESSION_TTL_SEC: 43200, MASTER_REMEMBER_TTL_SEC: 2592000,
-      getMasterPassword: () => "fixture-master-password", getLegacyAdminToken: () => "fixture-admin-token",
+      getMasterPassword: () => "fixture-master-password",
+      getDynamicMasterPassword: async () => "fixture-master-password",
+      getLegacyAdminToken: () => "fixture-admin-token",
       timingSafeMatch: (a: string, b: string) => a === b, signMasterToken: () => "fixture-signed-session",
       verifyMasterRequest: async () => ({ authorized: state.master, actor: "fixture" }),
+      revokeMasterToken: async () => {},
+      dispatchMasterRecoveryOtp: async () => "123456",
     },
     "@/lib/crm/supabase-server": {
       isAllowedOrigin: () => true, privateJson: (value: unknown, status = 200) => Response.json(value, {status}),
@@ -81,7 +85,7 @@ test("Login refuses inactive memberships, unknown scope and repeated invalid Mas
   f.state.member = false;
   assert.equal((await f.post("fixture-client-password", "client", "fixture@example.invalid")).status, 403);
   assert.equal((await f.post("fixture-master-password", "unknown")).status, 400);
-  for (let i = 0; i < 8; i++) assert.equal((await f.post("incorrect", "master")).status, 401);
+  for (let i = 0; i < 5; i++) assert.equal((await f.post("incorrect", "master")).status, 401);
   assert.equal((await f.post("incorrect", "master")).status, 429);
 });
 

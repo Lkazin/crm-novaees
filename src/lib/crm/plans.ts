@@ -1557,6 +1557,7 @@ export async function getEffectiveTenantPlan(
   const durableTrialUsed = Number(parsedRoot?.usageCounters?.trialUsed ?? rawTenantPlan?.trialQuotaUsed ?? 0) || 0;
   const durableMonthUsed = Number(parsedRoot?.usageCounters?.monthly?.[monthKey] ?? rawTenantPlan?.monthlyQuotaUsed?.[monthKey] ?? 0) || 0;
 
+  let redisRechargesConsumed = 0;
   try {
     const rConn = getRedis(providedRedis);
     let owns = false;
@@ -1570,6 +1571,10 @@ export async function getEffectiveTenantPlan(
     } else {
       const u = await rConn.get(`crm:quota:${tenantId}:${monthKey}`);
       quotaUsed = Math.max(parseInt(u || "0", 10), durableMonthUsed, durableAttendanceUsed);
+    }
+    const rConsumed = await rConn.get(`crm:recharges:consumed:${tenantId}`);
+    if (rConsumed) {
+      redisRechargesConsumed = Math.max(0, parseInt(rConsumed, 10) || 0);
     }
     if (owns && !providedRedis) rConn.disconnect();
   } catch {
@@ -1721,7 +1726,8 @@ export async function getEffectiveTenantPlan(
   const rawRecharges: MessageRechargeItem[] = Array.isArray(parsedRoot.recharges) ? (parsedRoot.recharges as unknown as MessageRechargeItem[]) : [];
   const paidRecharges = rawRecharges.filter(r => r.status === "paid");
   const totalRechargeCreditsAdded = paidRecharges.reduce((sum, r) => sum + (Number(r.messagesAdded) || 0), 0);
-  const rechargesConsumed = Number((parsedRoot.usageCounters as Record<string, unknown> | undefined)?.rechargesConsumed) || 0;
+  const durableRechargesConsumed = Number((parsedRoot.usageCounters as Record<string, unknown> | undefined)?.rechargesConsumed) || 0;
+  const rechargesConsumed = Math.max(durableRechargesConsumed, redisRechargesConsumed);
   const rechargeCreditsBalance = Math.max(0, totalRechargeCreditsAdded - rechargesConsumed);
 
   const effective: EffectiveTenantPlan = {

@@ -8,7 +8,10 @@ import {
   timingSafeMatch,
   verifyMasterRequest,
   getMasterPassword,
-  getLegacyAdminToken
+  getDynamicMasterPassword,
+  getLegacyAdminToken,
+  revokeMasterToken,
+  dispatchMasterRecoveryOtp
 } from "@/lib/crm/master-auth";
 import { getRedis } from "@/lib/crm/plans";
 
@@ -129,8 +132,17 @@ export async function POST(request: NextRequest) {
       request.headers.get("x-real-ip") ||
       "local_client";
 
+    const body = await request.json().catch(() => ({}));
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password.trim() : "";
+    const rememberMe = Boolean(body.rememberMe);
+    const scope = typeof body.scope === "string" ? body.scope.trim().toLowerCase() : "client";
+    const isMasterScope = scope === "master";
+
     const redis = getRedis();
-    const rateLimitKey = `crm:ratelimit:login:${ip}`;
+    const rateLimitKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
+    const maxAttempts = isMasterScope ? 5 : 8;
+
     let attempts = 0;
     try {
       if (redis.status === "ready") {
@@ -139,36 +151,37 @@ export async function POST(request: NextRequest) {
       }
     } catch {}
 
-    if (attempts >= 8) {
+    if (attempts >= maxAttempts) {
+      if (isMasterScope) {
+        try {
+          if (redis.status === "ready") {
+            const activeOtp = await redis.get(`crm:master_active_otp:${ip}`);
+            if (!activeOtp) {
+              await dispatchMasterRecoveryOtp(ip);
+            }
+          }
+        } catch {}
+      }
+
       return privateJson({
         error: "too_many_attempts",
-        message: "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
+        message: isMasterScope
+          ? "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança para seu WhatsApp oficial."
+          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção.",
+        canRecoverViaWhatsapp: isMasterScope
       }, 429);
     }
-
-    const body = await request.json().catch(() => ({}));
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password.trim() : "";
-    const rememberMe = Boolean(body.rememberMe);
-    const scope = typeof body.scope === "string" ? body.scope.trim().toLowerCase() : "client";
 
     if (!password) {
       return privateJson({ error: "missing_credentials", message: "Informe a senha para continuar." }, 400);
     }
 
-    const masterPassword = getMasterPassword();
+    const dynamicMasterPassword = await getDynamicMasterPassword();
+    const masterPassword = dynamicMasterPassword || getMasterPassword();
     const adminToken = getLegacyAdminToken();
 
-    // Check with trimming, dot tolerance, and case-insensitivity
-    const isMasterPasswordMatch = Boolean(
-      masterPassword && (
-        timingSafeMatch(password, masterPassword) ||
-        (masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword.slice(0, -1))) ||
-        (!masterPassword.endsWith(".") && timingSafeMatch(password, masterPassword + ".")) ||
-        timingSafeMatch(password.toLowerCase(), masterPassword.toLowerCase()) ||
-        (masterPassword.endsWith(".") && timingSafeMatch(password.toLowerCase(), masterPassword.slice(0, -1).toLowerCase()))
-      )
-    );
+    // Strict timing-safe matching for Master secret (prevents weakening entropy)
+    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(password, masterPassword));
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(password, adminToken));
     if (scope !== "master" && scope !== "client") return privateJson({ error: "invalid_scope" }, 400);
 
@@ -335,13 +348,20 @@ export async function POST(request: NextRequest) {
 
     // Credential check failed
     try {
-      await redis.incr(rateLimitKey);
-      await redis.expire(rateLimitKey, 15 * 60);
+      if (redis.status === "ready") {
+        const newAttempts = await redis.incr(rateLimitKey);
+        await redis.expire(rateLimitKey, 15 * 60);
+        if (isMasterScope && newAttempts >= 5) {
+          await dispatchMasterRecoveryOtp(ip);
+        }
+      }
     } catch {}
 
     return privateJson({
       error: "invalid_credentials",
-      message: "E-mail ou senha incorretos. Verifique suas credenciais de acesso."
+      message: isMasterScope
+        ? "E-mail ou senha Master incorretos. Verifique suas credenciais de administrador."
+        : "E-mail ou senha incorretos. Verifique suas credenciais de acesso."
     }, 401);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "auth_failed" }, 500);
@@ -350,11 +370,19 @@ export async function POST(request: NextRequest) {
 
 /**
  * DELETE /api/crm/auth/session
- * Complete, atomic Logout: destroys both Master and Client session cookies simultaneously.
+ * Complete, atomic Logout: revokes Master token in Redis blacklist and destroys session cookies.
  */
 export async function DELETE(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
+  // Revoke Master token in Redis and server memory
+  const masterCookie = request.cookies.get(MASTER_COOKIE_NAME)?.value;
+  if (masterCookie) {
+    try {
+      await revokeMasterToken(masterCookie);
+    } catch {}
+  }
 
   const response = NextResponse.json({ authenticated: false, loggedOut: true });
 

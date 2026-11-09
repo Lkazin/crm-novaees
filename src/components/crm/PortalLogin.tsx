@@ -12,12 +12,14 @@ import {
   Eye,
   EyeOff,
   Headphones,
+  KeyRound,
   LockKeyhole,
   Mail,
   MessageCircle,
   Radio,
   Server,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   Users,
   Zap
@@ -36,8 +38,16 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
   const [recover, setRecover] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [unlockOtpModal, setUnlockOtpModal] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [newMasterPassword, setNewMasterPassword] = useState("");
+  const [confirmMasterPassword, setConfirmMasterPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
   const emailId = useId();
   const passwordId = useId();
+  const otpCodeId = useId();
+  const newPasswordId = useId();
+  const confirmPasswordId = useId();
 
   useEffect(() => {
     let active = true;
@@ -85,11 +95,16 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
         return;
       }
       if (!response.ok) {
+        if (response.status === 429 && master) {
+          setError(result.message || "Acesso Master bloqueado temporariamente por 15 minutos. Enviamos um código para seu WhatsApp.");
+          setUnlockOtpModal(true);
+          return;
+        }
         setError(
           response.status === 429
-            ? "Muitas tentativas. Aguarde e tente novamente."
+            ? (result.message || "Muitas tentativas. Aguarde e tente novamente.")
             : result.error === "invalid_credentials"
-              ? "E-mail ou senha incorretos."
+              ? (master ? "Senha Master incorreta." : "E-mail ou senha incorretos.")
               : result.message || "Não foi possível acessar este painel com essas credenciais."
         );
         return;
@@ -103,6 +118,50 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
       setError(recover && cause instanceof Error ? cause.message : "Falha de comunicação. Tente novamente.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleUnlockWithOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (unlocking) return;
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setError("Digite o código de 6 dígitos enviado para seu WhatsApp.");
+      return;
+    }
+    if (!newMasterPassword || newMasterPassword.length < 8) {
+      setError("A nova senha Master deve ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (newMasterPassword !== confirmMasterPassword) {
+      setError("A confirmação da nova senha não confere.");
+      return;
+    }
+    setUnlocking(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/crm/admin/recover-code", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: otpCode.trim(),
+          newPassword: newMasterPassword,
+          confirmPassword: confirmMasterPassword
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Falha ao validar código de segurança.");
+      }
+      setNotice("Acesso desbloqueado e senha atualizada com sucesso! Redirecionando para o painel...");
+      setTimeout(() => {
+        window.location.assign("/admin");
+      }, 1200);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao desbloquear.");
+    } finally {
+      setUnlocking(false);
     }
   }
 
@@ -339,6 +398,99 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
                 <span className={styles.spinner} />
                 <span>Verificando suas credenciais...</span>
               </div>
+            ) : master && unlockOtpModal ? (
+              <form onSubmit={event => void handleUnlockWithOtp(event)} className={styles.form}>
+                <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+                  <span style={{ fontSize: "0.88rem", color: "#f472b6", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                    <Smartphone size={17} /> Desbloqueio e Redefinição via WhatsApp
+                  </span>
+                  <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "0.25rem 0 0", lineHeight: "1.3" }}>
+                    Enviamos um código de segurança de 6 dígitos para o seu WhatsApp oficial. Digite o código e defina sua nova senha.
+                  </p>
+                </div>
+
+                <label htmlFor={otpCodeId}>Código de Segurança (6 dígitos)</label>
+                <div className={styles.inputWrapper}>
+                  <KeyRound size={19} className={styles.inputFieldIcon} />
+                  <input
+                    id={otpCodeId}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    required
+                    placeholder="Ex: 849201"
+                    value={otpCode}
+                    onChange={e => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                    style={{ letterSpacing: "3px", fontWeight: 700, fontSize: "1.05rem" }}
+                  />
+                </div>
+
+                <label htmlFor={newPasswordId}>Nova Senha Master (mínimo 8 caracteres)</label>
+                <div className={styles.inputWrapper}>
+                  <LockKeyhole size={19} className={styles.inputFieldIcon} />
+                  <input
+                    id={newPasswordId}
+                    type={visible ? "text" : "password"}
+                    required
+                    minLength={8}
+                    placeholder="Digite sua nova senha"
+                    value={newMasterPassword}
+                    onChange={e => setNewMasterPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className={styles.toggleVisibilityBtn}
+                    onClick={() => setVisible(value => !value)}
+                    aria-label={visible ? "Ocultar senha" : "Exibir senha"}
+                  >
+                    {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+
+                <label htmlFor={confirmPasswordId}>Confirme a Nova Senha</label>
+                <div className={styles.inputWrapper}>
+                  <LockKeyhole size={19} className={styles.inputFieldIcon} />
+                  <input
+                    id={confirmPasswordId}
+                    type={visible ? "text" : "password"}
+                    required
+                    minLength={8}
+                    placeholder="Repita a nova senha"
+                    value={confirmMasterPassword}
+                    onChange={e => setConfirmMasterPassword(e.target.value)}
+                  />
+                </div>
+
+                {error && <p role="alert" className={styles.error}>{error}</p>}
+                {notice && <p role="status" className={styles.success}>{notice}</p>}
+
+                <button className={styles.submit} type="submit" disabled={unlocking}>
+                  {unlocking ? (
+                    <>
+                      <span className={styles.spinnerSm} />
+                      <span>Validando código...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Desbloquear e Salvar Nova Senha</span>
+                      <ArrowRight size={19} />
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.back}
+                  onClick={() => {
+                    setUnlockOtpModal(false);
+                    setError("");
+                    setNotice("");
+                  }}
+                >
+                  Voltar para o login
+                </button>
+              </form>
             ) : (
               <form onSubmit={event => void submit(event)} className={styles.form}>
                 <label htmlFor={emailId}>E-mail{master ? " do administrador" : " da sua empresa"}</label>
@@ -446,6 +598,21 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
                     }}
                   >
                     Voltar para a tela de login
+                  </button>
+                )}
+
+                {master && !recover && (
+                  <button
+                    type="button"
+                    className={styles.recoverLink}
+                    style={{ display: "block", textAlign: "center", width: "100%", marginTop: "0.6rem", fontSize: "0.82rem", color: "#f472b6" }}
+                    onClick={() => {
+                      setUnlockOtpModal(true);
+                      setError("");
+                      setNotice("");
+                    }}
+                  >
+                    📱 Recebeu código no WhatsApp? Desbloquear acesso
                   </button>
                 )}
               </form>

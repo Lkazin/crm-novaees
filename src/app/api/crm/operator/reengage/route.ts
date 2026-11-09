@@ -131,10 +131,27 @@ export async function POST(request: NextRequest) {
     const channels = rChannels.ok ? ((await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>) : [];
     const activeChannel = channels.find(c => c.status === "connected" && extractSlotFromInstanceName(c.instance_name) <= featureGuard.effectivePlan.maxWhatsappConnections);
 
-    const targetInstance = activeChannel?.instance_name || process.env.EVOLUTION_INSTANCE || "default";
+    if (!activeChannel) {
+      return privateJson({
+        error: "no_connected_channel",
+        message: "Nenhum canal WhatsApp conectado e ativo para esta empresa. Conecte o WhatsApp da loja para disparar campanhas."
+      }, 403);
+    }
 
-    // 3. Fetch contacts to dispatch to
-    let query = `${url}/rest/v1/crm_contacts?tenant_id=eq.${tenantId}&select=id,phone,display_name&limit=50`;
+    const targetInstance = activeChannel.instance_name;
+
+    // 3. Verify Evolution API configuration
+    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
+    const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
+    if (!evolutionUrl || !evolutionKey) {
+      return privateJson({
+        error: "evolution_not_configured",
+        message: "Serviço de envio WhatsApp não configurado no servidor."
+      }, 503);
+    }
+
+    // 4. Fetch contacts and filter by inactivity window
+    let query = `${url}/rest/v1/crm_contacts?tenant_id=eq.${tenantId}&select=id,phone,display_name,created_at&limit=200`;
     if (targetContactIds.length > 0) {
       const idFilter = targetContactIds.slice(0, 50).map(id => `"${id}"`).join(",");
       query += `&id=in.(${idFilter})`;
@@ -142,14 +159,37 @@ export async function POST(request: NextRequest) {
     const rContacts = await fetch(query, {
       headers: { apikey: secret, Authorization: `Bearer ${secret}` }, cache: "no-store"
     });
-    const contacts = rContacts.ok ? ((await rContacts.json()) as Array<{ id: string; phone: string; display_name: string | null }>) : [];
+    const allContacts = rContacts.ok ? ((await rContacts.json()) as Array<{ id: string; phone: string; display_name: string | null; created_at: string }>) : [];
 
-    if (!contacts.length) {
+    let eligibleContacts: typeof allContacts = [];
+    if (targetContactIds.length > 0) {
+      eligibleContacts = allContacts;
+    } else {
+      const rConvs = await fetch(
+        `${url}/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,contact_id,updated_at`,
+        { headers: { apikey: secret, Authorization: `Bearer ${secret}` }, cache: "no-store" }
+      );
+      const convs = rConvs.ok ? ((await rConvs.json()) as Array<{ id: string; contact_id: string; updated_at: string }>) : [];
+      const convMap = new Map<string, { id: string; updated_at: string }>();
+      for (const c of convs) convMap.set(c.contact_id, c);
+
+      const now = Date.now();
+      const cutoffTime = days > 0 ? now - days * 24 * 60 * 60 * 1000 : now;
+
+      for (const contact of allContacts) {
+        const conv = convMap.get(contact.id);
+        const lastActive = conv?.updated_at ? new Date(conv.updated_at).getTime() : new Date(contact.created_at).getTime();
+        if (days === 0 || lastActive <= cutoffTime) {
+          eligibleContacts.push(contact);
+        }
+        if (eligibleContacts.length >= 50) break;
+      }
+    }
+
+    if (!eligibleContacts.length) {
       return privateJson({ ok: false, error: "no_contacts_found", message: "Nenhum cliente inativo elegível para envio." }, 404);
     }
 
-    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
-    const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
     const cfg: EvolutionSendConfig = {
       evolutionUrl,
       evolutionKey,
@@ -160,8 +200,8 @@ export async function POST(request: NextRequest) {
     let sentSuccess = 0;
     const errors: string[] = [];
 
-    // Send personalized message to each contact
-    for (const c of contacts) {
+    // Send personalized message to each contact and confirm dispatch
+    for (const c of eligibleContacts) {
       const firstName = (c.display_name || "Cliente").split(" ")[0];
       const personalized = messageTemplate
         .replace(/\{nome\}/gi, firstName)
@@ -169,10 +209,12 @@ export async function POST(request: NextRequest) {
         .replace(/\{cupom\}/gi, couponCode || "PROMO");
 
       try {
-        if (evolutionUrl && evolutionKey) {
-          await sendText(c.phone, personalized, cfg, targetInstance);
+        const sendOutcome = await sendText(c.phone, personalized, cfg, targetInstance);
+        if (sendOutcome && sendOutcome.messageId) {
+          sentSuccess++;
+        } else {
+          errors.push(`Envio não confirmado para ${c.phone}`);
         }
-        sentSuccess++;
       } catch (err) {
         errors.push(`Erro ao enviar para ${c.phone}: ${err instanceof Error ? err.message : "falha"}`);
       }
@@ -181,9 +223,9 @@ export async function POST(request: NextRequest) {
     return privateJson({
       ok: true,
       sentCount: sentSuccess,
-      totalTargeted: contacts.length,
+      totalTargeted: eligibleContacts.length,
       errors: errors.slice(0, 5),
-      message: `Campanha executada! ${sentSuccess} de ${contacts.length} mensagens enviadas com sucesso.`
+      message: `Campanha executada! ${sentSuccess} de ${eligibleContacts.length} mensagens enviadas com confirmação.`
     });
   } catch (err) {
     return privateJson({ error: err instanceof Error ? err.message : "reengage_failed" }, 500);

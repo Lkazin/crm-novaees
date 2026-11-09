@@ -27,9 +27,66 @@ export function getMasterSessionSecret(): string {
 
 /**
  * Retrieve administrative password for Master login verification only.
+ * Supports dynamic password override in Redis if reconfigured via OTP.
  */
+export async function getDynamicMasterPassword(): Promise<string> {
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const custom = await redis.get("crm:master_custom_password");
+      if (custom && custom.trim().length >= 8) return custom.trim();
+    }
+  } catch {}
+  return process.env.CRM_MASTER_PASSWORD?.trim() || "";
+}
+
 export function getMasterPassword(): string {
   return process.env.CRM_MASTER_PASSWORD?.trim() || "";
+}
+
+/**
+ * Save new Master Password into Redis cache (allows dynamic recovery without server restart).
+ */
+export async function saveMasterPassword(newPassword: string): Promise<boolean> {
+  if (!newPassword || newPassword.trim().length < 8) return false;
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      await redis.set("crm:master_custom_password", newPassword.trim());
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Generate and dispatch Master Recovery OTP via WhatsApp to the official master number.
+ */
+export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
+  const otpCode = String(crypto.randomInt(100000, 999999));
+  const redis = getRedis();
+  try {
+    if (redis.status === "ready") {
+      await redis.set(`crm:master_otp:${otpCode}`, JSON.stringify({ ip, createdAt: Date.now() }), "EX", 900);
+      await redis.set(`crm:master_active_otp:${ip}`, otpCode, "EX", 900);
+    }
+  } catch {}
+
+  const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "5551991189293";
+  const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
+  const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
+  const instance = process.env.EVOLUTION_INSTANCE || "novaesweb";
+
+  if (evolutionUrl && evolutionKey) {
+    const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas a partir do IP: ${ip}.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;
+    import("@/lib/agent/evolution").then(({ sendText }) => {
+      sendText(masterPhone, msg, { evolutionUrl, evolutionKey, instance, sendFormat: "v2" }, instance).catch(err => {
+        console.error("[master-otp-send-error]", err);
+      });
+    }).catch(() => {});
+  }
+
+  return otpCode;
 }
 
 /**

@@ -91,7 +91,12 @@ export async function POST(request: NextRequest) {
         targetInstance = connected?.instance_name;
       }
     }
-    if (!targetInstance || extractSlotFromInstanceName(targetInstance) > featureGuard.effectivePlan.maxWhatsappConnections) return privateJson({ error: "channel_unavailable_or_locked" }, 403);
+    if (!targetInstance || extractSlotFromInstanceName(targetInstance) > featureGuard.effectivePlan.maxWhatsappConnections) {
+      return privateJson({
+        error: "channel_unavailable_or_locked",
+        message: "Nenhum canal WhatsApp conectado e ativo para esta empresa ou limite de conexões do plano atingido."
+      }, 403);
+    }
 
     // 5. Send real WhatsApp message via Evolution API with Idempotency Guard
     const rawIdempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";

@@ -655,25 +655,48 @@ export default function ClientWorkspace({
     } catch {}
   }, [fetchReports]);
 
-  // Audio beep notification via Web Audio API
+  // Audio high-intensity alert notification via Web Audio API (Multi-tone loud siren ~85dB)
   const playNotificationSound = useCallback(() => {
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
+      const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.18, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+
+      // Triangle wave generates richer harmonics and cuts through ambient noise
+      osc.type = "triangle";
+      gain.gain.setValueAtTime(0.85, now);
+
+      // Cycle 1: alternating high-frequency alarm tones (A5 -> D6 -> E6 -> D6)
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(1175, now + 0.15);
+      osc.frequency.setValueAtTime(1318, now + 0.30);
+      osc.frequency.setValueAtTime(1175, now + 0.45);
+
+      // Brief gap between cycles
+      gain.gain.setValueAtTime(0.02, now + 0.60);
+      gain.gain.setValueAtTime(0.85, now + 0.68);
+
+      // Cycle 2: urgent chime
+      osc.frequency.setValueAtTime(880, now + 0.68);
+      osc.frequency.setValueAtTime(1175, now + 0.82);
+      osc.frequency.setValueAtTime(1318, now + 0.98);
+
+      // Gentle fade-out
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.30);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.25);
-    } catch {}
+      osc.start(now);
+      osc.stop(now + 1.35);
+    } catch (e) {
+      console.warn("[audio-notification-warn]", e);
+    }
   }, []);
+
+  const [urgentHandoffAlert, setUrgentHandoffAlert] = useState<{ id: string; conversationId: string; reason?: string } | null>(null);
+  const prevHandoffCountRef = useRef(0);
 
   const fetchData = useCallback(async (tenantId: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -695,7 +718,7 @@ export default function ClientWorkspace({
       const json = await response.json() as Data;
 
       // Check if new urgent handoffs arrived
-      if (silent && soundEnabled && featureStates.sound_notifications?.state === "allowed" && !isSuspended) {
+      if (silent && soundEnabled && !isSuspended) {
         const prevUrgent = prevDataRef.current?.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         const newUrgent = json.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         if (newUrgent > prevUrgent) {
@@ -732,18 +755,48 @@ export default function ClientWorkspace({
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [fetchAiSettings, soundEnabled, playNotificationSound, featureStates.sound_notifications?.state, isSuspended]);
+  }, [fetchAiSettings, soundEnabled, playNotificationSound, isSuspended]);
 
-  // Silent auto-refresh polling every 3.5 seconds for real-time live chat and handoff notifications
+  // Ultra-fast pulse polling every 1.5s for real-time live chat and handoff alerts (runs even in background tabs)
   useEffect(() => {
     if (!authenticated || !tenant) return;
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        void fetchData(tenant, true);
-      }
-    }, 3500);
-    return () => clearInterval(interval);
-  }, [authenticated, tenant, fetchData]);
+    const pulseInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/crm/operator/pulse?tenantId=${encodeURIComponent(tenant)}`, {
+          cache: "no-store",
+          credentials: "same-origin"
+        });
+        if (res.ok) {
+          const pulse = await res.json();
+          const count = Number(pulse.waitingCount) || 0;
+          if (count > prevHandoffCountRef.current) {
+            playNotificationSound();
+            if (pulse.latestHandoff) {
+              setUrgentHandoffAlert(pulse.latestHandoff);
+            }
+            if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+              try {
+                new Notification("🚨 NovaesWeb CRM - Atendimento Humano Solicitado!", {
+                  body: "Um cliente precisa da sua atenção imediata no chat.",
+                  icon: "/favicon.ico"
+                });
+              } catch {}
+            }
+            void fetchData(tenant, true);
+          }
+          prevHandoffCountRef.current = count;
+        }
+      } catch {}
+    }, 1500);
+    return () => clearInterval(pulseInterval);
+  }, [authenticated, tenant, playNotificationSound, fetchData]);
+
+  // Request browser desktop notification permission on user interaction
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => {});
+    }
+  }, []);
 
   // Periodic background check for auto-close of inactive conversations
   useEffect(() => {
@@ -1676,17 +1729,32 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     setClaiming(true);
     setHandoffNotice("");
     try {
-      const res = await fetch("/api/crm/operator/handoff", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenant, conversationId, mode: targetMode })
-      });
-      const json = await res.json() as { claimed?: boolean; mode?: string; summary?: string; error?: string };
-      if (!res.ok) throw Error(json.error || "Falha ao alterar modo de atendimento.");
+      let res: Response | null = null;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await fetch("/api/crm/operator/handoff", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tenantId: tenant, conversationId, mode: targetMode })
+          });
+          if (res && res.ok) break;
+        } catch (fetchErr) {
+          lastErr = fetchErr;
+          if (attempt === 0) await new Promise(r => setTimeout(r, 300));
+        }
+      }
 
+      if (!res || !res.ok) {
+        const json = res ? await res.json().catch(() => ({})) : {};
+        throw Error(json.message || json.error || (lastErr instanceof Error ? lastErr.message : "Falha ao alterar modo de atendimento."));
+      }
+
+      const json = await res.json() as { claimed?: boolean; mode?: string; summary?: string; error?: string };
       if (targetMode === "human") {
         setHandoffNotice(json.summary || "Atendimento assumido pelo atendente humano! A IA pausou as respostas nesta conversa.");
+        setUrgentHandoffAlert(null);
       } else {
         setHandoffNotice("Conversa devolvida para a NovaesWeb IA! Ela continuará atendendo automaticamente.");
       }
@@ -2421,6 +2489,73 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       <small style={{fontSize: "11px", color: "#a59cb8"}}>Abrir simulador interativo →</small>
                     </div>
                   </div>
+                </div>
+              </section>
+            )}
+
+            {/* BANNER DE ALERTA ALTO: TRANSFERÊNCIA DA IA PARA ATENDIMENTO HUMANO */}
+            {urgentHandoffAlert && (
+              <section className="op-card" style={{
+                background: "linear-gradient(135deg, rgba(220, 38, 38, 0.95), rgba(153, 27, 27, 0.95))",
+                border: "2px solid #ef4444",
+                padding: "18px 24px",
+                marginBottom: "20px",
+                boxShadow: "0 10px 40px rgba(239, 68, 68, 0.5)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "16px"
+              }}>
+                <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
+                  <Users size={32} color="#fff"/>
+                  <div>
+                    <h2 style={{margin: 0, color: "#fff", fontSize: "18px", fontWeight: 900}}>
+                      🚨 ATENDIMENTO HUMANO SOLICITADO PELA IA!
+                    </h2>
+                    <p style={{margin: "4px 0 0", color: "#fef2f2", fontSize: "14px", fontWeight: 500}}>
+                      {urgentHandoffAlert.reason || "Um cliente precisa de resposta humana imediata no WhatsApp."}
+                    </p>
+                  </div>
+                </div>
+                <div style={{display: "flex", gap: "10px", alignItems: "center"}}>
+                  <button
+                    type="button"
+                    style={{
+                      background: "#fff",
+                      color: "#b91c1c",
+                      border: "none",
+                      padding: "10px 20px",
+                      borderRadius: "10px",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      fontSize: "14px",
+                      boxShadow: "0 4px 15px rgba(0,0,0,0.2)"
+                    }}
+                    onClick={() => {
+                      if (urgentHandoffAlert.conversationId) {
+                        void toggleConversationMode(urgentHandoffAlert.conversationId, "human");
+                      }
+                      setUrgentHandoffAlert(null);
+                    }}
+                  >
+                    ⚡ Assumir Conversa Agora
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      background: "transparent",
+                      color: "#fff",
+                      border: "1px solid rgba(255,255,255,0.4)",
+                      padding: "8px 14px",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                      fontSize: "13px"
+                    }}
+                    onClick={() => setUrgentHandoffAlert(null)}
+                  >
+                    Dispensar
+                  </button>
                 </div>
               </section>
             )}
