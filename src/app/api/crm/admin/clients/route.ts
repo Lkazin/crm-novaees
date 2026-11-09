@@ -108,6 +108,13 @@ export async function GET(request: NextRequest) {
       let suspension: { isSuspended?: boolean; publicReason?: string; internalNote?: string; updatedAt?: string } = {};
       let paymentHistory: Array<Record<string, unknown>> = [];
       let upgradeRequests: Array<Record<string, unknown>> = [];
+      let businessDetails = {
+        ownerName: "",
+        niche: "",
+        businessWhatsapp: "",
+        document: "",
+        agentName: ""
+      };
 
       const rawDesc = settingsMap.get(t.id) || "";
       try {
@@ -124,6 +131,9 @@ export async function GET(request: NextRequest) {
           }
           if (Array.isArray(parsed.upgradeRequests)) {
             upgradeRequests = parsed.upgradeRequests;
+          }
+          if (parsed.businessDetails && typeof parsed.businessDetails === "object") {
+            businessDetails = { ...businessDetails, ...parsed.businessDetails };
           }
         }
       } catch {}
@@ -162,6 +172,8 @@ export async function GET(request: NextRequest) {
         isMasterOwnTenant:isNovaesOwn,
         email,
         userId: primaryMemb?.user_id ?? null,
+        ownerName: businessDetails.ownerName || (primaryMemb?.user_id ? (userMap.get(primaryMemb.user_id)?.user_metadata?.name as string) : "") || "",
+        businessDetails,
         created_at: t.created_at,
         instanceName: primaryChannel?.instance_name || null,
         whatsappStatus: primaryChannel?.status || "disconnected",
@@ -205,8 +217,15 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const suppliedUserId = typeof body.userId === "string" && TENANT_UUID.test(body.userId.trim()) ? body.userId.trim() : "";
+    let email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
+    let ownerName = typeof body.ownerName === "string" ? body.ownerName.trim() : "";
+    const niche = typeof body.niche === "string" ? body.niche.trim() : "";
+    const businessWhatsapp = typeof body.businessWhatsapp === "string" ? body.businessWhatsapp.replace(/\D/g, "") : "";
+    const document = typeof body.document === "string" ? body.document.trim() : "";
+    const agentName = typeof body.agentName === "string" ? body.agentName.trim() : "";
+
     const requestedPlanId = typeof body.planId === "string" ? body.planId.trim() : "";
     const requestedPlanName = typeof body.planName === "string" ? body.planName.trim() : "CRM Premium";
     const dueDate = typeof body.dueDate === "string" && body.dueDate ? body.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
@@ -214,8 +233,23 @@ export async function POST(request: NextRequest) {
     const autoBlock = body.autoBlock !== false;
 
     if (storeName.length < 2 || storeName.length > 160) return privateJson({ error: "invalid_store_name" }, 400);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return privateJson({ error: "invalid_email" }, 400);
-    if (password.length < 6) return privateJson({ error: "password_too_short" }, 400);
+
+    if (suppliedUserId) {
+      // Validate that this client user exists in Supabase Auth
+      const rCheckUser = await fetch(url + `/auth/v1/admin/users/${suppliedUserId}`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+        cache: "no-store"
+      });
+      if (!rCheckUser.ok) {
+        return privateJson({ error: "user_not_found", message: "O cliente selecionado não foi encontrado no sistema." }, 400);
+      }
+      const existingUser = await rCheckUser.json();
+      if (!email && existingUser.email) email = existingUser.email.toLowerCase();
+      if (!ownerName && existingUser.user_metadata?.name) ownerName = existingUser.user_metadata.name;
+    } else {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return privateJson({ error: "invalid_email" }, 400);
+      if (password.length < 6) return privateJson({ error: "password_too_short" }, 400);
+    }
 
     const selectedPlan = selectPublishedPlan(await getMasterPlans(), requestedPlanId || (body.isTrial === true ? "crm-trial" : ""), requestedPlanName);
     if (!selectedPlan) return privateJson({ error: "plan_not_found" }, 400);
@@ -251,28 +285,31 @@ export async function POST(request: NextRequest) {
     if (!tenantId || !TENANT_UUID.test(tenantId)) throw new Error("tenant_creation_unconfirmed");
     createdTenantId = tenantId;
 
-    // 2. Create user in Supabase Auth via Admin API
-    const rUser = await fetch(url + "/auth/v1/admin/users", {
-      method: "POST",
-      headers: {
-        apikey: serviceKey, Authorization: "Bearer " + serviceKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: { storeName, tenantId, role: "CLIENT" }
-      })
-    });
-    if (!rUser.ok) {
-      const errUser = await rUser.text();
-      return privateJson({ error: "user_create_failed", detail: errUser, partial: true, tenantId, recoveryRequired: true }, 500);
+    // 2. Resolve or create user in Supabase Auth via Admin API
+    let userId = suppliedUserId;
+    if (!userId) {
+      const rUser = await fetch(url + "/auth/v1/admin/users", {
+        method: "POST",
+        headers: {
+          apikey: serviceKey, Authorization: "Bearer " + serviceKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { storeName, tenantId, role: "CLIENT", name: ownerName || storeName }
+        })
+      });
+      if (!rUser.ok) {
+        const errUser = await rUser.text();
+        return privateJson({ error: "user_create_failed", detail: errUser, partial: true, tenantId, recoveryRequired: true }, 500);
+      }
+      const userData = await rUser.json();
+      userId = userData.id;
+      if (!TENANT_UUID.test(userId || "")) throw new Error("user_creation_unconfirmed");
+      createdUserId = userId;
     }
-    const userData = await rUser.json();
-    const userId = userData.id;
-    if (!TENANT_UUID.test(userId || "")) throw new Error("user_creation_unconfirmed");
-    createdUserId = userId;
 
     // 3. Create membership in crm_tenant_memberships
     const membershipCreated = await fetch(url + "/rest/v1/crm_tenant_memberships", {
@@ -281,7 +318,8 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         tenant_id: tenantId,
         user_id: userId,
-        role: "admin"
+        role: "admin",
+        is_active: true
       })
     });
 
@@ -291,6 +329,14 @@ export async function POST(request: NextRequest) {
     let planMeta: StoredTenantConfig;
     let effectiveLimit: number;
     let finalPlanName: string;
+
+    const commonBusinessDetails = {
+      ownerName: ownerName || "",
+      niche: niche || "",
+      businessWhatsapp: businessWhatsapp || "",
+      document: document || "",
+      agentName: agentName || ""
+    };
 
     if (isTrial) {
       const trialStartedAt = new Date().toISOString();
@@ -313,10 +359,11 @@ export async function POST(request: NextRequest) {
           customQuotaOverride: null,
           exceptionReason: null
         },
+        businessDetails: commonBusinessDetails,
         teamOperators: [
           {
             id: userId,
-            name: `Administrador (${storeName})`,
+            name: ownerName || `Administrador (${storeName})`,
             email,
             role: "admin",
             status: "active",
@@ -360,10 +407,11 @@ export async function POST(request: NextRequest) {
             contractedAt: new Date().toISOString()
           }
         },
+        businessDetails: commonBusinessDetails,
         teamOperators: [
           {
             id: userId,
-            name: `Administrador (${storeName})`,
+            name: ownerName || `Administrador (${storeName})`,
             email,
             role: "admin",
             status: "active",
@@ -387,13 +435,18 @@ export async function POST(request: NextRequest) {
     await syncTenantUsageLimits(tenantId, effectiveLimit, url, serviceKey);
 
     // 5. Create default agent in crm_agents
+    const finalAgentLabel = agentName || `Assistente ${storeName}`;
+    const agentInstructions = niche
+      ? `Você é ${finalAgentLabel}, assistente virtual da loja ${storeName} no segmento de ${niche}. Responda em português brasileiro de forma educada, ágil e prestativa. Use as informações de cardápio, produtos e regras da loja.`
+      : `Você é ${finalAgentLabel}, assistente virtual da loja ${storeName}. Responda em português brasileiro de forma educada, ágil e prestativa. Use as informações de cardápio, produtos e regras da loja.`;
+
     const agentCreated = await fetch(url + "/rest/v1/crm_agents", {
       method: "POST",
       headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         tenant_id: tenantId,
-        label: `Assistente ${storeName}`,
-        instructions: `Você é o assistente virtual da loja ${storeName}. Responda em português brasileiro de forma educada, ágil e prestativa. Use as informações de cardápio, produtos e regras da loja.`,
+        label: finalAgentLabel,
+        instructions: agentInstructions,
         provider_route: "auto",
         enabled: true
       })

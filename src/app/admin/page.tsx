@@ -14,9 +14,10 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano" | "seguranca";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "security";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "security" | "users";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
-  clients: { title: "Gestão de Clientes e Mensalidades", description: "Cadastre lojistas, configure planos, acompanhe pagamentos e controle bloqueios automáticos." },
+  users: { title: "Central de Logins & Clientes", description: "Cadastre os usuários e responsáveis pelos acessos antes de vincular às suas empresas." },
+  clients: { title: "Empresas & Lojas", description: "Gerencie as empresas cadastradas, vincule clientes, planos comerciais e status de pagamento." },
   radar: { title: "Radar de WhatsApp (Tempo Real)", description: "Monitore a integridade e o status de conexão de todas as instâncias de WhatsApp de todos os clientes." },
   broadcast: { title: "Comunicados & Avisos Globais", description: "Transmita alertas e comunicados oficiais no topo do painel de todos os lojistas em tempo real." },
   plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de mensagens da IA." },
@@ -29,12 +30,29 @@ const MASTER_SECTIONS: Record<MasterSection, { title: string; description: strin
 import {
   Building2, Settings, Coins, RefreshCw, ShieldCheck,
   BrainCircuit, AlertCircle, PlusCircle, CheckCircle2, Ban, RotateCcw,
-  Calendar, CreditCard, KeyRound, UserCheck, Trash2, Smartphone,
+  Calendar, CreditCard, KeyRound, UserCheck, UserPlus, Trash2, Smartphone,
   Search, DollarSign, Users, AlertTriangle, ShieldAlert, LogOut, ChevronRight,
   Zap, Sparkles, Check, Copy, Edit3, Eye, History, Layers, Sliders, Info,
   CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X,
   PanelLeftClose, PanelLeftOpen, Radio, Megaphone, Download, Activity
 } from "lucide-react";
+
+type ClientUser = {
+  id: string;
+  email: string;
+  name: string;
+  whatsapp: string;
+  status: "waiting_store" | "linked" | "blocked";
+  isBlocked: boolean;
+  createdAt: string;
+  linkedTenants: Array<{
+    tenantId: string;
+    tenantName: string;
+    status: string;
+    role: string;
+    planName: string;
+  }>;
+};
 
 type Client = {
   id: string;
@@ -43,6 +61,14 @@ type Client = {
   status: string;
   email: string;
   userId: string | null;
+  ownerName?: string;
+  businessDetails?: {
+    ownerName?: string;
+    niche?: string;
+    businessWhatsapp?: string;
+    document?: string;
+    agentName?: string;
+  };
   created_at: string;
   instanceName?: string | null;
   whatsappStatus?: string;
@@ -666,6 +692,35 @@ export default function AdminCRM() {
   const [creating, setCreating] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
 
+  // Store linking & additional business fields (Etapa 2: Criar Loja)
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  const [businessWhatsapp, setBusinessWhatsapp] = useState("");
+  const [niche, setNiche] = useState("");
+  const [clientDocument, setClientDocument] = useState("");
+  const [agentName, setAgentName] = useState("");
+
+  // User Management state (Etapa 1 & 5: Criar Login e Gerenciar Clientes)
+  const [users, setUsers] = useState<ClientUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userFormOpen, setUserFormOpen] = useState(false);
+  const [userFullName, setUserFullName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [userWhatsapp, setUserWhatsapp] = useState("");
+  const [userInitialPassword, setUserInitialPassword] = useState("");
+  const [userConfirmPassword, setUserConfirmPassword] = useState("");
+  const [userStatus, setUserStatus] = useState<"active" | "blocked">("active");
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [showUserPassword, setShowUserPassword] = useState(false);
+  const [userFilterStatus, setUserFilterStatus] = useState<"all" | "waiting_store" | "linked" | "blocked">("all");
+  const [userSearchTerm, setUserSearchTerm] = useState("");
+  const [whatsappModalData, setWhatsappModalData] = useState<{
+    clientName: string;
+    storeName: string;
+    email: string;
+    phone: string;
+  } | null>(null);
+  const [whatsappCopied, setWhatsappCopied] = useState(false);
+
   // Administrative Suspension Modal state (with public reason + internal note)
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [clientToBlock, setClientToBlock] = useState<Client | null>(null);
@@ -782,6 +837,25 @@ export default function AdminCRM() {
     } catch {}
   }, []);
 
+  // Fetch Client Users
+  const fetchUsers = useCallback(async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data.users || []);
+      }
+    } catch {
+      // quiet fail
+    } finally {
+      setLoadingUsers(false);
+    }
+  }, []);
+
   // Check Master session on initial mount
   useEffect(() => {
     async function checkMasterSession() {
@@ -793,6 +867,7 @@ export default function AdminCRM() {
             setAuthenticated(true);
             void fetchClients();
             void fetchPlans();
+            void fetchUsers();
             void fetchMasterRecoverySettings();
             return;
           }
@@ -805,7 +880,7 @@ export default function AdminCRM() {
       }
     }
     void checkMasterSession();
-  }, [fetchClients, fetchPlans, fetchMasterRecoverySettings]);
+  }, [fetchClients, fetchPlans, fetchUsers, fetchMasterRecoverySettings]);
 
   // Master Login
   const handleMasterLogin = async (e: React.FormEvent) => {
@@ -969,7 +1044,117 @@ export default function AdminCRM() {
     });
   }, [clients, searchTerm, filterStatus]);
 
-  // Create Client
+  // User Filtering & Handlers (Etapa 1 & 5)
+  const filteredUsers = useMemo(() => {
+    return users.filter(u => {
+      const matchSearch =
+        u.name.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+        u.email.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+        u.whatsapp.includes(userSearchTerm);
+
+      if (!matchSearch) return false;
+      if (userFilterStatus === "waiting_store") return u.status === "waiting_store";
+      if (userFilterStatus === "linked") return u.status === "linked";
+      if (userFilterStatus === "blocked") return u.status === "blocked";
+      return true;
+    });
+  }, [users, userSearchTerm, userFilterStatus]);
+
+  const handleGenerateStrongPassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+    let pass = "";
+    for (let i = 0; i < 10; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setUserInitialPassword(pass);
+    setUserConfirmPassword(pass);
+    setShowUserPassword(true);
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (userInitialPassword !== userConfirmPassword) {
+      setError("As senhas informadas não coincidem. Digite novamente.");
+      return;
+    }
+    if (userInitialPassword.length < 6) {
+      setError("A senha deve ter no mínimo 6 caracteres.");
+      return;
+    }
+    setCreatingUser(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: userFullName,
+          email: userEmail,
+          whatsapp: userWhatsapp,
+          password: userInitialPassword,
+          status: userStatus
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || data.error || "Não foi possível cadastrar o login do cliente.");
+        return;
+      }
+      setNotice(`Login do cliente "${userFullName}" cadastrado com sucesso! Agora você pode criar ou vincular sua loja.`);
+      setUserFullName("");
+      setUserEmail("");
+      setUserWhatsapp("");
+      setUserInitialPassword("");
+      setUserConfirmPassword("");
+      setUserFormOpen(false);
+      await fetchUsers();
+    } catch {
+      setError("Falha de comunicação ao cadastrar novo usuário.");
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
+  const handleToggleBlockUser = async (user: ClientUser) => {
+    const nextBlocked = !user.isBlocked;
+    const confirmMsg = nextBlocked
+      ? `Deseja realmente suspender o acesso de "${user.name}"? O cliente não conseguirá fazer login no painel.`
+      : `Deseja reativar o acesso de "${user.name}"?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          action: "toggle_block",
+          blocked: nextBlocked
+        })
+      });
+      if (res.ok) {
+        setNotice(nextBlocked ? `Acesso de ${user.name} bloqueado.` : `Acesso de ${user.name} reativado com sucesso!`);
+        await fetchUsers();
+      } else {
+        setError("Não foi possível alterar o status do usuário.");
+      }
+    } catch {
+      setError("Falha de comunicação ao atualizar status do usuário.");
+    }
+  };
+
+  const handleStartStoreForUser = (user: ClientUser) => {
+    setSelectedUserId(user.id);
+    setStoreName(user.name);
+    setCurrentNav("clients");
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Create Client Store
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
@@ -985,8 +1170,14 @@ export default function AdminCRM() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeName,
-          email,
-          password,
+          userId: selectedUserId || undefined,
+          email: selectedUserId ? undefined : email,
+          password: selectedUserId ? undefined : password,
+          ownerName: selectedUserId ? users.find(u => u.id === selectedUserId)?.name : undefined,
+          businessWhatsapp,
+          niche,
+          document: clientDocument,
+          agentName,
           isTrial,
           planId,
           planName: isTrial ? "Teste Grátis (7 Dias)" : planName,
@@ -1008,19 +1199,25 @@ export default function AdminCRM() {
         } else if (errJson.error === "user_create_failed") {
           setError("Falha ao criar o usuário no Supabase Auth. Verifique se o e-mail já não está cadastrado.");
         } else {
-          setError(errJson.message || errJson.error || "Não foi possível cadastrar o cliente.");
+          setError(errJson.message || errJson.error || "Não foi possível cadastrar a loja.");
         }
         return;
       }
-      setNotice(`Loja "${storeName}" cadastrada com sucesso! Login criado para ${email}.`);
+      setNotice(`Loja "${storeName}" cadastrada e vinculada com sucesso!`);
       setStoreName("");
       setEmail("");
       setPassword("");
+      setSelectedUserId("");
+      setBusinessWhatsapp("");
+      setNiche("");
+      setClientDocument("");
+      setAgentName("");
       setFormOpen(false);
       await fetchClients();
       await fetchPlans();
+      await fetchUsers();
     } catch {
-      setError("Falha ao salvar novo cliente.");
+      setError("Falha ao salvar nova loja.");
     } finally {
       setCreating(false);
     }
@@ -2222,15 +2419,33 @@ export default function AdminCRM() {
 
           <button
             type="button"
+            className={`nw-nav-button ${currentNav === "users" ? "active" : ""}`}
+            aria-current={currentNav === "users" ? "page" : undefined}
+            title="Criar Login / Clientes"
+            onClick={() => navigateSection("users")}
+          >
+            <UserCheck size={18}/>
+            <span>Criar Login &amp; Clientes</span>
+            {sidebarCollapsed ? (
+              users.length > 0 && <span className="nw-nav-badge-dot" title={`${users.length} logins`} />
+            ) : (
+              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {users.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`nw-nav-button ${currentNav === "clients" ? "active" : ""}`}
             aria-current={currentNav === "clients" ? "page" : undefined}
-            title="Lojas & Clientes"
+            title="Empresas & Lojas"
             onClick={() => navigateSection("clients")}
           >
             <Building2 size={18}/>
-            <span>Lojas &amp; Clientes</span>
+            <span>Empresas &amp; Lojas</span>
             {sidebarCollapsed ? (
-              clients.length > 0 && <span className="nw-nav-badge-dot" title={`${clients.length} clientes`} />
+              clients.length > 0 && <span className="nw-nav-badge-dot" title={`${clients.length} lojas`} />
             ) : (
               <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
                 {clients.length}
@@ -2598,6 +2813,20 @@ export default function AdminCRM() {
                 </button>
               </>
             )}
+            {currentNav === "users" && (
+              <>
+                <button
+                  className="op-primary"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700, borderRadius: "10px", background: "linear-gradient(135deg, #a855f7, #7c3aed)"}}
+                  onClick={() => setUserFormOpen(!userFormOpen)}
+                >
+                  <PlusCircle size={18}/> {userFormOpen ? "Fechar Formulário" : "+ Criar Login"}
+                </button>
+                <button className="op-refresh" onClick={() => { void fetchUsers(); }} disabled={loadingUsers}>
+                  <RefreshCw size={16}/> Atualizar
+                </button>
+              </>
+            )}
             {currentNav === "clients" && (
               <>
                 <button
@@ -2605,13 +2834,13 @@ export default function AdminCRM() {
                   style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700, borderRadius: "10px"}}
                   onClick={() => setFormOpen(!formOpen)}
                 >
-                  <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Novo Cliente"}
+                  <PlusCircle size={18}/> {formOpen ? "Fechar Formulário" : "+ Criar Loja"}
                 </button>
                 <button
                   className="op-refresh"
                   style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 16px"}}
                   onClick={handleExportClientsCSV}
-                  title="Exportar base completa de clientes em formato CSV (Excel)"
+                  title="Exportar base completa de empresas em formato CSV (Excel)"
                 >
                   <Download size={16}/> Exportar CSV
                 </button>
@@ -2627,8 +2856,8 @@ export default function AdminCRM() {
                 <Download size={16}/> Exportar Métricas (CSV)
               </button>
             )}
-            {["clients", "plans", "kpis", "radar"].includes(currentNav) && (
-              <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); }} disabled={loading}>
+            {["clients", "plans", "kpis", "radar", "users"].includes(currentNav) && (
+              <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); void fetchUsers(); }} disabled={loading || loadingUsers}>
                 <RefreshCw size={16}/> Atualizar
               </button>
             )}
@@ -3174,16 +3403,343 @@ export default function AdminCRM() {
           </section>
         )}
 
-        {/* ===================== VIEW: LOJAS & CLIENTES ===================== */}
+        {/* ===================== VIEW: CENTRAL DE LOGINS & CLIENTES ===================== */}
+        {currentNav === "users" && (
+          <section>
+            {/* CARDS DE RESUMO DE USUÁRIOS */}
+            <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "24px"}}>
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Total de Logins</span>
+                <strong style={{display: "block", fontSize: "28px", color: "white", marginTop: "4px"}}>{users.length}</strong>
+                <small style={{color: "#a855f7", fontSize: "12px"}}>Clientes cadastrados no sistema</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Aguardando Loja</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#fbbf24", marginTop: "4px"}}>
+                  {users.filter(u => u.status === "waiting_store").length}
+                </strong>
+                <small style={{color: "#fbbf24", fontSize: "12px"}}>Login criado sem empresa</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Lojas Vinculadas</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#00db8c", marginTop: "4px"}}>
+                  {users.filter(u => u.status === "linked").length}
+                </strong>
+                <small style={{color: "#00db8c", fontSize: "12px"}}>Operando empresas ativas</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Acessos Bloqueados</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#f43f5e", marginTop: "4px"}}>
+                  {users.filter(u => u.status === "blocked").length}
+                </strong>
+                <small style={{color: "#f43f5e", fontSize: "12px"}}>Acesso suspenso pelo Master</small>
+              </div>
+            </div>
+
+            {/* FORMULÁRIO DE CRIAR LOGIN DO CLIENTE (ETAPA 1) */}
+            {userFormOpen && (
+              <div className="op-card" style={{padding: "26px", marginBottom: "26px", border: "1px solid #a855f7", boxShadow: "0 8px 30px rgba(168,85,247,0.15)"}}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                    <UserPlus size={22} color="#a855f7"/>
+                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Criar Login de Cliente</h3>
+                  </div>
+                  <button type="button" className="op-refresh" onClick={() => setUserFormOpen(false)} style={{padding: "4px 12px", fontSize: "12px"}}>
+                    Cancelar
+                  </button>
+                </div>
+
+                <p style={{fontSize: "13px", color: "#aba8bf", margin: "0 0 18px", lineHeight: "1.5"}}>
+                  Cadastre o usuário responsável e crie suas credenciais. O cliente poderá existir antes da loja; o acesso ao painel só é liberado após vincular uma empresa.
+                </p>
+
+                <form onSubmit={handleCreateUser} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px"}}>
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome Completo do Responsável *</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Carlos Eduardo Silva"
+                      value={userFullName}
+                      onChange={e => setUserFullName(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Acesso do Cliente *</label>
+                    <input
+                      type="email"
+                      placeholder="carlos@empresa.com.br"
+                      value={userEmail}
+                      onChange={e => setUserEmail(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>WhatsApp de Contato & Recuperação (com DDD) *</label>
+                    <input
+                      type="tel"
+                      placeholder="Ex: 51981964238"
+                      value={userWhatsapp}
+                      onChange={e => setUserWhatsapp(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                    <small style={{color: "#8e87a2", fontSize: "11px"}}>Usado para envio de códigos de recuperação e avisos de acesso.</small>
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Situação Inicial do Acesso</label>
+                    <select
+                      value={userStatus}
+                      onChange={e => setUserStatus(e.target.value as "active" | "blocked")}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    >
+                      <option value="active">Ativo (Aguardando vinculação da loja)</option>
+                      <option value="blocked">Bloqueado (Acesso suspenso administrativamente)</option>
+                    </select>
+                  </div>
+
+                  <div style={{gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px", background: "rgba(168,85,247,0.06)", padding: "16px", borderRadius: "10px", border: "1px dashed rgba(168,85,247,0.3)"}}>
+                    <div>
+                      <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px"}}>
+                        <label style={{fontSize: "13px", color: "var(--muted)"}}>Senha Inicial *</label>
+                        <button
+                          type="button"
+                          onClick={handleGenerateStrongPassword}
+                          style={{background: "none", border: "none", color: "#a855f7", fontSize: "12px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "4px"}}
+                        >
+                          <Sparkles size={13}/> 🎲 Gerar Senha Forte
+                        </button>
+                      </div>
+                      <div style={{position: "relative"}}>
+                        <input
+                          type={showUserPassword ? "text" : "password"}
+                          placeholder="Mínimo 6 dígitos"
+                          value={userInitialPassword}
+                          onChange={e => setUserInitialPassword(e.target.value)}
+                          required
+                          minLength={6}
+                          style={{width: "100%", padding: "12px 40px 12px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowUserPassword(!showUserPassword)}
+                          style={{position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#8e87a2", cursor: "pointer"}}
+                        >
+                          {showUserPassword ? <EyeOff size={16}/> : <Eye size={16}/>}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Confirmar Senha *</label>
+                      <input
+                        type={showUserPassword ? "text" : "password"}
+                        placeholder="Repita a senha inicial"
+                        value={userConfirmPassword}
+                        onChange={e => setUserConfirmPassword(e.target.value)}
+                        required
+                        minLength={6}
+                        style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "6px"}}>
+                    <button type="submit" className="op-primary" disabled={creatingUser} style={{padding: "14px 28px", fontWeight: 700, borderRadius: "10px", background: "linear-gradient(135deg, #a855f7, #7c3aed)"}}>
+                      {creatingUser ? "Cadastrando Login..." : "Finalizar Cadastro do Cliente"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* BARRA DE FILTROS & BUSCA DE USUÁRIOS */}
+            <div style={{display: "flex", gap: "14px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center"}}>
+              <div style={{position: "relative", flex: 1, minWidth: "260px"}}>
+                <Search size={18} color="#8e87a2" style={{position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)"}}/>
+                <input
+                  type="text"
+                  placeholder="Pesquisar por nome, e-mail ou WhatsApp..."
+                  value={userSearchTerm}
+                  onChange={e => setUserSearchTerm(e.target.value)}
+                  style={{width: "100%", padding: "12px 14px 12px 42px", borderRadius: "10px", border: "1px solid #332b49", background: "#151222", color: "white", fontSize: "14px"}}
+                />
+              </div>
+
+              <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${userFilterStatus === "all" ? "active" : ""}`}
+                  onClick={() => setUserFilterStatus("all")}
+                >
+                  Todos ({users.length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${userFilterStatus === "waiting_store" ? "active" : ""}`}
+                  onClick={() => setUserFilterStatus("waiting_store")}
+                  style={{borderColor: userFilterStatus === "waiting_store" ? "#fbbf24" : undefined}}
+                >
+                  Aguardando Loja ({users.filter(u => u.status === "waiting_store").length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${userFilterStatus === "linked" ? "active" : ""}`}
+                  onClick={() => setUserFilterStatus("linked")}
+                  style={{borderColor: userFilterStatus === "linked" ? "#00db8c" : undefined}}
+                >
+                  Vinculados ({users.filter(u => u.status === "linked").length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${userFilterStatus === "blocked" ? "active" : ""}`}
+                  onClick={() => setUserFilterStatus("blocked")}
+                  style={{borderColor: userFilterStatus === "blocked" ? "#f43f5e" : undefined}}
+                >
+                  Bloqueados ({users.filter(u => u.status === "blocked").length})
+                </button>
+              </div>
+            </div>
+
+            {/* LISTA DE USUÁRIOS */}
+            <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+              {filteredUsers.length === 0 ? (
+                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
+                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
+                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum cliente/usuário encontrado com os filtros selecionados.</p>
+                </div>
+              ) : (
+                filteredUsers.map(user => {
+                  const isBlocked = user.isBlocked || user.status === "blocked";
+                  const isWaitingStore = user.status === "waiting_store";
+
+                  return (
+                    <div
+                      key={user.id}
+                      className="op-card"
+                      style={{
+                        padding: "20px 24px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "18px",
+                        borderLeft: isBlocked ? "4px solid #f43f5e" : isWaitingStore ? "4px solid #fbbf24" : "4px solid #00db8c"
+                      }}
+                    >
+                      <div style={{display: "flex", alignItems: "center", gap: "16px", minWidth: "260px"}}>
+                        <div style={{
+                          width: "48px", height: "48px", borderRadius: "12px",
+                          background: isBlocked ? "rgba(244,63,94,0.15)" : isWaitingStore ? "rgba(251,191,36,0.15)" : "rgba(0,219,140,0.15)",
+                          display: "grid", placeItems: "center",
+                          color: isBlocked ? "#f43f5e" : isWaitingStore ? "#fbbf24" : "#00db8c",
+                          fontWeight: 800, fontSize: "18px"
+                        }}>
+                          {user.name.slice(0, 2).toUpperCase()}
+                        </div>
+
+                        <div>
+                          <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                            <strong style={{fontSize: "17px", color: "white"}}>{user.name}</strong>
+                            <span style={{
+                              background: isBlocked ? "rgba(244,63,94,0.2)" : isWaitingStore ? "rgba(251,191,36,0.2)" : "rgba(0,219,140,0.2)",
+                              color: isBlocked ? "#f43f5e" : isWaitingStore ? "#fbbf24" : "#00db8c",
+                              padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
+                            }}>
+                              {isBlocked ? "ACESSO BLOQUEADO" : isWaitingStore ? "AGUARDANDO VINCULAÇÃO" : "VINCULADO"}
+                            </span>
+                          </div>
+
+                          <div style={{display: "flex", alignItems: "center", gap: "14px", marginTop: "4px", fontSize: "13px", color: "#c4bed6", flexWrap: "wrap"}}>
+                            <span>E-mail: <strong style={{color: "#fff"}}>{user.email}</strong></span>
+                            {user.whatsapp && (
+                              <span>• WhatsApp: <strong style={{color: "#00db8c"}}>{user.whatsapp}</strong></span>
+                            )}
+                          </div>
+
+                          {/* Lojas Vinculadas */}
+                          <div style={{marginTop: "8px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
+                            <span style={{fontSize: "12px", color: "#8e87a2"}}>Empresas:</span>
+                            {user.linkedTenants.length === 0 ? (
+                              <span style={{fontSize: "11.5px", color: "#fbbf24", background: "rgba(251,191,36,0.1)", padding: "2px 8px", borderRadius: "6px"}}>
+                                Nenhuma loja vinculada até o momento
+                              </span>
+                            ) : (
+                              user.linkedTenants.map(t => (
+                                <span key={t.tenantId} style={{fontSize: "11.5px", color: "#a5b4fc", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", padding: "2px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px"}}>
+                                  <Building2 size={11}/> {t.tenantName} ({t.planName})
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ações do Usuário */}
+                      <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                        {isWaitingStore && (
+                          <button
+                            type="button"
+                            className="op-primary"
+                            onClick={() => handleStartStoreForUser(user)}
+                            style={{padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px"}}
+                          >
+                            <Building2 size={14}/> Criar Loja para este Cliente
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          title="Enviar Mensagem de Acesso via WhatsApp"
+                          onClick={() => {
+                            setWhatsappModalData({
+                              clientName: user.name,
+                              storeName: user.linkedTenants[0]?.tenantName || "Sua Loja",
+                              email: user.email,
+                              phone: user.whatsapp
+                            });
+                          }}
+                          style={{color: "#22c55e", borderColor: "rgba(34,197,94,0.4)", background: "rgba(34,197,94,0.1)", display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", fontSize: "12px"}}
+                        >
+                          <Smartphone size={14}/> Enviar Acesso
+                        </button>
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => handleToggleBlockUser(user)}
+                          style={{color: isBlocked ? "#00db8c" : "#f43f5e", borderColor: isBlocked ? "rgba(0,219,140,0.4)" : "rgba(244,63,94,0.4)", padding: "8px 12px", borderRadius: "8px", fontSize: "12px"}}
+                        >
+                          {isBlocked ? "Reativar" : "Bloquear"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ===================== VIEW: EMPRESAS & LOJAS ===================== */}
         {currentNav === "clients" && (
           <section>
-            {/* FORMULÁRIO DE CADASTRO DE CLIENTE */}
+            {/* FORMULÁRIO DE CADASTRO DE LOJA (ETAPA 2) */}
             {formOpen && (
               <div className="op-card" style={{padding: "26px", marginBottom: "26px", border: "1px solid #ec4899", boxShadow: "0 8px 30px rgba(236,72,153,0.15)"}}>
                 <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
                     <PlusCircle size={22} color="#ec4899"/>
-                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Cadastrar Nova Loja / Cliente</h3>
+                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Cadastrar Nova Empresa / Loja</h3>
                   </div>
                   <button type="button" className="op-refresh" onClick={() => setFormOpen(false)} style={{padding: "4px 12px", fontSize: "12px"}}>
                     Cancelar
@@ -3191,11 +3747,60 @@ export default function AdminCRM() {
                 </div>
 
                 <form onSubmit={handleCreateClient} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px"}}>
+                  {/* SELETOR DE CLIENTE RESPONSÁVEL */}
+                  <div style={{gridColumn: "1 / -1", background: "rgba(236,72,153,0.06)", border: "1px solid rgba(236,72,153,0.25)", borderRadius: "10px", padding: "16px"}}>
+                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px"}}>
+                      <label style={{fontSize: "13px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "6px"}}>
+                        <UserCheck size={16} color="#ec4899"/> Selecionar Cliente Responsável (Login Cadastrado)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentNav("users");
+                          setUserFormOpen(true);
+                        }}
+                        style={{background: "none", border: "none", color: "#ec4899", fontSize: "12px", fontWeight: 700, cursor: "pointer", textDecoration: "underline"}}
+                      >
+                        + Criar Novo Login Primeiro
+                      </button>
+                    </div>
+
+                    <select
+                      value={selectedUserId}
+                      onChange={e => {
+                        const uid = e.target.value;
+                        setSelectedUserId(uid);
+                        const found = users.find(u => u.id === uid);
+                        if (found) {
+                          if (!storeName) setStoreName(`Loja ${found.name.split(" ")[0]}`);
+                        }
+                      }}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "14px"}}
+                    >
+                      <option value="">-- Selecione o Cliente na Lista (ou cadastre novo login) --</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.name} — {u.email} {u.whatsapp ? `(WhatsApp: ${u.whatsapp})` : ""} {u.linkedTenants.length > 0 ? `• [${u.linkedTenants.length} loja(s)]` : "• [Aguardando Loja ⭐]"}
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedUserId && (
+                      <div style={{marginTop: "10px", padding: "10px 14px", borderRadius: "8px", background: "rgba(0,219,140,0.1)", border: "1px solid rgba(0,219,140,0.3)", display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#b9f5dc"}}>
+                        <CheckCircle2 size={16} color="#00db8c"/>
+                        <span>
+                          Responsável Vinculado: <strong>{users.find(u => u.id === selectedUserId)?.name}</strong> ({users.find(u => u.id === selectedUserId)?.email}). O acesso já está registrado no sistema!
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Nome da Loja */}
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Loja</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Loja / Empresa *</label>
                     <input
                       type="text"
-                      placeholder="Ex: Studio Digital & Consultoria"
+                      placeholder="Ex: Pizzaria Forno Nobre"
                       value={storeName}
                       onChange={e => setStoreName(e.target.value)}
                       required
@@ -3203,31 +3808,85 @@ export default function AdminCRM() {
                     />
                   </div>
 
+                  {/* WhatsApp Comercial */}
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login do Cliente</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>WhatsApp Comercial da Loja</label>
                     <input
-                      type="email"
-                      placeholder="contato@empresa.com.br"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      required
+                      type="tel"
+                      placeholder="Ex: 51999998888"
+                      value={businessWhatsapp}
+                      onChange={e => setBusinessWhatsapp(e.target.value)}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
 
+                  {/* Nicho / Segmento */}
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha de Acesso do Lojista</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nicho / Segmento do Negócio</label>
                     <input
-                      type="password"
-                      placeholder="Mínimo 6 dígitos"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      required
-                      minLength={6}
+                      type="text"
+                      placeholder="Ex: Pizzaria / Delivery, Clínica, Loja de Roupas"
+                      value={niche}
+                      onChange={e => setNiche(e.target.value)}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     />
                   </div>
 
+                  {/* CPF / CNPJ */}
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>CPF ou CNPJ</label>
+                    <input
+                      type="text"
+                      placeholder="00.000.000/0000-00"
+                      value={clientDocument}
+                      onChange={e => setClientDocument(e.target.value)}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  {/* Nome da Assistente IA */}
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome da Assistente IA (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Sofia (padrão)"
+                      value={agentName}
+                      onChange={e => setAgentName(e.target.value)}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  {/* Fallback de E-mail & Senha quando não seleciona cliente prévio */}
+                  {!selectedUserId && (
+                    <>
+                      <div>
+                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login *</label>
+                        <input
+                          type="email"
+                          placeholder="contato@empresa.com.br"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          required={!selectedUserId}
+                          style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha Inicial *</label>
+                        <input
+                          type="password"
+                          placeholder="Mínimo 6 dígitos"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          required={!selectedUserId}
+                          minLength={6}
+                          style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Plano Comercial */}
                   <div>
                     <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Plano Comercial</label>
                     <select
@@ -3298,7 +3957,7 @@ export default function AdminCRM() {
 
                   <div style={{gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: "12px"}}>
                     <button type="submit" className="op-primary" disabled={creating} style={{padding: "14px 28px", fontWeight: 700, borderRadius: "10px"}}>
-                      {creating ? "Criando Loja e Instância..." : "Confirmar Cadastro do Cliente"}
+                      {creating ? "Criando e Vinculando..." : "Confirmar Criação da Loja"}
                     </button>
                   </div>
                 </form>
@@ -5277,6 +5936,143 @@ export default function AdminCRM() {
             </div>
           </div>
         )}
+
+        {/* MODAL ENVIAR ACESSO VIA WHATSAPP */}
+        {whatsappModalData && (() => {
+          const clientName = whatsappModalData.clientName;
+          const storeName = whatsappModalData.storeName || "Sua Loja";
+          const email = whatsappModalData.email;
+          const rawPhone = whatsappModalData.phone || "";
+          const cleanPhone = rawPhone.replace(/\D/g, "");
+          const formattedPhone = (cleanPhone.length === 10 || cleanPhone.length === 11) ? `55${cleanPhone}` : cleanPhone;
+          const messageText = `Olá, ${clientName}! Seu acesso ao CRM AI da ${storeName} foi configurado com sucesso.\n\n🌐 Painel de Acesso: https://crm.novaesweb.com.br/login\n📧 Seu E-mail: ${email}\n🔑 Senha: Se você ainda não definiu sua senha ou deseja redefini-la com segurança, utilize a opção "Esqueci minha senha" na tela de login.\n\nQualquer dúvida, estamos à disposição para te apoiar!`;
+          const waUrl = formattedPhone ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(messageText)}` : `https://wa.me/?text=${encodeURIComponent(messageText)}`;
+
+          return (
+            <div style={{
+              position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+              display: "grid", placeItems: "center", zIndex: 130, padding: "20px"
+            }}>
+              <div className="op-card" style={{
+                width: "100%", maxWidth: "560px", padding: "28px",
+                borderColor: "#22c55e", borderRadius: "20px",
+                boxShadow: "0 25px 60px rgba(0, 0, 0, 0.75)"
+              }}>
+                <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                    <div style={{width: "38px", height: "38px", borderRadius: "10px", background: "rgba(34,197,94,0.15)", display: "grid", placeItems: "center"}}>
+                      <Smartphone size={20} color="#22c55e"/>
+                    </div>
+                    <div>
+                      <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                        Enviar Acesso por WhatsApp
+                      </h3>
+                      <span style={{fontSize: "12px", color: "#a1a1aa"}}>
+                        Compartilhe as instruções de login de forma segura e sem expor senhas.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setWhatsappModalData(null); setWhatsappCopied(false); }}
+                    style={{background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: "4px"}}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div style={{
+                  padding: "12px 14px", borderRadius: "10px", background: "#18142a",
+                  border: "1px solid #2d264a", marginBottom: "16px", display: "grid",
+                  gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "12px"
+                }}>
+                  <div>
+                    <span style={{color: "#858199", display: "block"}}>Cliente</span>
+                    <strong style={{color: "#fff"}}>{clientName}</strong>
+                  </div>
+                  <div>
+                    <span style={{color: "#858199", display: "block"}}>Loja / Empresa</span>
+                    <strong style={{color: "#22c55e"}}>{storeName}</strong>
+                  </div>
+                  <div>
+                    <span style={{color: "#858199", display: "block"}}>E-mail de Login</span>
+                    <span style={{color: "#c4bed6"}}>{email}</span>
+                  </div>
+                  <div>
+                    <span style={{color: "#858199", display: "block"}}>WhatsApp Destino</span>
+                    <span style={{color: rawPhone ? "#fff" : "#f59e0b", fontWeight: rawPhone ? 600 : 400}}>
+                      {rawPhone || "Não informado no cadastro"}
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{marginBottom: "16px"}}>
+                  <label style={{fontSize: "12px", color: "#aba8bf", display: "block", marginBottom: "6px", fontWeight: 700}}>
+                    Mensagem Pré-formatada
+                  </label>
+                  <textarea
+                    readOnly
+                    value={messageText}
+                    rows={7}
+                    style={{
+                      width: "100%", padding: "12px", borderRadius: "10px",
+                      background: "#120e24", border: "1px solid #3b335a",
+                      color: "#e4e4e7", fontSize: "13px", lineHeight: "1.5",
+                      resize: "none", fontFamily: "monospace"
+                    }}
+                  />
+                  <span style={{fontSize: "11px", color: "#71717a", marginTop: "4px", display: "block"}}>
+                    🔒 <strong>Segurança:</strong> A senha nunca é enviada em texto puro. O cliente é instruído a usar o fluxo oficial de login ou recuperação.
+                  </span>
+                </div>
+
+                <div style={{display: "flex", gap: "10px", justifyContent: "flex-end", flexWrap: "wrap"}}>
+                  <button
+                    type="button"
+                    className="op-refresh"
+                    onClick={() => { setWhatsappModalData(null); setWhatsappCopied(false); }}
+                    style={{padding: "10px 16px", borderRadius: "10px"}}
+                  >
+                    Fechar
+                  </button>
+
+                  <button
+                    type="button"
+                    className="op-refresh"
+                    onClick={() => {
+                      navigator.clipboard.writeText(messageText);
+                      setWhatsappCopied(true);
+                      setTimeout(() => setWhatsappCopied(false), 2500);
+                    }}
+                    style={{
+                      padding: "10px 16px", borderRadius: "10px",
+                      color: whatsappCopied ? "#22c55e" : "#c4bed6",
+                      borderColor: whatsappCopied ? "#22c55e" : "#4a3c68",
+                      display: "flex", alignItems: "center", gap: "6px"
+                    }}
+                  >
+                    {whatsappCopied ? <Check size={16} color="#22c55e" /> : <Copy size={16} />}
+                    <span>{whatsappCopied ? "Copiado com Sucesso!" : "Copiar Texto"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => window.open(waUrl, "_blank")}
+                    className="op-primary"
+                    style={{
+                      padding: "10px 20px", borderRadius: "10px", fontWeight: 800,
+                      background: "linear-gradient(135deg, #22c55e, #16a34a)",
+                      color: "#fff", display: "flex", alignItems: "center", gap: "8px"
+                    }}
+                  >
+                    <Smartphone size={16} />
+                    <span>Abrir no WhatsApp</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </main>
     </div>
   );
