@@ -45,14 +45,28 @@ import {
 const brl = (n: number | null | undefined) =>
   n === null || n === undefined ? "—" : "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function FinCard({ label, value, hint, color = "#fff", unavailable }: {
-  label: string; value: string | number; hint?: string; color?: string; unavailable?: boolean;
+function FinCard({ label, value, hint, color = "#fff", unavailable, icon, trend }: {
+  label: string; value: string | number; hint?: string; color?: string; unavailable?: boolean; icon?: React.ReactNode; trend?: string;
 }) {
   return (
-    <div className="op-card" style={{ padding: "16px 18px", borderRadius: "14px", opacity: unavailable ? 0.65 : 1 }}>
-      <span style={{ fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700 }}>{label}</span>
-      <strong style={{ display: "block", fontSize: "24px", color: unavailable ? "#9ca3af" : color, marginTop: "4px", fontWeight: 800 }}>{value}</strong>
-      {hint && <small style={{ color: "#9ca3af", fontSize: "11px", lineHeight: 1.3, display: "block", marginTop: "2px" }}>{hint}</small>}
+    <div className="nw-metric-card" style={{ opacity: unavailable ? 0.65 : 1 }}>
+      {icon && <div className="nw-metric-card-icon">{icon}</div>}
+      <div>
+        <span style={{ fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.6px", fontWeight: 700 }}>
+          {label}
+        </span>
+        <strong style={{ display: "block", fontSize: "26px", color: unavailable ? "#9ca3af" : color, marginTop: "6px", fontWeight: 800, letterSpacing: "-0.5px" }}>
+          {value}
+        </strong>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "2px" }}>
+        {hint && <small style={{ color: "#9ca3af", fontSize: "11px", lineHeight: 1.3 }}>{hint}</small>}
+        {trend && (
+          <span style={{ fontSize: "10px", fontWeight: 800, padding: "2px 6px", borderRadius: "6px", background: "rgba(52, 211, 153, 0.15)", color: "#34d399", whiteSpace: "nowrap" }}>
+            {trend}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -787,6 +801,36 @@ export default function AdminCRM() {
   const [blockInternalNote, setBlockInternalNote] = useState("");
   const [togglingBlock, setTogglingBlock] = useState(false);
   const [resolvingUpgradeId, setResolvingUpgradeId] = useState<string | null>(null);
+
+  // Redesign Master: Busca Global, Status de Topbar e Filtros Rápidos
+  const [globalSearchTerm, setGlobalSearchTerm] = useState("");
+  const [billingFilter, setBillingFilter] = useState<"all" | "overdue" | "pending" | "paid">("all");
+
+  const overdueCount = useMemo(() => {
+    return clients.filter(c => !c.isMasterOwnTenant && c.plan?.isOverdue).length;
+  }, [clients]);
+
+  const pendingRechargesCount = useMemo(() => {
+    return adminRecharges.filter(r => r.status === "pending").length;
+  }, [adminRecharges]);
+
+  const handleGlobalSearchChange = (val: string) => {
+    setGlobalSearchTerm(val);
+    setSearchTerm(val);
+    setUserSearchTerm(val);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        const searchInput = document.querySelector(".nw-quick-search-box input") as HTMLInputElement | null;
+        if (searchInput) searchInput.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Change Plan Modal
   const [changePlanModalOpen, setChangePlanModalOpen] = useState(false);
@@ -2525,31 +2569,13 @@ export default function AdminCRM() {
           </button>
         </div>
 
-        {/* Navegação Master Unificada e Agrupada */}
+        {/* Navegação Master Unificada em 3 Hubs Estratégicos */}
         <nav className="nw-sidebar-nav" aria-label="Menu do Master">
-          {/* GRUPO 1: GESTÃO DA PLATAFORMA */}
+          {/* HUB 1: GESTÃO COMERCIAL */}
           <div className="nw-sidebar-group-header">
             <Building2 size={13} style={{ color: "#ec4899" }}/>
-            <span>Gestão da Plataforma</span>
+            <span>Gestão Comercial</span>
           </div>
-
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "users" ? "active" : ""}`}
-            aria-current={currentNav === "users" ? "page" : undefined}
-            title="Criar Login / Clientes"
-            onClick={() => navigateSection("users")}
-          >
-            <UserCheck size={18}/>
-            <span>Criar Login &amp; Clientes</span>
-            {sidebarCollapsed ? (
-              users.length > 0 && <span className="nw-nav-badge-dot" title={`${users.length} logins`} />
-            ) : (
-              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
-                {users.length}
-              </span>
-            )}
-          </button>
 
           <button
             type="button"
@@ -2563,10 +2589,92 @@ export default function AdminCRM() {
             {sidebarCollapsed ? (
               clients.length > 0 && <span className="nw-nav-badge-dot" title={`${clients.length} lojas`} />
             ) : (
-              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.2)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.15)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
                 {clients.length}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "users" ? "active" : ""}`}
+            aria-current={currentNav === "users" ? "page" : undefined}
+            title="Criar Login / Clientes"
+            onClick={() => navigateSection("users")}
+          >
+            <UserCheck size={18}/>
+            <span>Criar Login &amp; Clientes</span>
+            {sidebarCollapsed ? (
+              users.length > 0 && <span className="nw-nav-badge-dot" title={`${users.length} logins`} />
+            ) : (
+              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.15)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {users.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "kpis" ? "active" : ""}`}
+            aria-current={currentNav === "kpis" ? "page" : undefined}
+            title="Faturamento & Métricas"
+            onClick={() => navigateSection("kpis")}
+          >
+            <DollarSign size={18}/>
+            <span>Faturamento &amp; Métricas</span>
+            {overdueCount > 0 && (
+              sidebarCollapsed ? (
+                <span className="nw-nav-badge-dot" style={{ background: "#ef4444", boxShadow: "0 0 6px #ef4444" }} title={`${overdueCount} em atraso`} />
+              ) : (
+                <span style={{marginLeft: "auto", background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "1px solid rgba(239, 68, 68, 0.4)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 800}}>
+                  {overdueCount} atraso{overdueCount > 1 ? "s" : ""}
+                </span>
+              )
+            )}
+          </button>
+
+          {/* DIVISOR DE GRUPO */}
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
+
+          {/* HUB 2: INFRAESTRUTURA & IA */}
+          <div className="nw-sidebar-group-header">
+            <BrainCircuit size={13} style={{ color: "#a855f7" }}/>
+            <span>Infraestrutura &amp; IA</span>
+          </div>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "radar" ? "active" : ""}`}
+            aria-current={currentNav === "radar" ? "page" : undefined}
+            title="Radar WhatsApp (Tempo Real)"
+            onClick={() => navigateSection("radar")}
+          >
+            <Radio size={18}/>
+            <span>Radar WhatsApp</span>
+            {!sidebarCollapsed && (
+              <span style={{
+                marginLeft: "auto",
+                background: "rgba(0, 219, 140, 0.15)",
+                color: "#00db8c",
+                padding: "2px 8px",
+                borderRadius: "10px",
+                fontSize: "11px",
+                fontWeight: 700
+              }}>
+                Ao Vivo
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`nw-nav-button ${currentNav === "providers" ? "active" : ""}`}
+            aria-current={currentNav === "providers" ? "page" : undefined}
+            title="Provedores de IA & OmniRoute"
+            onClick={() => navigateSection("providers")}
+          >
+            <BrainCircuit size={18}/>
+            <span>Provedores de IA</span>
           </button>
 
           <button
@@ -2579,7 +2687,7 @@ export default function AdminCRM() {
             <CreditCard size={18}/>
             <span>Planos &amp; Franquias</span>
             {!sidebarCollapsed && (
-              <span style={{marginLeft: "auto", background: "rgba(236, 72, 153, 0.2)", color: "#ec4899", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+              <span style={{marginLeft: "auto", background: "rgba(168, 85, 247, 0.2)", color: "#c084fc", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
                 {plans.length}
               </span>
             )}
@@ -2618,40 +2726,14 @@ export default function AdminCRM() {
             ) : null}
           </button>
 
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "kpis" ? "active" : ""}`}
-            aria-current={currentNav === "kpis" ? "page" : undefined}
-            title="Faturamento & Métricas"
-            onClick={() => navigateSection("kpis")}
-          >
-            <DollarSign size={18}/>
-            <span>Faturamento &amp; Métricas</span>
-          </button>
+          {/* DIVISOR DE GRUPO */}
+          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
 
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "radar" ? "active" : ""}`}
-            aria-current={currentNav === "radar" ? "page" : undefined}
-            title="Radar WhatsApp (Tempo Real)"
-            onClick={() => navigateSection("radar")}
-          >
-            <Radio size={18}/>
-            <span>Radar WhatsApp</span>
-            {!sidebarCollapsed && (
-              <span style={{
-                marginLeft: "auto",
-                background: "rgba(0, 219, 140, 0.15)",
-                color: "#00db8c",
-                padding: "2px 8px",
-                borderRadius: "10px",
-                fontSize: "11px",
-                fontWeight: 700
-              }}>
-                Ao Vivo
-              </span>
-            )}
-          </button>
+          {/* HUB 3: GOVERNANÇA & SEGURANÇA */}
+          <div className="nw-sidebar-group-header">
+            <ShieldCheck size={13} style={{ color: "#38bdf8" }}/>
+            <span>Governança &amp; Segurança</span>
+          </div>
 
           <button
             type="button"
@@ -2678,26 +2760,6 @@ export default function AdminCRM() {
             ) : (
               !sidebarCollapsed && <span style={{marginLeft: "auto", color: "#f59e0b", fontSize: "11px", fontWeight: 700}}>⚠️ Pendente</span>
             )}
-          </button>
-
-          {/* DIVISOR DE GRUPO */}
-          <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
-
-          {/* GRUPO 2: SERVIDOR & INTELIGÊNCIA ARTIFICIAL */}
-          <div className="nw-sidebar-group-header">
-            <BrainCircuit size={13} style={{ color: "#a855f7" }}/>
-            <span>Servidor &amp; IA</span>
-          </div>
-
-          <button
-            type="button"
-            className={`nw-nav-button ${currentNav === "providers" ? "active" : ""}`}
-            aria-current={currentNav === "providers" ? "page" : undefined}
-            title="Provedores de IA & OmniRoute"
-            onClick={() => navigateSection("providers")}
-          >
-            <BrainCircuit size={18}/>
-            <span>Provedores de IA</span>
           </button>
 
           {/* DIVISOR DE GRUPO */}
@@ -2859,6 +2921,68 @@ export default function AdminCRM() {
 
       {/* ÁREA PRINCIPAL MASTER */}
       <main className="nw-main-content">
+        {/* TOPBAR EXECUTIVA MASTER (REDESIGN) */}
+        <header className="nw-topbar">
+          <div className="nw-topbar-left">
+            <div className="nw-breadcrumb">
+              <span className="nw-breadcrumb-root">
+                <ShieldCheck size={14} style={{ color: "#ec4899" }} /> Master
+              </span>
+              <ChevronRight size={14} style={{ color: "#64748b" }} />
+              <span className="nw-breadcrumb-current">{MASTER_SECTIONS[currentNav].title}</span>
+            </div>
+          </div>
+
+          <div className="nw-topbar-center">
+            <div className="nw-quick-search-box">
+              <Search size={15} style={{ color: "#94a3b8" }} />
+              <input
+                type="text"
+                placeholder="Pesquisar loja, cliente ou responsável... (Ctrl + K)"
+                value={globalSearchTerm}
+                onChange={e => handleGlobalSearchChange(e.target.value)}
+              />
+              <kbd className="nw-kbd">Ctrl K</kbd>
+            </div>
+          </div>
+
+          <div className="nw-topbar-right">
+            <div className="nw-pill-badge cloud-online" title="Infraestrutura operacional e conectada">
+              <span className="nw-pulse-dot" />
+              <span>Nuvem Ativa</span>
+            </div>
+
+            {overdueCount > 0 && (
+              <button
+                type="button"
+                className="nw-pill-badge badge-danger"
+                onClick={() => navigateSection("kpis")}
+                title={`${overdueCount} loja(s) com mensalidade em atraso`}
+              >
+                <AlertTriangle size={13} />
+                <span>{overdueCount} em atraso</span>
+              </button>
+            )}
+
+            {pendingRechargesCount > 0 && (
+              <button
+                type="button"
+                className="nw-pill-badge badge-warning"
+                onClick={() => navigateSection("recharges")}
+                title={`${pendingRechargesCount} recarga(s) PIX pendente(s)`}
+              >
+                <Coins size={13} />
+                <span>{pendingRechargesCount} PIX</span>
+              </button>
+            )}
+
+            <div className="nw-admin-chip" title={adminEmail}>
+              <div className="nw-admin-avatar">M</div>
+              <span style={{ fontWeight: 600 }}>{adminEmail ? adminEmail.split("@")[0] : "Master"}</span>
+            </div>
+          </div>
+        </header>
+
         {/* Top Header */}
         <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px"}}>
           <div>
@@ -4807,6 +4931,49 @@ export default function AdminCRM() {
                     </div>
                   </div>
 
+                  {/* Chips de Filtro Rápido das Cobranças */}
+                  {(() => {
+                    const allNonMaster = clients.filter(c => !c.isMasterOwnTenant);
+                    const overdueCountTotal = allNonMaster.filter(c => c.plan.isOverdue).length;
+                    const pendingCountTotal = allNonMaster.filter(c => !c.plan.isOverdue && c.plan.status !== "paid" && !c.plan.isTrial).length;
+                    const paidCountTotal = allNonMaster.filter(c => c.plan.status === "paid").length;
+                    return (
+                      <div className="nw-filter-chips" style={{ marginBottom: "18px" }}>
+                        <button
+                          type="button"
+                          className={`nw-chip-btn ${billingFilter === "all" ? "active" : ""}`}
+                          onClick={() => setBillingFilter("all")}
+                        >
+                          Todas as Lojas <span className="nw-chip-badge">{allNonMaster.length}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`nw-chip-btn ${billingFilter === "overdue" ? "active" : ""}`}
+                          onClick={() => setBillingFilter("overdue")}
+                          style={billingFilter === "overdue" ? { borderColor: "#ef4444", background: "rgba(239,68,68,0.2)", color: "#fca5a5" } : {}}
+                        >
+                          🔴 Em Atraso <span className="nw-chip-badge" style={{ background: "rgba(239,68,68,0.3)", color: "#fca5a5" }}>{overdueCountTotal}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`nw-chip-btn ${billingFilter === "pending" ? "active" : ""}`}
+                          onClick={() => setBillingFilter("pending")}
+                          style={billingFilter === "pending" ? { borderColor: "#f59e0b", background: "rgba(245,158,11,0.2)", color: "#fde68a" } : {}}
+                        >
+                          🟡 Pendentes <span className="nw-chip-badge" style={{ background: "rgba(245,158,11,0.3)", color: "#fde68a" }}>{pendingCountTotal}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`nw-chip-btn ${billingFilter === "paid" ? "active" : ""}`}
+                          onClick={() => setBillingFilter("paid")}
+                          style={billingFilter === "paid" ? { borderColor: "#10b981", background: "rgba(16,185,129,0.2)", color: "#a7f3d0" } : {}}
+                        >
+                          🟢 Pagas <span className="nw-chip-badge" style={{ background: "rgba(16,185,129,0.3)", color: "#a7f3d0" }}>{paidCountTotal}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
+
                   <div style={{overflowX: "auto"}}>
                     <table style={{width: "100%", borderCollapse: "collapse", fontSize: "13px", color: "#c4bed6"}}>
                       <thead>
@@ -4821,7 +4988,13 @@ export default function AdminCRM() {
                         </tr>
                       </thead>
                       <tbody>
-                        {clients.filter(c => !c.isMasterOwnTenant).map(c => {
+                        {clients.filter(c => {
+                          if (c.isMasterOwnTenant) return false;
+                          if (billingFilter === "overdue") return c.plan.isOverdue;
+                          if (billingFilter === "pending") return !c.plan.isOverdue && c.plan.status !== "paid" && !c.plan.isTrial;
+                          if (billingFilter === "paid") return c.plan.status === "paid";
+                          return true;
+                        }).map(c => {
                           const isPaid = c.plan.status === "paid";
                           const isOverdue = c.plan.isOverdue;
                           return (
@@ -6296,23 +6469,17 @@ export default function AdminCRM() {
           </div>
         )}
 
-        {/* MODAL FICHA FINANCEIRA DO CLIENTE */}
+        {/* SLIDE-OVER DRAWER: FICHA FINANCEIRA DO CLIENTE (REDESIGN) */}
         {financeModalClient && (
-          <div style={{
-            position: "fixed", inset: 0, background: "rgba(9, 7, 20, 0.85)", backdropFilter: "blur(12px)",
-            display: "grid", placeItems: "center", zIndex: 125, padding: "20px"
-          }}>
-            <div className="op-card" style={{
-              width: "100%", maxWidth: "680px", maxHeight: "90vh", overflowY: "auto", padding: "28px",
-              borderColor: "#ec4899", borderRadius: "20px", boxShadow: "0 25px 60px rgba(0,0,0,0.75)"
-            }}>
-              <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
-                <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
-                  <div style={{width: "40px", height: "40px", borderRadius: "10px", background: "rgba(236,72,153,0.15)", display: "grid", placeItems: "center"}}>
-                    <DollarSign size={20} color="#ec4899"/>
+          <div className="nw-drawer-overlay" onClick={() => setFinanceModalClient(null)}>
+            <div className="nw-drawer-panel" onClick={e => e.stopPropagation()}>
+              <div className="nw-drawer-header">
+                <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                  <div style={{width: "42px", height: "42px", borderRadius: "12px", background: "rgba(236,72,153,0.18)", border: "1px solid rgba(236,72,153,0.3)", display: "grid", placeItems: "center"}}>
+                    <DollarSign size={22} color="#ec4899"/>
                   </div>
                   <div>
-                    <h3 style={{margin: 0, fontSize: "18px", fontWeight: 800, color: "#fff"}}>
+                    <h3 style={{margin: 0, fontSize: "19px", fontWeight: 800, color: "#fff", letterSpacing: "-0.3px"}}>
                       Ficha Financeira: {financeModalClient.name}
                     </h3>
                     <span style={{fontSize: "12px", color: "#a1a1aa"}}>
@@ -6323,96 +6490,139 @@ export default function AdminCRM() {
                 <button
                   type="button"
                   onClick={() => setFinanceModalClient(null)}
-                  style={{background: "none", border: "none", color: "#94a3b8", cursor: "pointer"}}
+                  className="nw-sidebar-toggle-btn"
+                  title="Fechar painel"
                 >
-                  <X size={20}/>
+                  <X size={18}/>
                 </button>
               </div>
 
-              {/* Bento Grid da Situação Atual */}
-              <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "18px"}}>
-                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
-                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>Plano Atual</span>
-                  <strong style={{display: "block", fontSize: "16px", color: "#fff", marginTop: "2px"}}>{financeModalClient.plan.name}</strong>
-                  <small style={{color: "#ec4899"}}>R$ {financeModalClient.plan.price}/mês</small>
+              <div className="nw-drawer-body">
+                {/* Bento Grid da Situação Atual */}
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px"}}>
+                  <div style={{padding: "14px", borderRadius: "12px", background: "#18142a", border: "1px solid #2d264a"}}>
+                    <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", fontWeight: 700}}>Plano Atual</span>
+                    <strong style={{display: "block", fontSize: "17px", color: "#fff", marginTop: "4px"}}>{financeModalClient.plan.name}</strong>
+                    <small style={{color: "#ec4899", fontWeight: 700}}>R$ {financeModalClient.plan.price}/mês</small>
+                  </div>
+                  <div style={{padding: "14px", borderRadius: "12px", background: "#18142a", border: "1px solid #2d264a"}}>
+                    <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", fontWeight: 700}}>Situação</span>
+                    <strong style={{
+                      display: "block", fontSize: "17px", marginTop: "4px",
+                      color: financeModalClient.plan.status === "paid" ? "#00db8c" : (financeModalClient.plan.isOverdue ? "#f43f5e" : "#fcd34d")
+                    }}>
+                      {financeModalClient.plan.status === "paid" ? "🟢 Em Dia" : (financeModalClient.plan.isOverdue ? "🔴 Em Atraso" : "🟡 Pendente")}
+                    </strong>
+                    <small style={{color: "#9ca3af"}}>Vencimento: {financeModalClient.plan.dueDate || "—"}</small>
+                  </div>
+                  <div style={{padding: "14px", borderRadius: "12px", background: "#18142a", border: "1px solid #2d264a"}}>
+                    <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", fontWeight: 700}}>WhatsApp Comercial</span>
+                    <strong style={{display: "block", fontSize: "15px", color: "#fff", marginTop: "4px"}}>
+                      {financeModalClient.businessDetails?.businessWhatsapp || "Não informado"}
+                    </strong>
+                    <small style={{color: "#9ca3af"}}>{financeModalClient.businessDetails?.document || "Sem CNPJ/CPF"}</small>
+                  </div>
                 </div>
-                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
-                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>Situação</span>
-                  <strong style={{
-                    display: "block", fontSize: "16px", marginTop: "2px",
-                    color: financeModalClient.plan.status === "paid" ? "#00db8c" : (financeModalClient.plan.isOverdue ? "#f43f5e" : "#fcd34d")
-                  }}>
-                    {financeModalClient.plan.status === "paid" ? "🟢 Em Dia" : (financeModalClient.plan.isOverdue ? "🔴 Em Atraso" : "🟡 Pendente")}
-                  </strong>
-                  <small style={{color: "#9ca3af"}}>Vencimento: {financeModalClient.plan.dueDate || "—"}</small>
+
+                {/* Ações Administrativas Rápidas */}
+                <div style={{background: "rgba(255,255,255,0.02)", padding: "16px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.06)"}}>
+                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: "10px"}}>
+                    Ações Administrativas Rápidas
+                  </span>
+                  <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                    {financeModalClient.plan.status === "paid" ? (
+                      <button
+                        type="button"
+                        className="op-refresh"
+                        onClick={async () => {
+                          await handleSetPaymentStatus(financeModalClient, "pending");
+                          setFinanceModalClient(null);
+                        }}
+                        style={{fontSize: "12px", padding: "8px 12px", color: "#f59e0b"}}
+                      >
+                        Marcar como Pendente
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="op-primary"
+                        onClick={async () => {
+                          await handleSetPaymentStatus(financeModalClient, "paid");
+                          setFinanceModalClient(null);
+                        }}
+                        style={{fontSize: "12px", padding: "8px 14px", background: "#00db8c", color: "#000", fontWeight: 800}}
+                      >
+                        Confirmar Pagamento Recebido
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      className="op-refresh"
+                      onClick={() => {
+                        setExtensionNewDueDate(financeModalClient.plan.dueDate || "");
+                        setExtensionGraceDays(3);
+                        setExtensionReason("Acordo comercial");
+                        setExtensionModalOpen(true);
+                      }}
+                      style={{fontSize: "12px", padding: "8px 12px"}}
+                    >
+                      Conceder Prazo Adicional
+                    </button>
+
+                    <button
+                      type="button"
+                      className="op-refresh"
+                      onClick={() => {
+                        setDiscountNewPrice(financeModalClient.plan.price || "");
+                        setDiscountReason("Desconto de fidelidade");
+                        setDiscountModalOpen(true);
+                      }}
+                      style={{fontSize: "12px", padding: "8px 12px"}}
+                    >
+                      Aplicar Desconto
+                    </button>
+                  </div>
                 </div>
-                <div style={{padding: "12px", borderRadius: "10px", background: "#18142a", border: "1px solid #2d264a"}}>
-                  <span style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase"}}>WhatsApp Comercial</span>
-                  <strong style={{display: "block", fontSize: "14px", color: "#fff", marginTop: "2px"}}>
-                    {financeModalClient.businessDetails?.businessWhatsapp || "Não informado"}
-                  </strong>
-                  <small style={{color: "#9ca3af"}}>{financeModalClient.businessDetails?.document || "Sem CNPJ/CPF"}</small>
+
+                {/* Histórico de Pagamentos Confirmados */}
+                <div>
+                  <h4 style={{fontSize: "14px", fontWeight: 700, margin: "0 0 10px", color: "#fff"}}>Histórico de Pagamentos</h4>
+                  {(financeModalClient.paymentHistory || []).length === 0 ? (
+                    <p style={{fontSize: "12px", color: "#71717a", margin: 0}}>Nenhum pagamento registrado no histórico desta loja.</p>
+                  ) : (
+                    <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                      {(financeModalClient.paymentHistory || []).map((p, idx) => (
+                        <div key={idx} style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "10px 14px", borderRadius: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", fontSize: "13px"
+                        }}>
+                          <div>
+                            <strong style={{color: "#00db8c"}}>R$ {String(p.amount || "0,00")}</strong>
+                            <span style={{color: "#9ca3af", marginLeft: "10px"}}>Vencimento: {String(p.dueDate || "—")}</span>
+                          </div>
+                          <span style={{color: "#71717a", fontSize: "12px"}}>
+                            Pago em: {p.paidAt ? new Date(String(p.paidAt)).toLocaleDateString("pt-BR") : "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Ações Administrativas Rápidas */}
-              <div style={{display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "20px"}}>
-                {financeModalClient.plan.status === "paid" ? (
-                  <button
-                    type="button"
-                    className="op-refresh"
-                    onClick={async () => {
-                      await handleSetPaymentStatus(financeModalClient, "pending");
-                      setFinanceModalClient(null);
-                    }}
-                    style={{fontSize: "12px", padding: "8px 12px", color: "#f59e0b"}}
-                  >
-                    Marcar como Pendente
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="op-primary"
-                    onClick={async () => {
-                      await handleSetPaymentStatus(financeModalClient, "paid");
-                      setFinanceModalClient(null);
-                    }}
-                    style={{fontSize: "12px", padding: "8px 12px", background: "#00db8c", color: "#000"}}
-                  >
-                    Confirmar Pagamento Recebido
-                  </button>
-                )}
-
+              <div className="nw-drawer-footer">
                 <button
                   type="button"
                   className="op-refresh"
-                  onClick={() => {
-                    setExtensionNewDueDate(financeModalClient.plan.dueDate || "");
-                    setExtensionGraceDays(3);
-                    setExtensionReason("Acordo comercial");
-                    setExtensionModalOpen(true);
-                  }}
-                  style={{fontSize: "12px", padding: "8px 12px"}}
+                  onClick={() => setFinanceModalClient(null)}
+                  style={{padding: "9px 16px", fontSize: "13px"}}
                 >
-                  Conceder Prazo Adicional
+                  Fechar
                 </button>
-
                 <button
                   type="button"
-                  className="op-refresh"
-                  onClick={() => {
-                    setDiscountNewPrice(financeModalClient.plan.price || "");
-                    setDiscountReason("Desconto de fidelidade");
-                    setDiscountModalOpen(true);
-                  }}
-                  style={{fontSize: "12px", padding: "8px 12px"}}
-                >
-                  Aplicar Desconto
-                </button>
-
-                <button
-                  type="button"
-                  className="op-refresh"
+                  className="op-primary"
                   onClick={() => {
                     const name = financeModalClient.businessDetails?.ownerName || financeModalClient.name;
                     const phone = (financeModalClient.businessDetails?.businessWhatsapp || "").replace(/\D/g, "");
@@ -6420,35 +6630,13 @@ export default function AdminCRM() {
                     if (phone) window.open(`https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`, "_blank");
                     else alert("WhatsApp comercial não informado no cadastro desta empresa.");
                   }}
-                  style={{fontSize: "12px", padding: "8px 12px", color: "#22c55e", borderColor: "rgba(34,197,94,0.4)"}}
+                  style={{
+                    padding: "9px 18px", fontSize: "13px", background: "#22c55e", color: "#052e16",
+                    fontWeight: 800, display: "flex", alignItems: "center", gap: "8px", border: "none"
+                  }}
                 >
-                  Cobrar no WhatsApp
+                  <MessageCircle size={15}/> Cobrar no WhatsApp
                 </button>
-              </div>
-
-              {/* Histórico de Pagamentos Confirmados */}
-              <div>
-                <h4 style={{fontSize: "14px", fontWeight: 700, margin: "0 0 8px", color: "#fff"}}>Histórico de Pagamentos</h4>
-                {(financeModalClient.paymentHistory || []).length === 0 ? (
-                  <p style={{fontSize: "12px", color: "#71717a", margin: 0}}>Nenhum pagamento registrado no histórico desta loja.</p>
-                ) : (
-                  <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
-                    {(financeModalClient.paymentHistory || []).map((p, idx) => (
-                      <div key={idx} style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "8px 12px", borderRadius: "8px", background: "rgba(255,255,255,0.03)", fontSize: "12px"
-                      }}>
-                        <div>
-                          <strong style={{color: "#00db8c"}}>R$ {String(p.amount || "0,00")}</strong>
-                          <span style={{color: "#9ca3af", marginLeft: "10px"}}>Vencimento: {String(p.dueDate || "—")}</span>
-                        </div>
-                        <span style={{color: "#71717a"}}>
-                          Pago em: {p.paidAt ? new Date(String(p.paidAt)).toLocaleDateString("pt-BR") : "—"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           </div>
