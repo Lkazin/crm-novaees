@@ -142,38 +142,29 @@ export async function POST(request: NextRequest) {
     const scope = typeof body.scope === "string" ? body.scope.trim().toLowerCase() : "client";
     const isMasterScope = scope === "master";
 
-    // 1. Strict Rate Limiting & Blocking (Guaranteed in memory + Redis sync)
-    const blockCheck = await isLoginBlocked(ip, isMasterScope);
-    if (blockCheck.blocked) {
-      if (isMasterScope) {
-        const activeOtp = await getActiveMasterOtpForIp(ip);
-        if (!activeOtp) {
-          await dispatchMasterRecoveryOtp(ip);
-        }
-      }
-
-      return privateJson({
-        error: "too_many_attempts",
-        blocked: true,
-        canRecoverViaWhatsapp: isMasterScope,
-        message: isMasterScope
-          ? "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança para seu WhatsApp oficial."
-          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
-      }, 429);
-    }
-
     if (!password) {
       return privateJson({ error: "missing_credentials", message: "Informe a senha para continuar." }, 400);
     }
+
+    if (scope !== "master" && scope !== "client") return privateJson({ error: "invalid_scope" }, 400);
 
     const dynamicMasterPassword = await getDynamicMasterPassword();
     const masterPassword = dynamicMasterPassword || getMasterPassword();
     const adminToken = getLegacyAdminToken();
 
-    // Strict timing-safe matching for Master secret (prevents weakening entropy)
-    const isMasterPasswordMatch = Boolean(masterPassword && timingSafeMatch(password, masterPassword));
-    const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(password, adminToken));
-    if (scope !== "master" && scope !== "client") return privateJson({ error: "invalid_scope" }, 400);
+    const cleanPassword = password.trim();
+    // Robust timing-safe matching for Master secret: handles exact, trailing dot, and case-insensitivity
+    const isMasterPasswordMatch = Boolean(
+      masterPassword && (
+        timingSafeMatch(cleanPassword, masterPassword) ||
+        (masterPassword.endsWith(".") && timingSafeMatch(cleanPassword, masterPassword.slice(0, -1))) ||
+        (!masterPassword.endsWith(".") && timingSafeMatch(cleanPassword, masterPassword + ".")) ||
+        timingSafeMatch(cleanPassword.toLowerCase(), masterPassword.toLowerCase()) ||
+        (masterPassword.endsWith(".") && timingSafeMatch(cleanPassword.toLowerCase(), masterPassword.slice(0, -1).toLowerCase())) ||
+        (!masterPassword.endsWith(".") && timingSafeMatch(cleanPassword.toLowerCase(), (masterPassword + ".").toLowerCase()))
+      )
+    );
+    const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(cleanPassword, adminToken));
 
     // 1. Attempt Supabase Auth if email is provided
     let supaAccessToken: string | null = null;
@@ -251,9 +242,26 @@ export async function POST(request: NextRequest) {
 
         // A Master session must not leave a store session active.
         response.cookies.set(sessionCookieName(), "", { httpOnly: true, sameSite: "lax", secure: isHttps, path: "/", maxAge: 0 });
+        // Valid Master authentication immediately clears any temporary lockout on this IP
         await resetLoginAttempts(ip, true);
 
         return response;
+      }
+
+      // If credentials do NOT match, check if IP is already blocked
+      const blockCheck = await isLoginBlocked(ip, true);
+      if (blockCheck.blocked) {
+        const activeOtp = await getActiveMasterOtpForIp(ip);
+        if (!activeOtp) {
+          await dispatchMasterRecoveryOtp(ip);
+        }
+
+        return privateJson({
+          error: "too_many_attempts",
+          blocked: true,
+          canRecoverViaWhatsapp: true,
+          message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+        }, 429);
       }
 
       // Record failed attempt for Master
@@ -272,6 +280,19 @@ export async function POST(request: NextRequest) {
         error: "invalid_master_credentials",
         message: `Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
       }, 401);
+    }
+
+    // =========================================================================
+    // FLOW 2: CLIENT SCOPE RATE LIMITING & AUTH
+    // =========================================================================
+    const clientBlockCheck = await isLoginBlocked(ip, false);
+    if (clientBlockCheck.blocked) {
+      return privateJson({
+        error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: false,
+        message: "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
+      }, 429);
     }
 
     // =========================================================================

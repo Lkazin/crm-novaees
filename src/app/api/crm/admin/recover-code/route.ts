@@ -59,16 +59,45 @@ export async function POST(request: NextRequest) {
     await saveMasterPassword(newPassword);
 
     // Dispatch WhatsApp confirmation
-    const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "555191189293";
-    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
-    const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
-    const instance = process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
+    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+    const evolutionKey = process.env.EVOLUTION_API_KEY ?? "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
+    const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
-    if (evolutionUrl && evolutionKey) {
-      const confirmMsg = `✅ *NovaesWeb CRM - Senha Master Atualizada*\n\nA senha de administrador Master foi redefinida com sucesso a partir do IP: ${ip}.\nSeu acesso administrativo foi desbloqueado com segurança.`;
-      import("@/lib/agent/evolution").then(({ sendText }) => {
-        sendText(masterPhone, confirmMsg, { evolutionUrl, evolutionKey, instance, sendFormat: "v2" }, instance).catch(() => {});
-      }).catch(() => {});
+    const rawPhoneList = [
+      process.env.CRM_MASTER_RECOVERY_WHATSAPP,
+      process.env.MASTER_RECOVERY_PHONE,
+      process.env.MASTER_NOTIFICATION_PHONE,
+      "555194892414",
+      "555191189293"
+    ].filter(Boolean).join(",");
+
+    const targetPhones = Array.from(new Set(
+      rawPhoneList
+        .split(/[,;]/)
+        .map(p => p.replace(/\D/g, "").trim())
+        .map(d => (d.length === 10 || d.length === 11) ? "55" + d : d)
+        .filter(p => p.length >= 10)
+    ));
+
+    if (evolutionUrl && evolutionKey && targetPhones.length > 0) {
+      const confirmMsg = `✅ *NovaesWeb CRM - Senha Master Atualizada*\n\nA senha de administrador Master foi redefinida com sucesso.\nSeu acesso administrativo foi desbloqueado com segurança.`;
+      await Promise.allSettled(
+        targetPhones.map(phone =>
+          fetch(`${evolutionUrl}/message/sendText/${instance}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: evolutionKey
+            },
+            body: JSON.stringify({
+              number: phone,
+              text: confirmMsg,
+              options: { delay: 1000, presence: "composing", linkPreview: false }
+            }),
+            signal: AbortSignal.timeout(6000)
+          }).catch(() => null)
+        )
+      );
     }
 
     // Issue Master session token

@@ -42,7 +42,7 @@ const inMemoryChallenges = new Map<string, RecoveryChallenge>();
 const inMemoryPhoneVerifications = new Map<string, PhoneVerificationChallenge>();
 const inMemoryTickets = new Map<string, RecoveryTicket>();
 
-let inMemoryMasterRecoveryPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || "555191189293";
+let inMemoryMasterRecoveryPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || "555194892414,555191189293";
 let inMemoryMasterRecoveryVerified = true;
 
 /**
@@ -60,10 +60,7 @@ export function normalizePhone(raw: string): string {
   return digits;
 }
 
-/**
- * Masks a phone number for secure UI display (e.g. +55 (51) 9****-9293)
- */
-export function maskPhone(phone: string): string {
+function maskSinglePhone(phone: string): string {
   const norm = normalizePhone(phone);
   if (!norm || norm.length < 8) return "Número não configurado";
 
@@ -83,6 +80,18 @@ export function maskPhone(phone: string): string {
 }
 
 /**
+ * Masks a phone number (or multiple comma-separated phones) for secure UI display
+ */
+export function maskPhone(phone: string): string {
+  if (!phone) return "Número não configurado";
+  const items = phone.split(/[,;]/).map(p => p.trim()).filter(Boolean);
+  if (items.length > 1) {
+    return items.map(maskSinglePhone).join(" / ");
+  }
+  return maskSinglePhone(phone);
+}
+
+/**
  * Generates a cryptographically secure 6-digit OTP
  */
 export function generateSecureOtp(): string {
@@ -90,48 +99,61 @@ export function generateSecureOtp(): string {
 }
 
 /**
- * Dispatches an OTP via WhatsApp using Evolution API
+ * Dispatches an OTP via WhatsApp using Evolution API to one or multiple phones
  */
 export async function dispatchRecoveryWhatsappMessage(
   phone: string,
   code: string,
   reason: "password_recovery" | "phone_verification"
 ): Promise<{ success: boolean; error?: string }> {
-  const normalized = normalizePhone(phone);
-  if (!normalized || normalized.length < 10) {
+  const rawList = phone.split(/[,;]/).map(p => p.trim()).filter(Boolean);
+  const targetPhones = Array.from(new Set(rawList.map(p => normalizePhone(p)).filter(p => p.length >= 10)));
+
+  if (targetPhones.length === 0) {
     return { success: false, error: "invalid_phone_number" };
   }
 
   const evoUrl = (process.env.EVOLUTION_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
-  const evoKey = process.env.EVOLUTION_API_KEY || "novaesweb-global-key";
-  const instance = process.env.CRM_RECOVERY_INSTANCE || "novaesweb-ia-teste";
+  const evoKey = process.env.EVOLUTION_API_KEY || "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
+  const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
   const messageText = reason === "password_recovery"
     ? `🔐 *NovaesWeb CRM IA*\n\nRecebemos uma solicitação de recuperação de senha.\n\nSeu código de verificação é: *${code}*\n\nNão compartilhe este código com ninguém. Válido por 10 minutos.\n\nSe você não solicitou a recuperação, ignore esta mensagem.`
     : `🔐 *NovaesWeb CRM IA*\n\nConfirmação de WhatsApp de Recuperação de Senha.\n\nSeu código de verificação é: *${code}*\n\nVálido por 10 minutos. Digite este código no painel para ativar a proteção da sua conta.`;
 
   try {
-    const res = await fetch(`${evoUrl}/message/sendText/${instance}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: evoKey
-      },
-      body: JSON.stringify({
-        number: normalized,
-        text: messageText,
-        options: { delay: 1200, presence: "composing", linkPreview: false }
-      }),
-      signal: AbortSignal.timeout(8000)
-    });
+    const results = await Promise.allSettled(
+      targetPhones.map(async (target) => {
+        const res = await fetch(`${evoUrl}/message/sendText/${instance}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: evoKey
+          },
+          body: JSON.stringify({
+            number: target,
+            text: messageText,
+            options: { delay: 1000, presence: "composing", linkPreview: false }
+          }),
+          signal: AbortSignal.timeout(8000)
+        });
 
-    if (res.ok) {
-      console.log(`[recovery-otp-sent] WhatsApp OTP sent successfully to ${maskPhone(normalized)}`);
+        if (res.ok) {
+          console.log(`[recovery-otp-sent] WhatsApp OTP sent successfully to ${maskSinglePhone(target)}`);
+          return true;
+        }
+
+        const errText = await res.text().catch(() => "");
+        console.warn(`[recovery-otp-warn] Evolution API returned HTTP ${res.status} for ${target}: ${errText}`);
+        return false;
+      })
+    );
+
+    const hasSuccess = results.some(r => r.status === "fulfilled" && r.value === true);
+    if (hasSuccess) {
       return { success: true };
     }
 
-    const errText = await res.text().catch(() => "");
-    console.warn(`[recovery-otp-warn] Evolution API returned HTTP ${res.status}: ${errText}`);
     return { success: false, error: "evolution_delivery_failed" };
   } catch (err) {
     console.warn("[recovery-otp-dispatch-err]", err);
@@ -173,7 +195,7 @@ export async function createRecoveryChallenge(
 
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.set(`crm:rec_challenge:${challengeId}`, JSON.stringify(challenge), "EX", 600);
     }
   } catch {}
@@ -200,7 +222,7 @@ export async function verifyRecoveryChallenge(
   if (!challenge) {
     try {
       const redis = getRedis();
-      if (redis.status === "ready") {
+      if (redis && redis.status !== "end") {
         const raw = await redis.get(`crm:rec_challenge:${challengeId}`);
         if (raw) challenge = JSON.parse(raw);
       }
@@ -215,7 +237,7 @@ export async function verifyRecoveryChallenge(
     inMemoryChallenges.delete(challengeId);
     try {
       const redis = getRedis();
-      if (redis.status === "ready") await redis.del(`crm:rec_challenge:${challengeId}`);
+      if (redis && redis.status !== "end") await redis.del(`crm:rec_challenge:${challengeId}`);
     } catch {}
     return { success: false, error: "code_expired" };
   }
@@ -224,7 +246,7 @@ export async function verifyRecoveryChallenge(
     inMemoryChallenges.delete(challengeId);
     try {
       const redis = getRedis();
-      if (redis.status === "ready") await redis.del(`crm:rec_challenge:${challengeId}`);
+      if (redis && redis.status !== "end") await redis.del(`crm:rec_challenge:${challengeId}`);
     } catch {}
     return { success: false, error: "max_attempts_exceeded" };
   }
@@ -238,7 +260,7 @@ export async function verifyRecoveryChallenge(
     inMemoryChallenges.set(challengeId, challenge);
     try {
       const redis = getRedis();
-      if (redis.status === "ready") {
+      if (redis && redis.status !== "end") {
         await redis.set(`crm:rec_challenge:${challengeId}`, JSON.stringify(challenge), "EX", 600);
       }
     } catch {}
@@ -253,7 +275,7 @@ export async function verifyRecoveryChallenge(
   inMemoryChallenges.delete(challengeId);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") await redis.del(`crm:rec_challenge:${challengeId}`);
+    if (redis && redis.status !== "end") await redis.del(`crm:rec_challenge:${challengeId}`);
   } catch {}
 
   // Issue single-use recovery ticket (valid for 10 minutes)
@@ -269,7 +291,7 @@ export async function verifyRecoveryChallenge(
   inMemoryTickets.set(ticket, ticketRecord);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.set(`crm:rec_ticket:${ticket}`, JSON.stringify(ticketRecord), "EX", 600);
     }
   } catch {}
@@ -284,7 +306,7 @@ export async function consumeRecoveryTicket(
   if (!record) {
     try {
       const redis = getRedis();
-      if (redis.status === "ready") {
+      if (redis && redis.status !== "end") {
         const raw = await redis.get(`crm:rec_ticket:${ticket}`);
         if (raw) record = JSON.parse(raw);
       }
@@ -296,7 +318,7 @@ export async function consumeRecoveryTicket(
     inMemoryTickets.delete(ticket);
     try {
       const redis = getRedis();
-      if (redis.status === "ready") await redis.del(`crm:rec_ticket:${ticket}`);
+      if (redis && redis.status !== "end") await redis.del(`crm:rec_ticket:${ticket}`);
     } catch {}
     return { valid: false, error: "ticket_expired" };
   }
@@ -305,7 +327,7 @@ export async function consumeRecoveryTicket(
   inMemoryTickets.delete(ticket);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") await redis.del(`crm:rec_ticket:${ticket}`);
+    if (redis && redis.status !== "end") await redis.del(`crm:rec_ticket:${ticket}`);
   } catch {}
 
   return {
@@ -349,7 +371,7 @@ export async function createPhoneVerificationChallenge(
   inMemoryPhoneVerifications.set(challengeId, challenge);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.set(`crm:phone_verif:${challengeId}`, JSON.stringify(challenge), "EX", 600);
     }
   } catch {}
@@ -371,7 +393,7 @@ export async function verifyPhoneVerificationChallenge(
   if (!challenge) {
     try {
       const redis = getRedis();
-      if (redis.status === "ready") {
+      if (redis && redis.status !== "end") {
         const raw = await redis.get(`crm:phone_verif:${challengeId}`);
         if (raw) challenge = JSON.parse(raw);
       }
@@ -383,7 +405,7 @@ export async function verifyPhoneVerificationChallenge(
     inMemoryPhoneVerifications.delete(challengeId);
     try {
       const redis = getRedis();
-      if (redis.status === "ready") await redis.del(`crm:phone_verif:${challengeId}`);
+      if (redis && redis.status !== "end") await redis.del(`crm:phone_verif:${challengeId}`);
     } catch {}
     return { success: false, error: "code_expired" };
   }
@@ -395,7 +417,7 @@ export async function verifyPhoneVerificationChallenge(
       inMemoryPhoneVerifications.delete(challengeId);
       try {
         const redis = getRedis();
-        if (redis.status === "ready") await redis.del(`crm:phone_verif:${challengeId}`);
+        if (redis && redis.status !== "end") await redis.del(`crm:phone_verif:${challengeId}`);
       } catch {}
       return { success: false, error: "max_attempts_exceeded" };
     }
@@ -407,7 +429,7 @@ export async function verifyPhoneVerificationChallenge(
   inMemoryPhoneVerifications.delete(challengeId);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") await redis.del(`crm:phone_verif:${challengeId}`);
+    if (redis && redis.status !== "end") await redis.del(`crm:phone_verif:${challengeId}`);
   } catch {}
 
   return {

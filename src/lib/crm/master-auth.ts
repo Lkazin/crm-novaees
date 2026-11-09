@@ -61,7 +61,7 @@ export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promis
 
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       const count = await redis.get(redisKey);
       const attempts = count ? parseInt(count, 10) : 0;
@@ -90,7 +90,7 @@ export async function recordFailedLoginAttempt(ip: string, isMasterScope: boolea
 
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       await redis.incr(redisKey);
       await redis.expire(redisKey, 15 * 60);
@@ -117,7 +117,7 @@ export async function resetLoginAttempts(ip: string, isMasterScope: boolean): Pr
   inMemoryRateLimits.delete(key);
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       await redis.del(redisKey);
     }
@@ -132,7 +132,7 @@ export async function getActiveMasterOtpForIp(ip: string): Promise<string | null
   }
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       const active = await redis.get(`crm:master_active_otp:${ip}`);
       if (active) return active;
     }
@@ -150,7 +150,7 @@ export async function getDynamicMasterPassword(): Promise<string> {
   }
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       const custom = await redis.get("crm:master_custom_password");
       if (custom && custom.trim().length >= 8) return custom.trim();
     }
@@ -173,7 +173,7 @@ export async function saveMasterPassword(newPassword: string): Promise<boolean> 
   inMemoryDynamicPassword = newPassword.trim();
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.set("crm:master_custom_password", newPassword.trim());
       return true;
     }
@@ -182,7 +182,7 @@ export async function saveMasterPassword(newPassword: string): Promise<boolean> 
 }
 
 /**
- * Generate and dispatch Master Recovery OTP via WhatsApp to the official master number.
+ * Generate and dispatch Master Recovery OTP via WhatsApp to all configured master numbers.
  */
 export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   const otpCode = String(crypto.randomInt(100000, 999999));
@@ -199,27 +199,64 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
 
   const redis = getRedis();
   try {
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.set(`crm:master_otp:${otpCode}`, JSON.stringify({ ip, createdAt: now }), "EX", 900);
       await redis.set(`crm:master_active_otp:${ip}`, otpCode, "EX", 900);
     }
   } catch {}
 
-  const masterPhone = process.env.MASTER_RECOVERY_PHONE || process.env.MASTER_NOTIFICATION_PHONE || "555191189293";
-  const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
-  const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
-  const instance = process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
+  const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+  const evolutionKey = process.env.EVOLUTION_API_KEY ?? "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
+  const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
-  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp ${masterPhone}`);
-  if (evolutionUrl && evolutionKey) {
-    const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas a partir do IP: ${ip}.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;
-    import("@/lib/agent/evolution").then(({ sendText }) => {
-      sendText(masterPhone, msg, { evolutionUrl, evolutionKey, instance, sendFormat: "v2" }, instance).then(() => {
-        console.log(`[master-otp-delivered] WhatsApp message with OTP delivered to ${masterPhone}`);
-      }).catch(err => {
-        console.error("[master-otp-send-error]", err);
-      });
-    }).catch(() => {});
+  const rawPhoneList = [
+    process.env.CRM_MASTER_RECOVERY_WHATSAPP,
+    process.env.MASTER_RECOVERY_PHONE,
+    process.env.MASTER_NOTIFICATION_PHONE,
+    "555194892414",
+    "555191189293"
+  ].filter(Boolean).join(",");
+
+  const targetPhones = Array.from(new Set(
+    rawPhoneList
+      .split(/[,;]/)
+      .map(p => p.replace(/\D/g, "").trim())
+      .map(d => (d.length === 10 || d.length === 11) ? "55" + d : d)
+      .filter(p => p.length >= 10)
+  ));
+
+  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp targets: ${targetPhones.join(", ")}`);
+
+  if (evolutionUrl && evolutionKey && targetPhones.length > 0) {
+    const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;
+
+    await Promise.allSettled(
+      targetPhones.map(async (phone) => {
+        try {
+          const res = await fetch(`${evolutionUrl}/message/sendText/${instance}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: evolutionKey
+            },
+            body: JSON.stringify({
+              number: phone,
+              text: msg,
+              options: { delay: 1000, presence: "composing", linkPreview: false }
+            }),
+            signal: AbortSignal.timeout(6000)
+          });
+          if (res.ok) {
+            console.log(`[master-otp-delivered] WhatsApp message with OTP delivered to ${phone}`);
+          } else {
+            const errText = await res.text().catch(() => "");
+            console.warn(`[master-otp-fail] WhatsApp send failed to ${phone} HTTP ${res.status}: ${errText}`);
+          }
+        } catch (err) {
+          console.error(`[master-otp-send-error] WhatsApp send error to ${phone}:`, err);
+        }
+      })
+    );
   }
 
   return otpCode;
@@ -238,7 +275,7 @@ export async function validateAndConsumeMasterOtp(code: string, ip: string): Pro
   if (!valid) {
     try {
       const redis = getRedis();
-      if (redis.status === "ready") {
+      if (redis && redis.status !== "end") {
         const raw = await redis.get(`crm:master_otp:${cleanCode}`);
         if (raw) valid = true;
       }
@@ -253,7 +290,7 @@ export async function validateAndConsumeMasterOtp(code: string, ip: string): Pro
 
   try {
     const redis = getRedis();
-    if (redis.status === "ready") {
+    if (redis && redis.status !== "end") {
       await redis.del(`crm:master_otp:${cleanCode}`);
       await redis.del(`crm:master_active_otp:${ip}`);
       await redis.del(`crm:ratelimit:master_login:${ip}`);
