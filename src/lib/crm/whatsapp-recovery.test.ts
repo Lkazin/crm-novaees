@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizePhone,
@@ -18,8 +18,17 @@ import {
   isLoginBlocked,
   resetLoginAttempts,
   getDynamicMasterPassword,
-  saveMasterPassword
+  saveMasterPassword,
+  resetMasterDynamicPasswordForTesting
 } from "./master-auth";
+import { disconnectRedis } from "./plans";
+
+process.env.SKIP_WHATSAPP_DISPATCH = "true";
+
+after(async () => {
+  await resetMasterDynamicPasswordForTesting();
+  await disconnectRedis();
+});
 
 // Scenario 1: Cadastro e verificação do WhatsApp no Painel Master
 test("1. Cadastro e verificação do WhatsApp no Painel Master", async () => {
@@ -203,6 +212,7 @@ test("11. Rejeição da senha antiga após a troca definitiva", async () => {
   await saveMasterPassword(newPassword);
   assert.notEqual(await getDynamicMasterPassword(), oldPassword);
   assert.equal(await getDynamicMasterPassword(), newPassword);
+  await resetMasterDynamicPasswordForTesting();
 });
 
 // Scenario 12: Impossibilidade de acessar outras contas (Isolamento Multi-Empresa)

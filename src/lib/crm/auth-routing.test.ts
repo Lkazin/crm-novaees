@@ -18,6 +18,10 @@ function fixture() {
   const dependencies: Record<string, unknown> = {
     "next/server": { NextRequest, NextResponse },
     "@/lib/crm/plans": { getRedis: () => redis },
+    "@/lib/crm/recovery-store": {
+      findUserRecoveryPhoneByEmail: async () => null,
+      createRecoveryChallenge: async () => ({ id: "chal_test", expiresAt: Date.now() + 600000 }),
+    },
     "@/lib/crm/master-auth": {
       MASTER_COOKIE_NAME: "nw_master_session", MASTER_SESSION_TTL_SEC: 43200, MASTER_REMEMBER_TTL_SEC: 2592000,
       getMasterPassword: () => "fixture-master-password",

@@ -594,12 +594,31 @@ export function buildFeatureGovernanceMap(
   return map;
 }
 
+let sharedRedis: Redis | null = null;
+
 export function getRedis(providedRedis?: Redis): Redis {
   if (providedRedis) return providedRedis;
-  const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
-  const client = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1 });
-  client.on("error", () => {});
-  return client;
+  if (!sharedRedis || sharedRedis.status === "end") {
+    const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
+    sharedRedis = new Redis(redisUrl, {
+      lazyConnect: true,
+      connectTimeout: 1500,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      retryStrategy: () => null,
+    });
+    sharedRedis.on("error", () => {});
+  }
+  return sharedRedis;
+}
+
+export async function disconnectRedis(): Promise<void> {
+  if (sharedRedis) {
+    try {
+      sharedRedis.disconnect();
+    } catch {}
+    sharedRedis = null;
+  }
 }
 
 export function getSupabaseConfig() {

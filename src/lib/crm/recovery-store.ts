@@ -121,6 +121,11 @@ export async function dispatchRecoveryWhatsappMessage(
     ? `🔐 *NovaesWeb CRM IA*\n\nRecebemos uma solicitação de recuperação de senha.\n\nSeu código de verificação é: *${code}*\n\nNão compartilhe este código com ninguém. Válido por 10 minutos.\n\nSe você não solicitou a recuperação, ignore esta mensagem.`
     : `🔐 *NovaesWeb CRM IA*\n\nConfirmação de WhatsApp de Recuperação de Senha.\n\nSeu código de verificação é: *${code}*\n\nVálido por 10 minutos. Digite este código no painel para ativar a proteção da sua conta.`;
 
+  const shouldDispatch = !process.env.SKIP_WHATSAPP_DISPATCH && process.env.NODE_ENV !== "test" && !process.env.CI;
+  if (!shouldDispatch) {
+    return { success: true };
+  }
+
   try {
     const results = await Promise.allSettled(
       targetPhones.map(async (target) => {

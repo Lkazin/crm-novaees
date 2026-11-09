@@ -165,6 +165,16 @@ export function getMasterPassword(): string {
   return process.env.CRM_MASTER_PASSWORD?.trim() || "";
 }
 
+export async function resetMasterDynamicPasswordForTesting(): Promise<void> {
+  inMemoryDynamicPassword = null;
+  try {
+    const redis = getRedis();
+    if (redis && redis.status !== "end") {
+      await redis.del("crm:master_custom_password");
+    }
+  } catch {}
+}
+
 /**
  * Save new Master Password into Redis cache (allows dynamic recovery without server restart).
  */
@@ -216,7 +226,8 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
 
   console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp target: ${targetPhone}`);
 
-  if (evolutionUrl && evolutionKey && targetPhones.length > 0) {
+  const shouldDispatch = !process.env.SKIP_WHATSAPP_DISPATCH && process.env.NODE_ENV !== "test" && !process.env.CI;
+  if (shouldDispatch && evolutionUrl && evolutionKey && targetPhones.length > 0) {
     const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;
 
     await Promise.allSettled(

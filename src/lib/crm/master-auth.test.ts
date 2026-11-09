@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import {
   getMasterPassword,
@@ -14,8 +14,17 @@ import {
   recordFailedLoginAttempt,
   isLoginBlocked,
   validateAndConsumeMasterOtp,
-  resetLoginAttempts
+  resetLoginAttempts,
+  resetMasterDynamicPasswordForTesting
 } from "./master-auth";
+import { disconnectRedis } from "./plans";
+
+process.env.SKIP_WHATSAPP_DISPATCH = "true";
+
+after(async () => {
+  await resetMasterDynamicPasswordForTesting();
+  await disconnectRedis();
+});
 
 test("Master sessions require configured secrets and reject malformed or tampered cookies", () => {
   const names = ["CRM_MASTER_SESSION_SECRET", "CRM_MASTER_PASSWORD", "CRM_LAB_ADMIN_TOKEN"];
@@ -47,6 +56,7 @@ test("Master token revocation invalidates the token signature immediately", asyn
 });
 
 test("Master dynamic password and WhatsApp OTP dispatch work securely", async () => {
+  await resetMasterDynamicPasswordForTesting();
   process.env.CRM_MASTER_PASSWORD = "initial-secure-pass-123";
   const current = await getDynamicMasterPassword();
   assert.equal(current, "initial-secure-pass-123");
