@@ -7,6 +7,10 @@ const ProvidersWorkspace = dynamic(() => import("@/components/crm/ProvidersWorks
 });
 import { MasterAdminSkeleton, ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
 import { WhatsAppRadarSection } from "@/components/crm/WhatsAppRadarSection";
+import {
+  computeFinanceMetrics, resolvePeriod,
+  type PeriodPreset, type FinanceSubscriptionStatus
+} from "@/lib/crm/finance-metrics";
 import { BroadcastManagerSection } from "@/components/crm/BroadcastManagerSection";
 
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
@@ -36,6 +40,21 @@ import {
   CheckSquare, Square, Crown, Bot, BarChart3, MessageCircle, BookOpen, Mail, Lock, EyeOff, LogIn, X,
   PanelLeftClose, PanelLeftOpen, Radio, Megaphone, Download, Activity
 } from "lucide-react";
+
+const brl = (n: number | null | undefined) =>
+  n === null || n === undefined ? "—" : "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function FinCard({ label, value, hint, color = "#fff", unavailable }: {
+  label: string; value: string | number; hint?: string; color?: string; unavailable?: boolean;
+}) {
+  return (
+    <div className="op-card" style={{ padding: "16px 18px", borderRadius: "14px", opacity: unavailable ? 0.65 : 1 }}>
+      <span style={{ fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700 }}>{label}</span>
+      <strong style={{ display: "block", fontSize: "24px", color: unavailable ? "#9ca3af" : color, marginTop: "4px", fontWeight: 800 }}>{value}</strong>
+      {hint && <small style={{ color: "#9ca3af", fontSize: "11px", lineHeight: 1.3, display: "block", marginTop: "2px" }}>{hint}</small>}
+    </div>
+  );
+}
 
 type ClientUser = {
   id: string;
@@ -721,6 +740,16 @@ export default function AdminCRM() {
   } | null>(null);
   const [whatsappCopied, setWhatsappCopied] = useState(false);
 
+  // Financeiro: filtros do dashboard (Faturamento & Métricas)
+  const [finPeriod, setFinPeriod] = useState<PeriodPreset>("month");
+  const [finFrom, setFinFrom] = useState("");
+  const [finTo, setFinTo] = useState("");
+  const [finPlan, setFinPlan] = useState("");
+  const [finStatus, setFinStatus] = useState<FinanceSubscriptionStatus>("all");
+  const [finTenant, setFinTenant] = useState("");
+  const [finLoading, setFinLoading] = useState(false);
+  const [finRefreshedAt, setFinRefreshedAt] = useState<Date | null>(null);
+
   // Administrative Suspension Modal state (with public reason + internal note)
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [clientToBlock, setClientToBlock] = useState<Client | null>(null);
@@ -930,17 +959,26 @@ export default function AdminCRM() {
     }
   };
 
-  // KPIs
-  const kpis = useMemo(() => {
-    const total = clients.length;
-    const connected = clients.filter(c => c.whatsappStatus === "connected").length;
-    const revenue = clients.reduce((acc, c) => {
-      const val = parseFloat(c.plan.price.replace(/\./g, "").replace(",", ".")) || 0;
-      return acc + val;
-    }, 0);
-    const blocked = clients.filter(c => c.status === "suspended" || c.plan.isOverdue).length;
-    return { total, connected, revenue, blocked };
-  }, [clients]);
+  // Financeiro: indicadores calculados por fonte única (src/lib/crm/finance-metrics.ts)
+  const finance = useMemo(() => {
+    const { from, to } = resolvePeriod(finPeriod, new Date(), { from: finFrom, to: finTo });
+    return computeFinanceMetrics({
+      clients,
+      recharges: adminRecharges,
+      planCatalog: plans.map(p => ({ id: p.id, name: p.name, price: p.price })),
+      filters: { from, to, planId: finPlan || undefined, subscriptionStatus: finStatus, tenantId: finTenant || undefined }
+    });
+  }, [clients, adminRecharges, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant]);
+
+  const refreshFinance = useCallback(async () => {
+    setFinLoading(true);
+    try {
+      await Promise.all([fetchClients(), fetchPlans(), fetchRecharges()]);
+      setFinRefreshedAt(new Date());
+    } finally {
+      setFinLoading(false);
+    }
+  }, [fetchClients, fetchPlans, fetchRecharges]);
 
   // Client counts per plan
   const planDistribution = useMemo(() => {
@@ -4365,61 +4403,199 @@ export default function AdminCRM() {
 
         {/* ===================== VIEW: FATURAMENTO & KPIS ===================== */}
         {currentNav === "kpis" && (
-          <section>
-            <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "18px", marginBottom: "26px"}}>
-              <div className="op-card" style={{padding: "20px"}}>
-                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Total de Clientes</span>
-                <strong style={{display: "block", fontSize: "32px", color: "white", marginTop: "4px"}}>{kpis.total}</strong>
-                <small style={{color: "#00db8c", fontSize: "12px"}}>Lojistas cadastrados</small>
-              </div>
-
-              <div className="op-card" style={{padding: "20px"}}>
-                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>WhatsApps Conectados</span>
-                <strong style={{display: "block", fontSize: "32px", color: "#00db8c", marginTop: "4px"}}>{kpis.connected}</strong>
-                <small style={{color: "#9ca3af", fontSize: "12px"}}>Operando com NovaesWeb IA</small>
-              </div>
-
-              <div className="op-card" style={{padding: "20px"}}>
-                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Receita Mensal Recorrente</span>
-                <strong style={{display: "block", fontSize: "32px", color: "#ec4899", marginTop: "4px"}}>
-                  R$ {kpis.revenue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                </strong>
-                <small style={{color: "#9ca3af", fontSize: "12px"}}>Faturamento estimado mensal</small>
-              </div>
-
-              <div className="op-card" style={{padding: "20px"}}>
-                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Lojas com Pendência/Bloqueio</span>
-                <strong style={{display: "block", fontSize: "32px", color: kpis.blocked > 0 ? "#f43f5e" : "#9ca3af", marginTop: "4px"}}>
-                  {kpis.blocked}
-                </strong>
-                <small style={{color: "#9ca3af", fontSize: "12px"}}>Mensalidade atrasada ou suspensa</small>
-              </div>
-            </div>
-
-            <div className="op-card" style={{padding: "24px"}}>
-              <h3 style={{fontSize: "18px", fontWeight: 800, margin: "0 0 16px", color: "white"}}>Distribuição de Clientes por Plano</h3>
-              <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px"}}>
-                {plans.map(p => {
-                  const count = clientCountsMap[p.id] ?? planDistribution[p.name] ?? 0;
-                  const priceVal = parseFloat(p.price.replace(/\./g, "").replace(",", ".")) || 0;
-                  const totalPlanRev = count * priceVal;
-                  return (
-                    <div key={p.id} style={{padding: "16px", background: "rgba(255,255,255,0.03)", borderRadius: "12px", border: "1px solid #332b49"}}>
-                      <strong style={{fontSize: "16px", color: "white", display: "block"}}>{p.name}</strong>
-                      <span style={{fontSize: "13px", color: "#ec4899", fontWeight: 700}}>R$ {p.price}/mês</span>
-                      <div style={{marginTop: "10px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
-                        <span>Lojas ativas:</span>
-                        <strong style={{color: "white"}}>{count}</strong>
-                      </div>
-                      <div style={{marginTop: "4px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
-                        <span>Receita gerada:</span>
-                        <strong style={{color: "#00db8c"}}>R$ {totalPlanRev.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
-                      </div>
+          <section style={{display: "flex", flexDirection: "column", gap: "22px"}}>
+            {/* Filtros */}
+            <div className="op-card" style={{padding: "16px 18px", borderRadius: "14px", display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "flex-end"}}>
+              {(() => {
+                const sel: React.CSSProperties = {padding: "9px 10px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "13px"};
+                const lab: React.CSSProperties = {fontSize: "11px", color: "#9ca3af", display: "block", marginBottom: "4px", fontWeight: 700, textTransform: "uppercase"};
+                return (
+                  <>
+                    <div>
+                      <label style={lab}>Período</label>
+                      <select value={finPeriod} onChange={e => setFinPeriod(e.target.value as PeriodPreset)} style={sel}>
+                        <option value="today">Hoje</option>
+                        <option value="7d">Últimos 7 dias</option>
+                        <option value="month">Mês atual</option>
+                        <option value="prev_month">Mês anterior</option>
+                        <option value="3m">Últimos 3 meses</option>
+                        <option value="6m">Últimos 6 meses</option>
+                        <option value="12m">Últimos 12 meses</option>
+                        <option value="custom">Período personalizado</option>
+                      </select>
                     </div>
-                  );
-                })}
+                    {finPeriod === "custom" && (
+                      <>
+                        <div><label style={lab}>De</label><input type="date" value={finFrom} onChange={e => setFinFrom(e.target.value)} style={sel} /></div>
+                        <div><label style={lab}>Até</label><input type="date" value={finTo} onChange={e => setFinTo(e.target.value)} style={sel} /></div>
+                      </>
+                    )}
+                    <div>
+                      <label style={lab}>Plano</label>
+                      <select value={finPlan} onChange={e => setFinPlan(e.target.value)} style={sel}>
+                        <option value="">Todos</option>
+                        <option value="crm-trial">Teste Grátis</option>
+                        {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lab}>Situação</label>
+                      <select value={finStatus} onChange={e => setFinStatus(e.target.value as FinanceSubscriptionStatus)} style={sel}>
+                        <option value="all">Todas</option>
+                        <option value="active">Ativas</option>
+                        <option value="paying">Pagantes</option>
+                        <option value="trial">Teste grátis</option>
+                        <option value="overdue">Inadimplentes</option>
+                        <option value="suspended">Suspensas</option>
+                        <option value="canceled">Canceladas</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lab}>Empresa</label>
+                      <select value={finTenant} onChange={e => setFinTenant(e.target.value)} style={{...sel, maxWidth: "200px"}}>
+                        <option value="">Todas</option>
+                        {clients.filter(c => !c.isMasterOwnTenant).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  </>
+                );
+              })()}
+              <div style={{marginLeft: "auto", display: "flex", alignItems: "center", gap: "12px"}}>
+                <small style={{color: "#9ca3af", fontSize: "11px"}}>
+                  Atualizado: {(finRefreshedAt ?? new Date(finance.generatedAt)).toLocaleString("pt-BR")}
+                </small>
+                <button type="button" className="op-refresh" onClick={refreshFinance} disabled={finLoading}
+                  style={{padding: "9px 14px", borderRadius: "8px", display: "flex", alignItems: "center", gap: "6px", fontSize: "13px"}}>
+                  <RefreshCw size={14} className={finLoading ? "animate-spin" : undefined} /> Atualizar
+                </button>
               </div>
             </div>
+
+            {loading && clients.length === 0 ? (
+              <div className="op-card" style={{padding: "28px", textAlign: "center", color: "#9ca3af"}}>Carregando indicadores financeiros...</div>
+            ) : finance.totals.companies === 0 && clients.filter(c => !c.isMasterOwnTenant).length === 0 ? (
+              <div className="op-card" style={{padding: "28px", textAlign: "center", color: "#9ca3af"}}>
+                Nenhuma empresa cadastrada ainda. Os indicadores aparecem assim que houver clientes reais.
+              </div>
+            ) : (
+              <>
+                {/* Alertas */}
+                {(finance.alerts.overdueClients.length > 0 || finance.alerts.pendingRecharges > 0 || finance.alerts.duplicatePayments > 0 || finance.alerts.dueSoon.length > 0) && (
+                  <div className="op-card" style={{padding: "14px 18px", borderRadius: "14px", border: "1px solid rgba(245,158,11,0.4)", background: "rgba(245,158,11,0.06)", display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#fcd34d"}}>
+                    <strong style={{color: "#fff"}}>⚠️ Alertas financeiros</strong>
+                    {finance.alerts.overdueClients.length > 0 && <span>🔴 {finance.alerts.overdueClients.length} empresa(s) em atraso ({brl(finance.money.overdueAmount)}). Mais antiga: {finance.alerts.overdueClients[0].name}, {finance.alerts.overdueClients[0].daysOverdue} dia(s).</span>}
+                    {finance.alerts.dueSoon.length > 0 && <span>🟡 {finance.alerts.dueSoon.length} cobrança(s) vencendo em 7 dias ({brl(finance.money.dueNext7Days)}).</span>}
+                    {finance.alerts.pendingRecharges > 0 && <span>⏳ {finance.alerts.pendingRecharges} recarga(s) aguardando sua conferência.</span>}
+                    {finance.alerts.duplicatePayments > 0 && <span>🧾 {finance.alerts.duplicatePayments} possível(is) pagamento(s) duplicado(s) no mesmo ciclo — revise o histórico.</span>}
+                  </div>
+                )}
+
+                {/* Clientes */}
+                <div>
+                  <h3 style={{fontSize: "14px", fontWeight: 800, margin: "0 0 10px", color: "#c4bed6", textTransform: "uppercase", letterSpacing: "0.6px"}}>Clientes</h3>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px"}}>
+                    <FinCard label="Empresas cadastradas" value={finance.totals.companies} hint="Exclui a loja própria da NovaesWeb" />
+                    <FinCard label="Clientes ativos" value={finance.totals.active} color="#00db8c" hint="Não suspensos nem cancelados (inclui testes)" />
+                    <FinCard label="Clientes pagantes" value={finance.totals.paying} color="#00db8c" hint="Ativos em plano pago, fora do teste" />
+                    <FinCard label="Em teste grátis" value={finance.totals.trial} color="#a855f7" hint="Não contam como pagantes" />
+                    <FinCard label="Inadimplentes" value={finance.totals.overdue} color={finance.totals.overdue > 0 ? "#f43f5e" : "#fff"} hint="Cobrança vencida e não paga" />
+                    <FinCard label="Suspensos" value={finance.totals.suspended} color={finance.totals.suspended > 0 ? "#f59e0b" : "#fff"} />
+                    <FinCard label="Cancelados" value={finance.totals.canceled} />
+                    <FinCard label="Novos no período" value={finance.totals.newInPeriod} />
+                    <FinCard label="Renovaram no período" value={finance.totals.renewedInPeriod} hint="Pagamento confirmado após um anterior" />
+                    <FinCard label="Pedidos de cancelamento" value="Indisponível" unavailable hint="Sistema ainda não registra esse pedido" />
+                  </div>
+                </div>
+
+                {/* Financeiro */}
+                <div>
+                  <h3 style={{fontSize: "14px", fontWeight: 800, margin: "0 0 10px", color: "#c4bed6", textTransform: "uppercase", letterSpacing: "0.6px"}}>Financeiro</h3>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "14px"}}>
+                    <FinCard label="Receita recebida (período)" value={brl(finance.money.receivedInPeriod)} color="#00db8c" hint="Somente pagamentos confirmados" />
+                    <FinCard label="MRR contratado" value={brl(finance.money.mrr)} color="#ec4899" hint="Mensalidade contratada dos pagantes — não é caixa" />
+                    <FinCard label="Contas a receber" value={brl(finance.money.receivable)} hint="Cobranças em aberto de planos pagos" />
+                    <FinCard label="Total em atraso" value={brl(finance.money.overdueAmount)} color={finance.money.overdueAmount > 0 ? "#f43f5e" : "#fff"} />
+                    <FinCard label="Vencem em 7 dias" value={brl(finance.money.dueNext7Days)} hint={`${finance.money.dueNext7DaysCount} cobrança(s)`} />
+                    <FinCard label="Novas assinaturas (receita)" value={brl(finance.money.newSubscriptionRevenue)} hint="1º pagamento confirmado da empresa" />
+                    <FinCard label="Renovações (receita)" value={brl(finance.money.recurringRevenue)} hint="Pagamentos seguintes ao primeiro" />
+                    <FinCard label="Upgrades (receita)" value="Indisponível" unavailable hint="Pagamentos ainda não são classificados como upgrade" />
+                    <FinCard label="Adicionais/serviços extras" value="Indisponível" unavailable hint="Sem registro de serviços extras" />
+                    <FinCard label="Recargas de IA (receita)" value={brl(finance.money.rechargeRevenue)} color="#00db8c" hint="Recargas aprovadas no período" />
+                    <FinCard label="Ticket médio contratado" value={brl(finance.money.averageTicket)} hint="MRR ÷ clientes pagantes" />
+                    <FinCard label="Despesas" value="Em breve" unavailable hint="Cadastro de despesas na próxima fase" />
+                    <FinCard label="Lucro operacional estimado" value="Em breve" unavailable hint="Depende do cadastro de despesas" />
+                    <FinCard label="Margem operacional" value="Em breve" unavailable hint="Depende do cadastro de despesas" />
+                  </div>
+                </div>
+
+                {/* Previsão */}
+                <div className="op-card" style={{padding: "20px", borderRadius: "14px"}}>
+                  <h3 style={{fontSize: "16px", fontWeight: 800, margin: "0 0 4px", color: "white"}}>Previsão de cobranças</h3>
+                  <small style={{color: "#9ca3af", fontSize: "12px"}}>Calculada pelos contratos e vencimentos reais. É uma previsão, não dinheiro garantido nem receita recebida.</small>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", marginTop: "12px"}}>
+                    {([["Próximos 30 dias", finance.forecast.d30], ["Próximos 60 dias", finance.forecast.d60], ["Próximos 90 dias", finance.forecast.d90]] as const).map(([l, v]) => (
+                      <div key={l} style={{padding: "12px 14px", borderRadius: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid #332b49"}}>
+                        <span style={{fontSize: "12px", color: "#9ca3af"}}>{l}</span>
+                        <strong style={{display: "block", fontSize: "20px", color: "#c4b5fd"}}>{brl(v)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Distribuição por plano */}
+                <div className="op-card" style={{padding: "24px"}}>
+                  <h3 style={{fontSize: "18px", fontWeight: 800, margin: "0 0 4px", color: "white"}}>Distribuição de Clientes por Plano</h3>
+                  <small style={{color: "#9ca3af", fontSize: "12px"}}>A receita de cada plano soma os contratos reais das empresas (inclusive valores negociados), não o preço de tabela × quantidade.</small>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", marginTop: "14px"}}>
+                    {finance.plans.map(p => (
+                      <div key={p.planId} style={{padding: "16px", background: "rgba(255,255,255,0.03)", borderRadius: "12px", border: "1px solid #332b49"}}>
+                        <strong style={{fontSize: "16px", color: "white", display: "block"}}>{p.name}</strong>
+                        <span style={{fontSize: "13px", color: "#ec4899", fontWeight: 700}}>
+                          {p.catalogPrice === null ? "Contrato individual" : `Tabela: R$ ${p.catalogPrice}/mês`}
+                        </span>
+                        <div style={{height: "6px", borderRadius: "4px", background: "#241e38", margin: "10px 0 8px", overflow: "hidden"}}>
+                          <div style={{width: `${Math.min(100, p.percent)}%`, height: "100%", background: "linear-gradient(90deg, #a855f7, #ec4899, #f43f5e)"}} />
+                        </div>
+                        {([
+                          ["Empresas", `${p.companies} (${p.percent.toFixed(0)}%)`],
+                          ["Ativas", p.active],
+                          ["Pagantes", p.paying],
+                          ["Suspensas", p.suspended],
+                          ["Canceladas", p.canceled],
+                          ["Novas no período", p.newInPeriod]
+                        ] as const).map(([l, v]) => (
+                          <div key={l} style={{marginTop: "3px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
+                            <span>{l}:</span><strong style={{color: "white"}}>{v}</strong>
+                          </div>
+                        ))}
+                        <div style={{marginTop: "6px", display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#9ca3af"}}>
+                          <span>Receita recorrente:</span><strong style={{color: "#00db8c"}}>{brl(p.mrr)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Inadimplência e vencimentos */}
+                {(finance.alerts.overdueClients.length > 0 || finance.alerts.dueSoon.length > 0) && (
+                  <div className="op-card" style={{padding: "20px", borderRadius: "14px"}}>
+                    <h3 style={{fontSize: "16px", fontWeight: 800, margin: "0 0 10px", color: "white"}}>Atrasos e próximos vencimentos</h3>
+                    <div style={{display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px"}}>
+                      {finance.alerts.overdueClients.map(o => (
+                        <div key={o.id} style={{display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: "8px", background: "rgba(244,63,94,0.08)", color: "#fca5a5"}}>
+                          <span>🔴 {o.name} — {o.daysOverdue} dia(s) em atraso</span><strong>{brl(o.amount)}</strong>
+                        </div>
+                      ))}
+                      {finance.alerts.dueSoon.map(o => (
+                        <div key={o.tenantId} style={{display: "flex", justifyContent: "space-between", padding: "8px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.08)", color: "#fcd34d"}}>
+                          <span>🟡 {o.name} — vence em {o.dueDate.split("-").reverse().join("/")}</span><strong>{brl(o.amount)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </section>
         )}
 
