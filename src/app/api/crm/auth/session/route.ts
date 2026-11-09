@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
         if (!tenantIds.length) {
           return privateJson({
             error: "no_membership",
-            message: "Sua conta de usuário não possui vínculo com nenhuma loja ativa no CRM. Solicite um convite ao administrador da sua loja."
+            message: "Sua conta foi criada com sucesso, mas ainda está aguardando vinculação com a sua loja. Entre em contato com a administração NovaesWeb para concluir a ativação."
           }, 403);
         }
 
