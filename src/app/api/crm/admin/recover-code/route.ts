@@ -63,21 +63,10 @@ export async function POST(request: NextRequest) {
     const evolutionKey = process.env.EVOLUTION_API_KEY ?? "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
     const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
-    const rawPhoneList = [
-      process.env.CRM_MASTER_RECOVERY_WHATSAPP,
-      process.env.MASTER_RECOVERY_PHONE,
-      process.env.MASTER_NOTIFICATION_PHONE,
-      "555194892414",
-      "555191189293"
-    ].filter(Boolean).join(",");
-
-    const targetPhones = Array.from(new Set(
-      rawPhoneList
-        .split(/[,;]/)
-        .map(p => p.replace(/\D/g, "").trim())
-        .map(d => (d.length === 10 || d.length === 11) ? "55" + d : d)
-        .filter(p => p.length >= 10)
-    ));
+    const rawPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || process.env.MASTER_RECOVERY_PHONE || "5551981964238";
+    const digits = rawPhone.replace(/\D/g, "").trim();
+    const targetPhone = (digits.length === 10 || digits.length === 11) ? "55" + digits : digits;
+    const targetPhones = [targetPhone].filter(p => p.length >= 10);
 
     if (evolutionUrl && evolutionKey && targetPhones.length > 0) {
       const confirmMsg = `✅ *NovaesWeb CRM - Senha Master Atualizada*\n\nA senha de administrador Master foi redefinida com sucesso.\nSeu acesso administrativo foi desbloqueado com segurança.`;

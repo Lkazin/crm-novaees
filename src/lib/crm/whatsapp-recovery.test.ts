@@ -23,20 +23,20 @@ import {
 
 // Scenario 1: Cadastro e verificação do WhatsApp no Painel Master
 test("1. Cadastro e verificação do WhatsApp no Painel Master", async () => {
-  const phone = "(51) 99118-9293";
+  const phone = "(51) 98196-4238";
   const challenge = await createPhoneVerificationChallenge("master", "master", phone);
   assert.equal(challenge.success, true);
   assert.ok(challenge.challengeId);
-  assert.equal(challenge.maskedPhone, "+55 (51) 9****-9293");
+  assert.equal(challenge.maskedPhone, "+55 (51) 9****-4238");
 
   // In memory verification
   const saved = await saveMasterRecoveryPhoneConfig(phone, true);
   assert.equal(saved, true);
 
   const config = await getMasterRecoveryPhoneConfig();
-  assert.equal(config.phone, "5551991189293");
+  assert.equal(config.phone, "5551981964238");
   assert.equal(config.verified, true);
-  assert.equal(config.masked, "+55 (51) 9****-9293");
+  assert.equal(config.masked, "+55 (51) 9****-4238");
 });
 
 // Scenario 2: Cadastro e verificação no Painel do Cliente
@@ -220,9 +220,9 @@ test("12. Impossibilidade de acessar outras contas (Isolamento Multi-Empresa)", 
 // Scenario 13: Canal de recuperação funciona sem reativar automações comerciais
 test("13. Canal de recuperação utiliza canal autorizado do sistema sem afetar cotas de IA", async () => {
   // Masking and normalization should handle recovery numbers correctly
-  const masterPhone = "555191189293";
+  const masterPhone = "5551981964238";
   const masked = maskPhone(masterPhone);
-  assert.equal(masked, "+55 (51) 9****-9293");
+  assert.equal(masked, "+55 (51) 9****-4238");
 
   // In-memory master recovery phone fallback
   const config = await getMasterRecoveryPhoneConfig();

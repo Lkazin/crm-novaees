@@ -17,6 +17,7 @@ import {
   resetLoginAttempts,
   getActiveMasterOtpForIp
 } from "@/lib/crm/master-auth";
+import { findUserRecoveryPhoneByEmail, createRecoveryChallenge } from "@/lib/crm/recovery-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -370,21 +371,31 @@ export async function POST(request: NextRequest) {
     // Credential check failed
     const clientFailResult = await recordFailedLoginAttempt(ip, isMasterScope);
     if (clientFailResult.blocked) {
+      if (email && email.includes("@")) {
+        try {
+          const userInfo = await findUserRecoveryPhoneByEmail(email);
+          if (userInfo && userInfo.phone && userInfo.verified) {
+            await createRecoveryChallenge("client", email, userInfo.phone, userInfo.userId);
+          }
+        } catch {}
+      }
+
       return privateJson({
         error: "too_many_attempts",
         blocked: true,
-        canRecoverViaWhatsapp: isMasterScope,
+        canRecoverViaWhatsapp: true,
         message: isMasterScope
           ? "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
-          : "Muitas tentativas incorretas. Acesso bloqueado temporariamente por 15 minutos para proteção."
+          : "Acesso bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança para seu WhatsApp oficial cadastrado."
       }, 429);
     }
 
+    const remaining = Math.max(0, 5 - clientFailResult.attempts);
     return privateJson({
       error: "invalid_credentials",
       message: isMasterScope
-        ? "E-mail ou senha Master incorretos. Verifique suas credenciais de administrador."
-        : "E-mail ou senha incorretos. Verifique suas credenciais de acesso."
+        ? `Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
+        : `E-mail ou senha incorretos. Verifique suas credenciais de acesso.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
     }, 401);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "auth_failed" }, 500);

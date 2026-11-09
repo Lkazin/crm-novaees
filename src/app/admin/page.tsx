@@ -1450,13 +1450,13 @@ export default function AdminCRM() {
     }
   };
 
-  // Skeleton Loading when checking session or logging into Master panel
-  if (loading && authenticated) {
+  // Smooth Skeleton Loading while verifying session or redirecting unauthorized users
+  if (loading || !authenticated) {
     return <MasterAdminSkeleton />;
   }
 
-  // Login Screen if not authenticated
-  if (!authenticated) {
+  // Obsolete fallback - will not render because of condition above
+  if (false as boolean) {
     return (
       <main
         style={{

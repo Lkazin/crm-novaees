@@ -65,7 +65,7 @@ export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promis
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       const count = await redis.get(redisKey);
       const attempts = count ? parseInt(count, 10) : 0;
-      if (attempts >= (isMasterScope ? 5 : 8)) {
+      if (attempts >= 5) {
         return { blocked: true, attempts, remainingSeconds: 900 };
       }
     }
@@ -77,7 +77,7 @@ export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promis
 export async function recordFailedLoginAttempt(ip: string, isMasterScope: boolean): Promise<{ attempts: number; blocked: boolean; otpDispatched?: boolean; otpCode?: string }> {
   const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
   const now = Date.now();
-  const maxAttempts = isMasterScope ? 5 : 8;
+  const maxAttempts = 5;
   const ttlMs = 15 * 60 * 1000;
 
   let entry = inMemoryRateLimits.get(key);
@@ -209,23 +209,12 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   const evolutionKey = process.env.EVOLUTION_API_KEY ?? "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
   const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
-  const rawPhoneList = [
-    process.env.CRM_MASTER_RECOVERY_WHATSAPP,
-    process.env.MASTER_RECOVERY_PHONE,
-    process.env.MASTER_NOTIFICATION_PHONE,
-    "555194892414",
-    "555191189293"
-  ].filter(Boolean).join(",");
+  const rawPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || process.env.MASTER_RECOVERY_PHONE || "5551981964238";
+  const digits = rawPhone.replace(/\D/g, "").trim();
+  const targetPhone = (digits.length === 10 || digits.length === 11) ? "55" + digits : digits;
+  const targetPhones = [targetPhone].filter(p => p.length >= 10);
 
-  const targetPhones = Array.from(new Set(
-    rawPhoneList
-      .split(/[,;]/)
-      .map(p => p.replace(/\D/g, "").trim())
-      .map(d => (d.length === 10 || d.length === 11) ? "55" + d : d)
-      .filter(p => p.length >= 10)
-  ));
-
-  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp targets: ${targetPhones.join(", ")}`);
+  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp target: ${targetPhone}`);
 
   if (evolutionUrl && evolutionKey && targetPhones.length > 0) {
     const msg = `🚨 *Alerta de Segurança Master - NovaesWeb CRM*\n\nO acesso administrativo foi temporariamente bloqueado após 5 tentativas incorretas.\n\nSeu código de segurança para desbloquear e redefinir sua senha é:\n\n👉 *${otpCode}*\n\n⏳ Válido por 15 minutos. Digite este código no portal para liberar seu acesso imediatamente.`;

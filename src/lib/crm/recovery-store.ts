@@ -42,7 +42,7 @@ const inMemoryChallenges = new Map<string, RecoveryChallenge>();
 const inMemoryPhoneVerifications = new Map<string, PhoneVerificationChallenge>();
 const inMemoryTickets = new Map<string, RecoveryTicket>();
 
-let inMemoryMasterRecoveryPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || "555194892414,555191189293";
+let inMemoryMasterRecoveryPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || "5551981964238";
 let inMemoryMasterRecoveryVerified = true;
 
 /**
@@ -64,7 +64,7 @@ function maskSinglePhone(phone: string): string {
   const norm = normalizePhone(phone);
   if (!norm || norm.length < 8) return "Número não configurado";
 
-  // E.g. 5551991189293 -> +55 (51) 9****-9293
+  // E.g. 5551981964238 -> +55 (51) 9****-4238
   if (norm.startsWith("55") && norm.length >= 12) {
     const ddd = norm.slice(2, 4);
     const rest = norm.slice(4);
@@ -469,7 +469,7 @@ export async function getMasterRecoveryPhoneConfig(): Promise<{ phone: string; m
             try {
               const parsed = JSON.parse(rows[0].business_description);
               if (parsed?.securitySettings?.recoveryWhatsapp) {
-                const phone = parsed.securitySettings.recoveryWhatsapp;
+                const phone = normalizePhone(parsed.securitySettings.recoveryWhatsapp);
                 const verified = parsed.securitySettings.recoveryWhatsappVerified === true;
                 inMemoryMasterRecoveryPhone = phone;
                 inMemoryMasterRecoveryVerified = verified;

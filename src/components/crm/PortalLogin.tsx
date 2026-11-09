@@ -1003,7 +1003,7 @@ export default function PortalLogin({ scope }: { scope: "master" | "client" }) {
 
           <div className={styles.footerLinks}>
             <a
-              href="https://wa.me/5551991189293?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20acesso%20ao%20NovaesWeb%20CRM%20IA"
+              href="https://wa.me/5551981964238?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20acesso%20ao%20NovaesWeb%20CRM%20IA"
               target="_blank"
               rel="noopener noreferrer"
               className={styles.footerHelpLink}

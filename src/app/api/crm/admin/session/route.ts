@@ -8,10 +8,13 @@ import {
   timingSafeMatch,
   verifyMasterRequest,
   revokeMasterToken,
+  getDynamicMasterPassword,
   getMasterPassword,
-  getLegacyAdminToken
+  getLegacyAdminToken,
+  isLoginBlocked,
+  recordFailedLoginAttempt,
+  resetLoginAttempts
 } from "@/lib/crm/master-auth";
-import { getRedis } from "@/lib/crm/plans";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,23 +37,6 @@ export async function POST(request: NextRequest) {
       request.headers.get("x-real-ip") ||
       "local_client";
 
-    const redis = getRedis();
-    const rateLimitKey = `crm:ratelimit:master_login:${ip}`;
-    let attempts = 0;
-    try {
-      if (redis.status === "ready") {
-        const raw = await redis.get(rateLimitKey);
-        attempts = raw ? parseInt(raw, 10) : 0;
-      }
-    } catch {}
-
-    if (attempts >= 8) {
-      return privateJson({
-        error: "too_many_attempts",
-        message: "Muitas tentativas incorretas. Acesso Master bloqueado temporariamente por 15 minutos para proteção."
-      }, 429);
-    }
-
     const body = await request.json().catch(() => ({}));
     const candidate = (
       typeof body.password === "string" ? body.password :
@@ -60,72 +46,86 @@ export async function POST(request: NextRequest) {
     const email = typeof body.email === "string" ? body.email.trim() : "";
     const rememberMe = Boolean(body.rememberMe);
 
-    const masterPassword = getMasterPassword();
+    const masterPassword = await getDynamicMasterPassword();
+    const legacyPass = getMasterPassword();
     const adminToken = getLegacyAdminToken();
 
-    // Only the configured secret authenticates a Master session.
-    // Tolerant to trailing dot and case-insensitivity to prevent accidental lockouts.
-    const isMasterPasswordMatch = Boolean(
-      masterPassword && (
-        timingSafeMatch(candidate, masterPassword) ||
-        (masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword.slice(0, -1))) ||
-        (!masterPassword.endsWith(".") && timingSafeMatch(candidate, masterPassword + ".")) ||
-        timingSafeMatch(candidate.toLowerCase(), masterPassword.toLowerCase()) ||
-        (masterPassword.endsWith(".") && timingSafeMatch(candidate.toLowerCase(), masterPassword.slice(0, -1).toLowerCase()))
+    // Check credentials match with case tolerance and optional dot
+    const checkMatch = (pw: string) => Boolean(
+      pw && (
+        timingSafeMatch(candidate, pw) ||
+        (pw.endsWith(".") && timingSafeMatch(candidate, pw.slice(0, -1))) ||
+        (!pw.endsWith(".") && timingSafeMatch(candidate, pw + ".")) ||
+        timingSafeMatch(candidate.toLowerCase(), pw.toLowerCase()) ||
+        (pw.endsWith(".") && timingSafeMatch(candidate.toLowerCase(), pw.slice(0, -1).toLowerCase()))
       )
     );
 
+    const isMasterPasswordMatch = checkMatch(masterPassword) || (legacyPass !== masterPassword && checkMatch(legacyPass));
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(candidate, adminToken));
 
-    if (!candidate || (!isMasterPasswordMatch && !isAdminTokenMatch)) {
-      try {
-        if (redis.status === "ready") {
-          await redis.incr(rateLimitKey);
-          await redis.expire(rateLimitKey, 15 * 60); // 15 minutes window
-        }
-      } catch {}
-      return privateJson({
-        error: "invalid_credentials",
-        message: "E-mail ou senha Master incorretos. Verifique suas credenciais de administrador."
-      }, 401);
+    // If master password is correct, immediately reset attempts and unblock
+    if (candidate && (isMasterPasswordMatch || isAdminTokenMatch)) {
+      await resetLoginAttempts(ip, true);
+
+      const actor = "master_admin";
+      const token = signMasterToken(actor, rememberMe);
+      const response = NextResponse.json({ authenticated: true, actor, email: email || undefined });
+
+      const isSecure = request.nextUrl.protocol === "https:" &&
+        !request.nextUrl.hostname.includes("localhost") &&
+        !request.nextUrl.hostname.includes("127.0.0.1");
+
+      const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : MASTER_SESSION_TTL_SEC;
+
+      response.cookies.set({
+        name: MASTER_COOKIE_NAME,
+        value: token,
+        httpOnly: true,
+        secure: isSecure,
+        sameSite: "lax",
+        path: "/",
+        maxAge
+      });
+
+      response.cookies.set("nw_crm_session", "", {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: isSecure,
+        path: "/",
+        maxAge: 0
+      });
+
+      return response;
     }
 
-    // Clear rate limit counter on success
-    try {
-      if (redis.status === "ready") {
-        await redis.del(rateLimitKey);
-      }
-    } catch {}
+    // Check if currently blocked
+    const blockCheck = await isLoginBlocked(ip, true);
+    if (blockCheck.blocked) {
+      return privateJson({
+        error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: true,
+        message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+      }, 429);
+    }
 
-    const actor = "master_admin";
-    const token = signMasterToken(actor, rememberMe);
-    const response = NextResponse.json({ authenticated: true, actor, email: email || undefined });
+    // Record failed attempt
+    const failResult = await recordFailedLoginAttempt(ip, true);
+    if (failResult.blocked) {
+      return privateJson({
+        error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: true,
+        message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+      }, 429);
+    }
 
-    const isSecure = request.nextUrl.protocol === "https:" &&
-      !request.nextUrl.hostname.includes("localhost") &&
-      !request.nextUrl.hostname.includes("127.0.0.1");
-
-    const maxAge = rememberMe ? MASTER_REMEMBER_TTL_SEC : MASTER_SESSION_TTL_SEC;
-
-    response.cookies.set({
-      name: MASTER_COOKIE_NAME,
-      value: token,
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: "lax",
-      path: "/",
-      maxAge
-    });
-
-    response.cookies.set("nw_crm_session", "", {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: isSecure,
-      path: "/",
-      maxAge: 0
-    });
-
-    return response;
+    const remaining = Math.max(0, 5 - failResult.attempts);
+    return privateJson({
+      error: "invalid_credentials",
+      message: `Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
+    }, 401);
   } catch (e) {
     return privateJson({ error: e instanceof Error ? e.message : "auth_failed" }, 500);
   }
@@ -152,4 +152,3 @@ export async function DELETE(request: NextRequest) {
   });
   return response;
 }
-
