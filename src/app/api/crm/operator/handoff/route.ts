@@ -116,7 +116,6 @@ export async function POST(request: NextRequest) {
               method: "PATCH",
               headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
               body: JSON.stringify({
-                status: "accepted",
                 status: "accepted"
               })
             }
@@ -159,7 +158,6 @@ export async function POST(request: NextRequest) {
           method: "PATCH",
           headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
           body: JSON.stringify({
-            status: "accepted",
             status: "accepted"
           })
         }
