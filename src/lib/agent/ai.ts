@@ -13,9 +13,10 @@ function approvedModels(primary: string, fallback?: string): string[] {
   // Brazilian Portuguese models first so it never falls into weak 7B non-PT models.
   if (primary.startsWith("auto")) {
     const preferred = [
-      "groq/openai/gpt-oss-20b",
-      "auto/gpt",
+      primary !== "auto" ? primary : "auto/best-chat",
       "auto/best-chat",
+      "auto/gpt",
+      "groq/openai/gpt-oss-20b",
       fallback && !fallback.startsWith("auto") ? fallback : "auto/fast"
     ].filter(Boolean) as string[];
     return [...new Set(preferred)].slice(0, 4);

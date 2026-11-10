@@ -117,8 +117,7 @@ export async function POST(request: NextRequest) {
               headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
               body: JSON.stringify({
                 status: "accepted",
-                accepted_by: operator.id,
-                accepted_at: new Date().toISOString()
+                status: "accepted"
               })
             }
           );
@@ -129,8 +128,7 @@ export async function POST(request: NextRequest) {
               method: "PATCH",
               headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
               body: JSON.stringify({
-                status: "closed",
-                resolved_at: new Date().toISOString()
+                status: "closed"
               })
             }
           );
@@ -162,8 +160,7 @@ export async function POST(request: NextRequest) {
           headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
           body: JSON.stringify({
             status: "accepted",
-            accepted_by: operator.id,
-            accepted_at: new Date().toISOString()
+            status: "accepted"
           })
         }
       ).catch(() => {});
@@ -192,8 +189,7 @@ export async function POST(request: NextRequest) {
           method: "PATCH",
           headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
           body: JSON.stringify({
-            status: "closed",
-            resolved_at: new Date().toISOString()
+            status: "closed"
           })
         }
       ).catch(() => {});
@@ -207,7 +203,7 @@ export async function POST(request: NextRequest) {
         } catch {}
       }
 
-      return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "ai" });
+      return privateJson({ claimed: false, conversationId: conversation, mode: "ai", status: "open" });
     } else {
       const validOperatorId = operator.id && UUID.test(operator.id) ? operator.id : null;
 
@@ -244,12 +240,8 @@ export async function POST(request: NextRequest) {
 
       // 3. Update pending handoffs to accepted
       const handoffUpdate: Record<string, unknown> = {
-        status: "accepted",
-        accepted_at: new Date().toISOString()
+        status: "accepted"
       };
-      if (validOperatorId) {
-        handoffUpdate.accepted_by = validOperatorId;
-      }
       await fetch(
         `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
         {

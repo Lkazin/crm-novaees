@@ -1890,9 +1890,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
       }
 
       const json = await res.json() as { claimed?: boolean; mode?: string; summary?: string; error?: string };
+      setUrgentHandoffAlert(null);
+      setData(prev => {
+        if (!prev || !prev.conversations) return prev;
+        return {
+          ...prev,
+          conversations: prev.conversations.map(conv => {
+            if (conv.id === conversationId) {
+              return {
+                ...conv,
+                mode: targetMode,
+                status: "open",
+                assigned_to: targetMode === "human" ? conv.assigned_to : null
+              };
+            }
+            return conv;
+          }),
+          escalations: {
+            ...(prev.escalations || {}),
+            [conversationId]: undefined as any
+          }
+        };
+      });
       if (targetMode === "human") {
         setHandoffNotice(json.summary || "Atendimento assumido pelo atendente humano! A IA pausou as respostas nesta conversa.");
-        setUrgentHandoffAlert(null);
       } else {
         setHandoffNotice("Conversa devolvida para a NovaesWeb IA! Ela continuará atendendo automaticamente.");
       }

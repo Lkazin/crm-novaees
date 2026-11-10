@@ -118,7 +118,7 @@ export function WhatsAppRadarSection({ clients, onRefresh }: WhatsAppRadarSectio
   const handleTestConnection = async (instName: string) => {
     setTestingInstance(instName);
     try {
-      const res = await fetch(`/api/crm/operator/connection-status?instance=${encodeURIComponent(instName)}`);
+      const res = await fetch(`/api/crm/whatsapp/status?instance=${encodeURIComponent(instName)}`);
       if (res.ok) {
         const json = await res.json();
         const isOnline = json?.state === "open" || json?.status === "connected";
