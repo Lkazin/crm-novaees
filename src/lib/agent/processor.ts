@@ -335,6 +335,9 @@ export async function processWebhook(
     generate?: typeof generateAnswer;
     send?: (...args: Parameters<typeof sendText>) => Promise<{ messageId?: string } | void>;
     holdTyping?: (number: string, cfg: AgentConfig, instance?: string) => Promise<() => void>;
+    // Espera injetavel: em producao e o setTimeout normal; nos testes e zero, para
+    // a suite nao pagar 1,4s de debounce + 6s de "digitando" em cada caso.
+    wait?: (ms: number) => Promise<void>;
     sendPresence?: typeof sendPresence;
     maySend?: (incoming: Incoming) => Promise<boolean>;
     getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
@@ -398,8 +401,10 @@ export async function processWebhook(
       return { status: "buffered" };
     }
 
+    const wait = deps.wait ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+
     // 4. Leader worker: wait 1400ms for user to finish rapid consecutive typing
-    await new Promise(resolve => setTimeout(resolve, 1400));
+    await wait(1400);
 
     try {
       // 5. Collect all buffered messages for this user atomically via Lua script
@@ -593,9 +598,9 @@ export async function processWebhook(
               try {
                 await (deps.sendPresence ?? sendPresence)(incoming.number, "composing", cfg, incoming.instance, 8000);
               } catch { /* presenca visual nunca bloqueia envio */ }
-              await new Promise(resolve => setTimeout(resolve, bubbleDelayMs(bubble)));
+              await wait(bubbleDelayMs(bubble));
             } else {
-              await new Promise(resolve => setTimeout(resolve, typingDurationFor(bubble)));
+              await wait(typingDurationFor(bubble));
             }
             const outcome = await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
             if (i === 0) sendOutcome = outcome;

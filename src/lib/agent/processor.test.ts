@@ -7,6 +7,9 @@ import { EvolutionSendError } from "./evolution";
 
 const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
  getStoreContext: async()=>({tenantId:"11111111-1111-4111-8111-111111111111",quotaLimit:200,context:{}}),
+ // Sem espera real: o debounce de 1,4s e os 1,5-6s de "digitando" por bolha
+ // somavam mais de 60s na suite inteira e estouravam o timeout do runner.
+ wait: async () => {},
  ...deps, quota:deps.quota || (deps.redis ? memoryAttendanceQuota(deps.redis as never) : undefined)
 });
 
