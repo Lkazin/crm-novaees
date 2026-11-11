@@ -309,9 +309,10 @@ test("envia indicador de presenca 'composing' (digitando...) antes de gerar a re
       presenceCalls.push({ number, presence: "composing" });
       return () => {};
     },
+    // Resposta longa de proposito: garante que o split em bolhas acontece.
     generate: async () => {
       generated++;
-      return "Resposta automatica";
+      return "Oi Lucas, tudo bem? O site institucional inclui ate cinco paginas e dominio proprio. A entrega fica em dez dias uteis apos a aprovacao do layout.";
     },
     send: async () => {
       sent++;
@@ -319,9 +320,9 @@ test("envia indicador de presenca 'composing' (digitando...) antes de gerar a re
   };
   const result = await processWebhook(payload, cfg, deps);
   assert.equal(result.status, "sent");
-  assert.equal(presenceCalls.length, 1);
+  assert.equal(generated, 1);
+  // Uma resposta longa sai em mais de uma bolha, como um humano no WhatsApp.
+  assert.ok(sent >= 2, `esperava 2+ bolhas, veio ${sent}`);
   assert.equal(presenceCalls[0].presence, "composing");
   assert.equal(presenceCalls[0].number, "5511999998888");
-  assert.equal(generated, 1);
-  assert.equal(sent, 1);
 });

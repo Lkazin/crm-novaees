@@ -6,6 +6,7 @@ import type { Incoming } from "./parse";
 import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText, EvolutionSendError, sendPresence, typingDurationFor, holdTypingPresence } from "./evolution";
+import { splitIntoBubbles, bubbleDelayMs } from "./bubbles";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
@@ -555,13 +556,25 @@ export async function processWebhook(
         // Para o "digitando" e simula o tempo de digitação antes de entregar:
         // a bolha "digitando..." precisa aparecer de verdade antes do texto.
         try { stopTyping?.(); } catch { /* ignore */ }
+        // Uma resposta humana no WhatsApp vem em 1-3 bolhas, nao num bloco so.
+        // O split e conservador: resposta curta continua inteira.
+        const bubbles = splitIntoBubbles(answer);
+        let sendOutcome: { messageId?: string } | void = undefined;
         try {
-          const thinkMs = typingDurationFor(answer);
-          await new Promise(resolve => setTimeout(resolve, thinkMs));
-        } catch { /* ignore */ }
-        let sendOutcome: { messageId?: string } | void;
-        try {
-          sendOutcome = await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
+          for (let i = 0; i < bubbles.length; i++) {
+            const bubble = bubbles[i];
+            if (i > 0) {
+              // Entre bolhas: volta o "digitando..." e espera o tempo de digitar.
+              try {
+                await (deps.sendPresence ?? sendPresence)(incoming.number, "composing", cfg, incoming.instance, 8000);
+              } catch { /* presenca visual nunca bloqueia envio */ }
+              await new Promise(resolve => setTimeout(resolve, bubbleDelayMs(bubble)));
+            } else {
+              await new Promise(resolve => setTimeout(resolve, typingDurationFor(bubble)));
+            }
+            const outcome = await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
+            if (i === 0) sendOutcome = outcome;
+          }
         } catch (error) {
           rejected = error instanceof EvolutionSendError && error.outcome === "rejected";
           throw error;
@@ -588,7 +601,7 @@ export async function processWebhook(
           const externalId = (sendOutcome && typeof sendOutcome === "object" && "messageId" in sendOutcome)
             ? sendOutcome.messageId
             : undefined;
-          await persistOutboundInSupabase(incoming.instance, incoming.number, answer, externalId);
+          await persistOutboundInSupabase(incoming.instance, incoming.number, bubbles.join("\n\n"), externalId);
         } catch {}
 
         // 12. Queue drain: check if consecutive messages arrived while AI was generating/sending
