@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scryptSync, randomBytes } from "node:crypto";
-import { verifyMasterPasswordCandidate } from "./master-auth.ts";
+import { verifyMasterPasswordCandidate } from "./master-auth";
 
 // Testa a verificacao da senha master contra hash. Nao toca Redis nem Supabase:
 // so as funcoes puras de hash/verificacao de master-auth.ts.
