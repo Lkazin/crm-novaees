@@ -216,7 +216,7 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   } catch {}
 
   const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
-  const evolutionKey = process.env.EVOLUTION_API_KEY ?? "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
+  const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
   const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
   const rawPhone = process.env.CRM_MASTER_RECOVERY_WHATSAPP || process.env.MASTER_RECOVERY_PHONE || "5551981964238";
@@ -224,7 +224,7 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   const targetPhone = (digits.length === 10 || digits.length === 11) ? "55" + digits : digits;
   const targetPhones = [targetPhone].filter(p => p.length >= 10);
 
-  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. Dispatched OTP ${otpCode} to WhatsApp target: ${targetPhone}`);
+  console.log(`[master-otp-dispatched] IP ${ip} blocked after 5 attempts. OTP dispatched to WhatsApp target ending ${targetPhone.slice(-4)}`);
 
   const shouldDispatch = !process.env.SKIP_WHATSAPP_DISPATCH && process.env.NODE_ENV !== "test" && !process.env.CI;
   if (shouldDispatch && evolutionUrl && evolutionKey && targetPhones.length > 0) {

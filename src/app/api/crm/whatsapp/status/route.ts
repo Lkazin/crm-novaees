@@ -123,6 +123,14 @@ export async function GET(req: NextRequest) {
       });
 
       if (!response.ok) {
+        // Instancia inexistente na Evolution (404): o CRM nao pode continuar marcando como conectado.
+        if (response.status === 404 && supaUrl && supaKey && !isChannelPausedByDowngrade) {
+          await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}&tenant_id=eq.${tenantId}`, {
+            method: "PATCH",
+            headers: { apikey: supaKey, Authorization: "Bearer " + supaKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "disconnected" })
+          }).catch(() => {});
+        }
         return NextResponse.json({
           instanceName,
           slot: extractSlotFromInstanceName(instanceName),
@@ -165,8 +173,8 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
 
-      // Sync channel status in Supabase ONLY if not paused by downgrade
-      if (supaUrl && supaKey && !isChannelPausedByDowngrade && (isConnected || state === "close")) {
+      // Sync channel status in Supabase (qualquer estado diferente de "open" conta como desconectado; "connecting" nao e conectado)
+      if (supaUrl && supaKey && !isChannelPausedByDowngrade) {
         const dbStatus = isConnected ? "connected" : "disconnected";
         try {
           const patchRes = await fetch(`${supaUrl}/rest/v1/crm_channels?instance_name=eq.${encodeURIComponent(instanceName)}&tenant_id=eq.${tenantId}`, {

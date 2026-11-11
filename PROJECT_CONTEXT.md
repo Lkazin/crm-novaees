@@ -16,7 +16,7 @@
 - **CRM IA (`mpteambmrlflllfqtkmq`):**
   - Conexão Total com chave de serviço no `.env`.
   - 25 tabelas ativas (tenants, conversas, contatos, agentes, etc.).
-  - Execução de comandos SQL diretos habilitada via RPC `exec_sql`.
+  - A RPC `exec_sql` **não existe** neste banco (retorna `PGRST202`). Alterações de schema devem ser feitas por migrations em `supabase/migrations/`.
 - **Painel Moto / Logística (`ngrkqutqmlhdenrxyaos`):**
   - Mapeado no `.env.local` de `entregado001`.
 - **Loja / Delivery / Master (`mabkzkawziqlmgfikwmh`):**

@@ -65,7 +65,7 @@ O Master usa uma única estrutura e menu em `/admin`: Clientes, Planos, Central 
    - **Principais funções e constantes:**
      - `TECHNICAL_FEATURES`: Lista dos 18 recursos técnicos do sistema e qual o plano mínimo de cada um.
      - `START_FEATURES`, `BUSINESS_FEATURES`, `PREMIUM_FEATURES`: Arrays com os IDs liberados em cada plano.
-     - `DEFAULT_PLANS` e `TRIAL_PLAN`: Definição de preços (`59,90`, `99,90`, `159,90`), franquias (`100` no trial, `200`, `600`, `1500`), `maxWhatsappConnections` (`1`, `3`, `5`) e `maxOperators` (`1`, `3`, `5`).
+     - `DEFAULT_PLANS` e `TRIAL_PLAN`: Plano **ativo** `CRM Premium` a **R$ 89,90**, com `1200` mensagens/mês, `maxWhatsappConnections = 3` e `maxOperators = 3`. `CRM Start` (R$ 59,90 / 200 msgs / 1 WhatsApp / 1 operador) e `CRM Business` (R$ 99,90 / 600 msgs / 3 WhatsApps / 3 operadores) estão **`inactive`** (planos legados, sem novas contratações). `TRIAL_PLAN`: 7 dias, `50` mensagens, 2 WhatsApps e 3 operadores. Em caso de dúvida, o valor correto é sempre o do código em `plans.ts`.
      - `normalizeCatalogPlan()`: Atualiza automaticamente qualquer catálogo antigo salvo no Redis (`CATALOG_SCHEMA_VERSION = 2`).
      - `buildFeatureGovernanceMap()`: Calcula os **4 estados** de cada funcionalidade para a empresa (`allowed`, `locked_by_plan`, `maintenance`, `suspended`).
      - `getEffectiveTenantPlan(tenantId)`: Retorna o plano efetivo da loja (lendo do Supabase `crm_tenant_settings` + catálogo Master, com cache em Redis `crm:tenant:effective_plan:${tenantId}`).

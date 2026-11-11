@@ -114,7 +114,7 @@ export async function dispatchRecoveryWhatsappMessage(
   }
 
   const evoUrl = (process.env.EVOLUTION_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
-  const evoKey = process.env.EVOLUTION_API_KEY || "139867a788c3b642cac13625250d223821a194511934363f37d289809ae771e3";
+  const evoKey = process.env.EVOLUTION_API_KEY || "";
   const instance = process.env.CRM_RECOVERY_INSTANCE || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
 
   const messageText = reason === "password_recovery"
