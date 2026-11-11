@@ -1,4 +1,5 @@
 import type { AiConfig } from "./config";
+import { recordAiUsage } from "@/lib/crm/ai-usage";
 
 function approvedModels(primary: string, fallback?: string): string[] {
   const rawEnv = process.env.AI_FALLBACK_MODELS;
@@ -51,6 +52,8 @@ export type StoreAiContext = {
   fallbackModel?: string;
   allowFallback?: boolean;
   isReturningAfterClosed?: boolean;
+  tenantId?: string;
+  conversationId?: string;
   operatingHours?: {
     enabled: boolean;
     timezone?: string;
@@ -344,6 +347,17 @@ export async function generateAnswer(
       }
       const data: unknown = await response.json();
       const answer = (data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
+      const usage = (data as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
+      const servedModel = (data as { model?: string }).model || currentModel;
+      void recordAiUsage({
+        tenantId: storeContext?.tenantId,
+        conversationId: storeContext?.conversationId,
+        provider: "omniroute",
+        model: servedModel,
+        status: typeof answer === "string" && answer.trim() ? "success" : "empty",
+        promptTokens: usage?.prompt_tokens ?? null,
+        completionTokens: usage?.completion_tokens ?? null,
+      });
       if (typeof answer !== "string" || !answer.trim()) {
         if (index + 1 < models.length && Date.now() < deadline) {
           console.warn(`[ai-fallback] Model ${currentModel} returned empty content. Switching to fallback: ${models[index + 1]}`);

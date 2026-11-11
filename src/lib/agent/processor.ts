@@ -297,7 +297,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
         storeInfo,
         primaryModel,
         fallbackModel,
-      allowFallback: effectivePlan.featureStates?.model_fallback?.state === "allowed",
+        allowFallback: effectivePlan.featureStates?.model_fallback?.state === "allowed",
         operatingHours
       }
     };
@@ -519,6 +519,9 @@ export async function processWebhook(
       // 11. Attach conversation history and continuity state to context
       context.history = convContext.history;
       context.isReturningAfterClosed = convContext.isReturningAfterClosed;
+      // Identidade para o registro de custo por resposta (crm_ai_usage_events).
+      context.tenantId = tenantId;
+      context.conversationId = convContext.conversationId;
 
       if (deps.maySend && !(await deps.maySend(incoming))) {
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
