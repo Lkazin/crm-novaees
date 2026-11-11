@@ -305,9 +305,9 @@ test("envia indicador de presenca 'composing' (digitando...) antes de gerar a re
   let sent = 0;
   const deps = {
     redis: db as never,
-    sendPresence: async (number: string, presence?: string) => {
-      presenceCalls.push({ number, presence: presence || "composing" });
-      return true;
+    holdTyping: async (number: string) => {
+      presenceCalls.push({ number, presence: "composing" });
+      return () => {};
     },
     generate: async () => {
       generated++;

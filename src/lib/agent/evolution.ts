@@ -85,3 +85,38 @@ export async function sendPresence(
     clearTimeout(timeout);
   }
 }
+
+/**
+ * Tempo de "digitando" proporcional ao tamanho da resposta, para o cliente ver
+ * alguem escrevendo de verdade. Limitado para nao travar a fila:
+ *   25ms por caractere, entre 1.5s e 6s.
+ * Uma resposta de 120 caracteres fica ~3s, parecido com uma pessoa digitando.
+ */
+export function typingDurationFor(text: string): number {
+  const chars = (text || "").trim().length;
+  const ms = Math.round(chars * 25);
+  return Math.max(1500, Math.min(6000, ms));
+}
+
+/**
+ * Mantem o "digitando..." visivel durante a espera. O WhatsApp mostra a presenca
+ * por ~20s; renovamos a cada 8s enquanto a IA pensa, para o cliente nunca ver o
+ * indicador desaparecer no meio da resposta.
+ */
+export async function holdTypingPresence(
+  number: string,
+  cfg: Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance">,
+  targetInstance?: string,
+  intervalMs = 8000
+): Promise<() => void> {
+  let stopped = false;
+  void sendPresence(number, "composing", cfg, targetInstance, 20000).catch(() => {});
+  const timer = setInterval(() => {
+    if (stopped) return;
+    void sendPresence(number, "composing", cfg, targetInstance, 20000).catch(() => {});
+  }, intervalMs);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}

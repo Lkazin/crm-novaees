@@ -5,7 +5,7 @@ import { parseIncoming } from "./parse";
 import type { Incoming } from "./parse";
 import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
-import { sendText, EvolutionSendError, sendPresence } from "./evolution";
+import { sendText, EvolutionSendError, sendPresence, typingDurationFor, holdTypingPresence } from "./evolution";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
@@ -314,6 +314,7 @@ export async function processWebhook(
     quota?: AttendanceQuota;
     generate?: typeof generateAnswer;
     send?: (...args: Parameters<typeof sendText>) => Promise<{ messageId?: string } | void>;
+    holdTyping?: (number: string, cfg: AgentConfig, instance?: string) => Promise<() => void>;
     sendPresence?: typeof sendPresence;
     maySend?: (incoming: Incoming) => Promise<boolean>;
     getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
@@ -539,8 +540,11 @@ export async function processWebhook(
       let sendStarted = false;
       let rejected = false;
       try {
+        // "digitando..." enquanto a IA pensa. Sem isso o cliente fica 3-8s no
+        // silêncio e acha que ninguém está do outro lado.
+        let stopTyping: (() => void) | null = null;
         try {
-          await (deps.sendPresence ?? sendPresence)(incoming.number, "composing", cfg, incoming.instance);
+          stopTyping = await (deps.holdTyping ?? holdTypingPresence)(incoming.number, cfg, incoming.instance);
         } catch {
           // Falha transitória de presença visual não deve impedir o atendimento
         }
@@ -548,6 +552,13 @@ export async function processWebhook(
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);
         sendStarted = true;
+        // Para o "digitando" e simula o tempo de digitação antes de entregar:
+        // a bolha "digitando..." precisa aparecer de verdade antes do texto.
+        try { stopTyping?.(); } catch { /* ignore */ }
+        try {
+          const thinkMs = typingDurationFor(answer);
+          await new Promise(resolve => setTimeout(resolve, thinkMs));
+        } catch { /* ignore */ }
         let sendOutcome: { messageId?: string } | void;
         try {
           sendOutcome = await (deps.send ?? sendText)(incoming.number, answer, cfg, incoming.instance);
