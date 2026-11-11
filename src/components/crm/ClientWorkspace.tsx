@@ -476,9 +476,11 @@ export default function ClientWorkspace({
   const [quotaData, setQuotaData] = useState<{
     quotaLimit: number;
     quotaUsed: number;
+    rechargeCreditsBalance?: number;
   }>({
     quotaLimit: 0,
-    quotaUsed: 0
+    quotaUsed: 0,
+    rechargeCreditsBalance: 0
   });
 
   // Simulator state
@@ -805,7 +807,8 @@ export default function ClientWorkspace({
         if (json.plan) {
           setQuotaData({
             quotaLimit: json.plan.quotaLimit ?? 0,
-            quotaUsed: json.plan.quotaUsed ?? 0
+            quotaUsed: json.plan.quotaUsed ?? 0,
+            rechargeCreditsBalance: json.plan.rechargeCreditsBalance ?? 0
           });
         }
         if (Array.isArray(json.allowedFeatures)) {
@@ -916,7 +919,8 @@ export default function ClientWorkspace({
       if (json.plan) {
         setQuotaData({
           quotaLimit: json.plan.quotaLimit ?? 0,
-          quotaUsed: json.plan.quotaUsed ?? 0
+          quotaUsed: json.plan.quotaUsed ?? 0,
+          rechargeCreditsBalance: json.plan.rechargeCreditsBalance ?? 0
         });
       }
 

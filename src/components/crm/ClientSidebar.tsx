@@ -57,7 +57,7 @@ interface ClientSidebarProps {
   data: SidebarData | null;
   tenant: string;
   onChangeTenant?: (tenantId: string) => void;
-  quotaData: { quotaUsed: number; quotaLimit: number };
+  quotaData: { quotaUsed: number; quotaLimit: number; rechargeCreditsBalance?: number };
   quotaPercent: number;
   whatsappSlots: Array<{ status: string; unlocked: boolean }>;
   teamOperators: Array<{ status: string }>;
@@ -87,6 +87,11 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   // Dados reais calculados do sistema
   const maxWhatsapp = data?.plan?.maxWhatsappConnections ?? 1;
   const connectedWhatsapp = whatsappSlots.filter((s) => s.status === "connected" && s.unlocked).length;
+
+  // Aviso de franquia: o operador precisa saber antes de a IA parar de responder.
+  // 80% = atenção; 100% = esgotada (a IA deixa de atender até recarga ou virada do mês).
+  const quotaAlert = quotaPercent >= 100 ? "exhausted" : quotaPercent >= 80 ? "warning" : "none";
+  const rechargeBalance = quotaData.rechargeCreditsBalance ?? 0;
 
   const maxOps = data?.plan?.maxOperators ?? 1;
   const activeOps = Math.min(maxOps, teamOperators.filter((o) => o.status === "active").length + 1);
@@ -368,15 +373,28 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
 
         <div className={styles.neonProgressBar}>
           <div
-            className={styles.neonProgressFill}
+            className={`${styles.neonProgressFill} ${quotaAlert === "warning" ? styles.neonProgressWarning : ""} ${quotaAlert === "exhausted" ? styles.neonProgressExhausted : ""}`}
             style={{ width: `${Math.min(100, quotaPercent)}%` }}
           />
         </div>
 
         <div className={styles.neonQuotaFooter}>
-          {data?.plan?.isTrial
-            ? `${data.plan.trialDaysLeft !== undefined ? `${data.plan.trialDaysLeft} dias restantes` : "7 dias de teste"}`
-            : "Renovação mensal automática"}
+          {quotaAlert === "exhausted" ? (
+            <span className={styles.neonQuotaAlertText}>
+              Franquia esgotada — a IA está sem responder. Contrate uma recarga.
+            </span>
+          ) : quotaAlert === "warning" ? (
+            <span className={styles.neonQuotaAlertText}>
+              Restam {Math.max(0, quotaData.quotaLimit - quotaData.quotaUsed)} mensagens.
+              {rechargeBalance > 0 ? ` +${rechargeBalance} de recarga` : " Contrate uma recarga para não parar."}
+            </span>
+          ) : data?.plan?.isTrial ? (
+            `${data.plan.trialDaysLeft !== undefined ? `${data.plan.trialDaysLeft} dias restantes` : "7 dias de teste"}`
+          ) : rechargeBalance > 0 ? (
+            `Renovação mensal · +${rechargeBalance} de recarga disponíveis`
+          ) : (
+            "Renovação mensal automática"
+          )}
         </div>
       </div>
 
