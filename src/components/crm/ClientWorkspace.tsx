@@ -261,6 +261,7 @@ export default function ClientWorkspace({
   const [data, setData] = useState<Data | null>(null);
   const [tenant, setTenant] = useState("");
   const [activeTab, setActiveTabState] = useState<Tab>(activeTabOverride || (embedded ? "atendimentos" : "whatsapp"));
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const setActiveTab = useCallback((nextTab: Tab) => {
     setActiveTabState(nextTab);

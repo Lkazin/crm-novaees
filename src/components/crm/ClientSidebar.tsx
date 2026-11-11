@@ -40,9 +40,8 @@ interface ClientSidebarProps {
 }
 
 export const ClientSidebar: React.FC<ClientSidebarProps> = ({
-  isCollapsed: externalCollapsed,
+  isCollapsed = false,
   onToggleCollapse,
-
   activeTab,
   onSelectTab,
   onSignOut,
