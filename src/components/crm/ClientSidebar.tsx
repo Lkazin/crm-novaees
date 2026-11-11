@@ -25,13 +25,36 @@ import {
 } from "lucide-react";
 import styles from "./ClientSidebar.module.css";
 
+/** Mesmas secoes do workspace do cliente (ClientWorkspace > type Tab). */
+export type ClientTab =
+  | "whatsapp"
+  | "conhecimento"
+  | "artigos"
+  | "simulador"
+  | "horarios"
+  | "atendimentos"
+  | "equipe"
+  | "relatorios"
+  | "contatos"
+  | "plano"
+  | "seguranca";
+
+/** Loja do seletor de empresa. */
+type SidebarTenant = { id: string; name: string };
+
+/** Trecho dos dados do painel que a sidebar consome. */
+interface SidebarData {
+  plan?: { maxWhatsappConnections?: number; maxOperators?: number; isTrial?: boolean; trialDaysLeft?: number };
+  tenants?: SidebarTenant[];
+}
+
 interface ClientSidebarProps {
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   activeTab: string;
-  onSelectTab: (tab: any) => void;
+  onSelectTab: (tab: ClientTab) => void;
   onSignOut: () => void;
-  data: any;
+  data: SidebarData | null;
   tenant: string;
   onChangeTenant?: (tenantId: string) => void;
   quotaData: { quotaUsed: number; quotaLimit: number };
@@ -57,7 +80,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   clientRecoveryVerified = false,
 }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const onSelectTab = (tab: any) => {
+  const onSelectTab = (tab: ClientTab) => {
     onSelectTabProp(tab);
     setMobileOpen(false);
   };
@@ -114,7 +137,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           onChange={(e) => onChangeTenant?.(e.target.value)}
           aria-label="Selecionar Loja"
         >
-          {data.tenants.map((t: any) => (
+          {data.tenants.map((t: SidebarTenant) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
