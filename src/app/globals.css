@@ -385,31 +385,53 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
 .nw-layout-shell {
   display: flex;
   min-height: 100vh;
-  background: radial-gradient(circle at 10% 20%, rgba(244, 63, 94, 0.08) 0%, transparent 40%),
-              radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 45%),
-              #090a16;
-  color: #f7f5ff;
+  background: radial-gradient(circle at 10% 20%, rgba(225, 29, 72, 0.10) 0%, transparent 42%),
+              radial-gradient(circle at 90% 80%, rgba(147, 51, 234, 0.10) 0%, transparent 45%),
+              linear-gradient(180deg, #10071c 0%, #130720 100%);
+  color: #faf5fc;
 }
 
 /* Sidebar Lateral Fixa */
+/* Sidebar do Master: mesma linguagem visual da sidebar do cliente
+   (ClientSidebar.module.css) — mesmas cores cereja, largura, borda, sombra
+   e espaçamento, para os dois painéis parecerem o mesmo produto. */
 .nw-sidebar {
-  width: 275px;
+  width: 290px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #110d1d 0%, #0d0a17 100%);
-  border-right: 1px solid rgba(236, 72, 153, 0.2);
+  align-self: flex-start;
+  background: radial-gradient(circle at 100% 0%, rgba(225, 29, 72, 0.12) 0%, transparent 45%),
+              radial-gradient(circle at 0% 50%, rgba(159, 18, 57, 0.10) 0%, transparent 40%),
+              radial-gradient(circle at 80% 100%, rgba(225, 29, 72, 0.10) 0%, transparent 50%),
+              linear-gradient(180deg, #100619 0%, #160720 50%, #110519 100%);
+  border-right: 1px solid rgba(225, 29, 72, 0.35);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45),
+              0 0 20px rgba(225, 29, 72, 0.12);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   z-index: 50;
   overflow-y: auto;
   overflow-x: hidden;
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 18px 14px;
+  gap: 12px;
+  box-sizing: border-box;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+}
+
+.nw-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.nw-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(225, 29, 72, 0.3);
+  border-radius: 4px;
 }
 
 .nw-sidebar.collapsed {
-  width: 76px;
+  width: 78px;
+  padding: 16px 8px;
 }
 
 .nw-sidebar.collapsed .nw-sidebar-brand {
@@ -445,8 +467,8 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ec4899;
-  box-shadow: 0 0 6px #ec4899;
+  background: #e11d48;
+  box-shadow: 0 0 6px #e11d48;
 }
 
 .nw-sidebar-toggle-btn {
@@ -464,79 +486,95 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
 }
 
 .nw-sidebar-toggle-btn:hover {
-  background: rgba(236, 72, 153, 0.25);
+  background: rgba(225, 29, 72, 0.25);
   color: #fff;
-  border-color: rgba(236, 72, 153, 0.5);
+  border-color: rgba(225, 29, 72, 0.5);
   transform: scale(1.05);
 }
 
 .nw-sidebar-brand {
-  padding: 24px 20px;
+  padding: 4px 4px 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  gap: 10px;
+  border-bottom: none;
 }
 
 .nw-sidebar-logo {
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   border-radius: 12px;
-  background: var(--grad-primary);
+  background: #180924;
+  border: 1px solid rgba(225, 29, 72, 0.4);
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.25);
   display: grid;
   place-items: center;
   color: #fff;
   font-weight: 900;
-  font-size: 22px;
-  box-shadow: var(--glow-pink);
+  font-size: 20px;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .nw-sidebar-nav {
-  padding: 18px 12px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   flex: 1;
+  min-height: 0;
 }
 
 .nw-nav-button {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 12px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 11px;
   border: 1px solid transparent;
   background: transparent;
-  color: #c9bede;
-  font-size: 14px;
+  color: #e2d9eb;
+  font-size: 14.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.18s ease;
   text-align: left;
+  outline: none;
 }
 
 .nw-nav-button:hover {
-  background: rgba(236, 72, 153, 0.12);
+  background: rgba(225, 29, 72, 0.12);
+  border-color: rgba(225, 29, 72, 0.25);
   color: #ffffff;
-  border-color: rgba(236, 72, 153, 0.25);
-  transform: translateX(3px);
+  transform: translateX(2px);
 }
 
 .nw-nav-button.active {
-  background: var(--grad-primary);
+  background: linear-gradient(90deg, rgba(225, 29, 72, 0.35) 0%, rgba(159, 18, 57, 0.25) 100%);
+  border-color: rgba(225, 29, 72, 0.6);
   color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.3);
-  box-shadow: 0 4px 18px rgba(236, 72, 153, 0.4);
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.25);
   font-weight: 700;
 }
 
+.nw-nav-button svg {
+  color: #b8a7c6;
+  flex-shrink: 0;
+}
+
+.nw-nav-button.active svg,
+.nw-nav-button:hover svg {
+  color: #ffffff;
+}
+
 .nw-sidebar-footer {
-  padding: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(225, 29, 72, 0.2);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 /* Conteúdo Principal ao lado da Sidebar */
@@ -599,12 +637,13 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
     height: auto;
     position: relative;
     border-right: 0;
-    border-bottom: 1px solid rgba(236, 72, 153, 0.2);
+    border-bottom: 1px solid rgba(225, 29, 72, 0.35);
+    padding: 14px;
   }
   .nw-sidebar-nav {
     flex-direction: row;
     overflow-x: auto;
-    padding: 10px 14px;
+    padding: 0;
   }
   .nw-nav-button {
     white-space: nowrap;
@@ -615,33 +654,34 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
 
 
 .nw-sidebar-group-header {
-  padding: 10px 12px 4px;
+  padding: 12px 10px 4px;
   font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: #b8a7c6;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .nw-subnav-button {
-  padding-left: 28px !important;
-  font-size: 13px !important;
-  color: #aba2c0 !important;
+  padding-left: 26px !important;
+  font-size: 13.5px !important;
+  color: #c0adca !important;
 }
 
 .nw-subnav-button:hover {
   color: #ffffff !important;
-  background: rgba(236, 72, 153, 0.12) !important;
+  background: rgba(225, 29, 72, 0.12) !important;
+  border-color: rgba(225, 29, 72, 0.25) !important;
 }
 
 .nw-subnav-button.active-sub {
-  background: rgba(236, 72, 153, 0.22) !important;
+  background: linear-gradient(90deg, rgba(225, 29, 72, 0.3) 0%, rgba(159, 18, 57, 0.2) 100%) !important;
   color: #ff6b8b !important;
   font-weight: 700 !important;
-  border-color: rgba(236, 72, 153, 0.45) !important;
+  border-color: rgba(225, 29, 72, 0.5) !important;
 }
 
 /* Skeleton Loading Shimmer */
