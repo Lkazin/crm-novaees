@@ -1744,11 +1744,22 @@ export async function getEffectiveTenantPlan(
     masterPlans
   );
 
+  // Consumo do mes alem do que o plano cobre = recarga em uso.
+  const monthUsedForRecharge = isTrial ? 0 : Math.max(
+    Number((parsedRoot.usageCounters as Record<string, Record<string, number>> | undefined)?.monthly?.[monthKey] ?? 0) || 0,
+    durableAttendanceUsed,
+    quotaUsed
+  );
+  const rechargesUsedFromUsage = isTrial ? 0 : Math.max(0, monthUsedForRecharge - finalQuota);
+
   const rawRecharges: MessageRechargeItem[] = Array.isArray(parsedRoot.recharges) ? (parsedRoot.recharges as unknown as MessageRechargeItem[]) : [];
   const paidRecharges = rawRecharges.filter(r => r.status === "paid");
   const totalRechargeCreditsAdded = paidRecharges.reduce((sum, r) => sum + (Number(r.messagesAdded) || 0), 0);
+  // A recarga so e consumida DEPOIS que a franquia do plano acaba
+  // (migration 20261111170000). Antes, o saldo nunca diminuia porque ninguem
+  // gravava o consumo em crm:recharges:consumed.
   const durableRechargesConsumed = Number((parsedRoot.usageCounters as Record<string, unknown> | undefined)?.rechargesConsumed) || 0;
-  const rechargesConsumed = Math.max(durableRechargesConsumed, redisRechargesConsumed);
+  const rechargesConsumed = Math.max(durableRechargesConsumed, redisRechargesConsumed, rechargesUsedFromUsage);
   const rechargeCreditsBalance = Math.max(0, totalRechargeCreditsAdded - rechargesConsumed);
 
   const effective: EffectiveTenantPlan = {

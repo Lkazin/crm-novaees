@@ -1,5 +1,6 @@
 "use client";
 import { ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
+import { QuotaExplainer } from "@/components/crm/QuotaExplainer";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
@@ -6496,6 +6497,11 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       As recargas não possuem data de expiração precoce e não alteram o valor da mensalidade fixa.
                     </p>
                   </div>
+                </div>
+
+                {/* Explicacao da franquia em linguagem de negocio */}
+                <div style={{marginTop: "18px"}}>
+                  <QuotaExplainer audience="client"/>
                 </div>
 
                 {/* Grid de Limites Técnicos da Conta */}

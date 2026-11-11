@@ -14,6 +14,7 @@ import {
 import { type OperationalExpense } from "@/app/api/crm/admin/finance/route";
 import { BroadcastManagerSection } from "@/components/crm/BroadcastManagerSection";
 import { PlansSection } from "@/components/crm/admin/PlansSection";
+import { QuotaExplainer } from "@/components/crm/QuotaExplainer";
 
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
   loading: () => <ClientWorkspaceSkeleton embedded />,
@@ -4717,6 +4718,9 @@ export default function AdminCRM() {
         {/* ===================== VIEW: RECARGAS & PIX ===================== */}
         {currentNav === "recharges" && (
           <section style={{display: "flex", flexDirection: "column", gap: "24px"}}>
+            {/* Regras da franquia, para conferencia do Master */}
+            <QuotaExplainer audience="master"/>
+
             {/* Bento Cards Resumo */}
             <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px"}}>
               <div className="op-card" style={{
