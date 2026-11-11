@@ -2127,6 +2127,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           {/* O Master já fornece a navegação e a sessão globais. */}
           {!embedded && (
             <ClientSidebar
+              isCollapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
               activeTab={activeTab}
               onSelectTab={selectWorkspaceSection}
               onSignOut={() => void signOut()}

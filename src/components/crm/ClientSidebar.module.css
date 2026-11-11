@@ -1,30 +1,62 @@
 /* =========================================================================
-   SIDEBAR CLIENTE — ESTILO FIDELIDADE VISUAL COM BRILHO VERMELHO SUAVE
+   SIDEBAR CLIENTE — ESTILO FIDELIDADE VISUAL 100% DA ALTURA COM RECOLHIMENTO
 ========================================================================= */
 
 .neonSidebar {
   width: 320px;
   flex-shrink: 0;
-  height: calc(100vh - 28px);
-  max-height: calc(100vh - 28px);
-  position: sticky;
-  top: 14px;
+  align-self: stretch;
+  min-height: 100vh;
   background: radial-gradient(circle at 100% 0%, rgba(225, 29, 72, 0.12) 0%, transparent 45%),
               radial-gradient(circle at 0% 50%, rgba(159, 18, 57, 0.10) 0%, transparent 40%),
               radial-gradient(circle at 80% 100%, rgba(225, 29, 72, 0.10) 0%, transparent 50%),
               linear-gradient(180deg, #100619 0%, #160720 50%, #110519 100%);
-  border: 1px solid rgba(225, 29, 72, 0.35);
-  box-shadow: 0 0 20px rgba(225, 29, 72, 0.18),
-              inset 0 0 16px rgba(159, 18, 57, 0.12);
-  border-radius: 24px;
-  margin: 14px 0 14px 14px;
+  border-right: 1px solid rgba(225, 29, 72, 0.35);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45),
+              0 0 20px rgba(225, 29, 72, 0.12);
+  margin: 0;
   display: flex;
   flex-direction: column;
-  padding: 14px 12px;
+  padding: 18px 14px;
   gap: 12px;
-  overflow-y: auto;
-  overflow-x: hidden;
   box-sizing: border-box;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+}
+
+.neonSidebar.isCollapsed {
+  width: 78px;
+  padding: 16px 8px;
+}
+
+.neonSidebar.isCollapsed .neonBrandText,
+.neonSidebar.isCollapsed .neonGroupHeader span,
+.neonSidebar.isCollapsed .neonGroupLine,
+.neonSidebar.isCollapsed .neonNavLabel,
+.neonSidebar.isCollapsed .neonNavArrow,
+.neonSidebar.isCollapsed .neonPillBadge,
+.neonSidebar.isCollapsed .neonHeroTexts,
+.neonSidebar.isCollapsed .neonHeroBadge,
+.neonSidebar.isCollapsed .neonQuotaHeader,
+.neonSidebar.isCollapsed .neonProgressBar,
+.neonSidebar.isCollapsed .neonQuotaFooter,
+.neonSidebar.isCollapsed .neonLogoutButton span,
+.neonSidebar.isCollapsed .neonTenantSelect {
+  display: none !important;
+}
+
+.neonSidebar.isCollapsed .neonNavItem {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.neonSidebar.isCollapsed .neonHeroItem {
+  justify-content: center;
+  padding: 10px 0 !important;
+}
+
+.neonSidebar.isCollapsed .neonBrand {
+  justify-content: center;
+  padding: 4px 0 10px;
 }
 
 .neonSidebar::-webkit-scrollbar {
@@ -39,15 +71,15 @@
 .neonBrand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 4px 10px;
+  gap: 10px;
+  padding: 4px 4px 10px;
   position: relative;
 }
 
 .neonLogoWrapper {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -70,10 +102,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .neonBrandTitle {
-  font-size: 17px;
+  font-size: 16.5px;
   font-weight: 900;
   letter-spacing: -0.3px;
   color: #ffffff;
@@ -81,6 +115,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
 }
 
 .neonBrandPink {
@@ -89,11 +124,34 @@
 }
 
 .neonBrandSubtitle {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: 1.2px;
+  letter-spacing: 1.1px;
   color: #b8a7c6;
   text-transform: uppercase;
+}
+
+/* Botão de Recolher / Expandir */
+.neonCollapseToggle {
+  background: rgba(225, 29, 72, 0.12);
+  border: 1px solid rgba(225, 29, 72, 0.35);
+  color: #f43f5e;
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.neonCollapseToggle:hover {
+  background: rgba(225, 29, 72, 0.28);
+  color: #ffffff;
+  transform: scale(1.08);
 }
 
 /* Seletor de Loja */
@@ -384,9 +442,7 @@
     width: 100%;
     margin: 0 0 12px 0;
     border-radius: 0;
-    height: auto;
-    max-height: none;
-    position: relative;
-    top: 0;
+    min-height: auto;
+    border-right: 0;
   }
 }

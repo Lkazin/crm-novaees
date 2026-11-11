@@ -15,6 +15,7 @@ import {
   BookOpen,
   LogOut,
   ChevronRight,
+  ChevronLeft,
   Headphones,
   Store,
   ShieldCheck,
@@ -23,6 +24,8 @@ import {
 import styles from "./ClientSidebar.module.css";
 
 interface ClientSidebarProps {
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
   activeTab: string;
   onSelectTab: (tab: any) => void;
   onSignOut: () => void;
@@ -37,6 +40,9 @@ interface ClientSidebarProps {
 }
 
 export const ClientSidebar: React.FC<ClientSidebarProps> = ({
+  isCollapsed: externalCollapsed,
+  onToggleCollapse,
+
   activeTab,
   onSelectTab,
   onSignOut,
@@ -63,12 +69,21 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         <div className={styles.neonLogoWrapper}>
           <img src="/novaes-crm-logo.jpg" alt="Novaes CRM IA" className={styles.neonLogoImg} />
         </div>
-        <div className={styles.neonBrandText}>
+        {!isCollapsed && <div className={styles.neonBrandText}>
           <div className={styles.neonBrandTitle}>
             Novaes <span className={styles.neonBrandPink}>CRM IA</span>
           </div>
           <div className={styles.neonBrandSubtitle}>CRM INTELIGENTE</div>
-        </div>
+        </div>}
+        <button
+          type="button"
+          className={styles.neonCollapseToggle}
+          onClick={onToggleCollapse}
+          title={isCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+          aria-label={isCollapsed ? "Expandir menu" : "Recolher menu"}
+        >
+          {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
       </div>
 
       {/* Seletor de Loja se houver mais de uma */}
