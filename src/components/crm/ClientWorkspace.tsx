@@ -262,6 +262,20 @@ export default function ClientWorkspace({
   const [tenant, setTenant] = useState("");
   const [activeTab, setActiveTabState] = useState<Tab>(activeTabOverride || (embedded ? "atendimentos" : "whatsapp"));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Tablet (901-1024px): sidebar compacta. Celular/desktop: expandida (celular usa painel suspenso).
+  useEffect(() => {
+    let band = -1;
+    const apply = () => {
+      const w = window.innerWidth;
+      const next = w <= 900 ? 0 : w <= 1024 ? 1 : 2;
+      if (next === band) return;
+      band = next;
+      setSidebarCollapsed(next === 1);
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
 
   const setActiveTab = useCallback((nextTab: Tab) => {
     setActiveTabState(nextTab);

@@ -192,3 +192,21 @@
   border: 1px solid rgba(225, 29, 72, 0.35) !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(225, 29, 72, 0.15) !important;
 }
+
+/* sidebar fixa: so o conteudo principal rola */
+.clientSurface:global(.nw-layout-shell) {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.clientSurface :global(.nw-main-content) {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+@media (max-width: 900px) {
+  .clientSurface :global(.nw-main-content) { padding-top: 68px; }
+}

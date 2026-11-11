@@ -1,7 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
+  Menu,
+  X,
   Smartphone,
   Bot,
   Play,
@@ -43,7 +45,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   isCollapsed = false,
   onToggleCollapse,
   activeTab,
-  onSelectTab,
+  onSelectTab: onSelectTabProp,
   onSignOut,
   data,
   tenant,
@@ -54,6 +56,11 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   teamOperators,
   clientRecoveryVerified = false,
 }) => {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const onSelectTab = (tab: any) => {
+    onSelectTabProp(tab);
+    setMobileOpen(false);
+  };
   // Dados reais calculados do sistema
   const maxWhatsapp = data?.plan?.maxWhatsappConnections ?? 1;
   const connectedWhatsapp = whatsappSlots.filter((s) => s.status === "connected" && s.unlocked).length;
@@ -62,7 +69,21 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   const activeOps = Math.min(maxOps, teamOperators.filter((o) => o.status === "active").length + 1);
 
   return (
-    <aside className={styles.neonSidebar} aria-label="Menu Lateral do Cliente">
+    <>
+    <button
+      type="button"
+      className={styles.neonMobileToggle}
+      onClick={() => setMobileOpen((v) => !v)}
+      aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
+      aria-expanded={mobileOpen}
+    >
+      {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+    </button>
+    {mobileOpen && <div className={styles.neonBackdrop} onClick={() => setMobileOpen(false)} aria-hidden="true" />}
+    <aside
+      className={`${styles.neonSidebar} ${isCollapsed ? styles.isCollapsed : ""} ${mobileOpen ? styles.mobileOpen : ""}`}
+      aria-label="Menu Lateral do Cliente"
+    >
       {/* 1. Header / Logo */}
       <div className={styles.neonBrand}>
         <div className={styles.neonLogoWrapper}>
@@ -101,6 +122,8 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         </select>
       )}
 
+      {/* AREA CENTRAL: grupos de menu (rola por dentro se faltar altura) */}
+      <div className={styles.neonMiddle}>
       {/* 2. GRUPO: ATENDIMENTO & IA */}
       <div className={styles.neonGroup}>
         <div className={styles.neonGroupHeader}>
@@ -298,6 +321,10 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         </button>
       </div>
 
+      </div>
+
+      {/* RODAPE ancorado: Franquia + Sair */}
+      <div className={styles.neonFooter}>
       {/* 6. Franquia do Mês (Visual da Imagem) */}
       <div
         className={styles.neonQuotaCard}
@@ -340,6 +367,8 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         <LogOut size={16} />
         <span>Sair do Painel</span>
       </button>
+      </div>
     </aside>
+    </>
   );
 };
