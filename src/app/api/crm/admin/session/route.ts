@@ -10,6 +10,9 @@ import {
   revokeMasterToken,
   getDynamicMasterPassword,
   getMasterPassword,
+  getStoredMasterSecret,
+  verifyMasterPasswordCandidate,
+  migrateMasterPasswordToHash,
   getLegacyAdminToken,
   isLoginBlocked,
   recordFailedLoginAttempt,
@@ -61,7 +64,17 @@ export async function POST(request: NextRequest) {
       )
     );
 
-    const isMasterPasswordMatch = checkMatch(masterPassword) || (legacyPass !== masterPassword && checkMatch(legacyPass));
+    // A senha master no Redis agora e hash: verifica sem nunca ler o texto puro.
+    const storedSecret = await getStoredMasterSecret();
+    const isMasterPasswordMatch =
+      (storedSecret ? verifyMasterPasswordCandidate(candidate, storedSecret) : false) ||
+      (masterPassword ? checkMatch(masterPassword) : false) ||
+      (legacyPass && legacyPass !== masterPassword ? checkMatch(legacyPass) : false);
+
+    // Migracao transparente: se ainda havia texto puro no Redis, vira hash.
+    if (isMasterPasswordMatch && storedSecret && !storedSecret.startsWith("scrypt:")) {
+      await migrateMasterPasswordToHash();
+    }
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(candidate, adminToken));
 
     // If master password is correct, immediately reset attempts and unblock

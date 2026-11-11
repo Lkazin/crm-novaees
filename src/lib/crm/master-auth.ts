@@ -14,6 +14,69 @@ export const MASTER_REMEMBER_TTL_SEC = 30 * 24 * 60 * 60;
 
 type Staff = { role: string; enabled: boolean };
 
+// ---------------------------------------------------------------------------
+// Senha master: hash em vez de texto puro
+// ---------------------------------------------------------------------------
+// Antes o Redis guardava a senha legivel em crm:master_custom_password. Quem
+// lesse o Redis entrava como master. Agora guardamos so o hash (scrypt nativo,
+// sem dependencia nova) no formato "scrypt:<salt>:<hash>". A verificacao tambem
+// e feita por hash, entao o texto puro nunca precisa sair do Redis.
+const MASTER_HASH_PREFIX = "scrypt:";
+const SCRYPT_KEYLEN = 64;
+
+function hashMasterPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString("hex");
+  return `${MASTER_HASH_PREFIX}${salt}:${derived}`;
+}
+
+function isMasterHash(value: string): boolean {
+  return value.startsWith(MASTER_HASH_PREFIX);
+}
+
+/** Compara a senha candidata com o hash guardado, em tempo constante. */
+function verifyMasterHash(candidate: string, stored: string): boolean {
+  const body = stored.slice(MASTER_HASH_PREFIX.length);
+  const sep = body.indexOf(":");
+  if (sep <= 0) return false;
+  const salt = body.slice(0, sep);
+  const expected = Buffer.from(body.slice(sep + 1), "hex");
+  if (expected.length === 0) return false;
+  let derived: Buffer;
+  try {
+    derived = crypto.scryptSync(candidate, salt, expected.length);
+  } catch {
+    return false;
+  }
+  if (derived.length !== expected.length) {
+    crypto.timingSafeEqual(expected, expected);
+    return false;
+  }
+  return crypto.timingSafeEqual(derived, expected);
+}
+
+/**
+ * Verifica uma senha master candidata contra um valor guardado, que pode ser
+ * um hash (formato novo) ou texto puro (formato antigo, para migracao).
+ * As variacoes de caixa e ponto final que o login ja aceitava sao mantidas.
+ */
+export function verifyMasterPasswordCandidate(candidate: string, stored: string): boolean {
+  const pw = stored.trim();
+  if (!candidate || !pw) return false;
+  if (isMasterHash(pw)) {
+    return verifyMasterHash(candidate, pw);
+  }
+  // Formato legado (texto puro): mantem as variacoes historicas de match.
+  return Boolean(
+    timingSafeMatch(candidate, pw) ||
+    (pw.endsWith(".") && timingSafeMatch(candidate, pw.slice(0, -1))) ||
+    (!pw.endsWith(".") && timingSafeMatch(candidate, pw + ".")) ||
+    timingSafeMatch(candidate.toLowerCase(), pw.toLowerCase()) ||
+    (pw.endsWith(".") && timingSafeMatch(candidate.toLowerCase(), pw.slice(0, -1).toLowerCase())) ||
+    (!pw.endsWith(".") && timingSafeMatch(candidate.toLowerCase(), (pw + ".").toLowerCase()))
+  );
+}
+
 /**
  * Retrieve the dedicated strong HMAC secret for signing administrative sessions.
  * Fails closed (returns empty string) if missing or less than 32 characters.
@@ -152,7 +215,12 @@ export async function getDynamicMasterPassword(): Promise<string> {
     const redis = getRedis();
     if (redis && redis.status !== "end") {
       const custom = await redis.get("crm:master_custom_password");
-      if (custom && custom.trim().length >= 8) return custom.trim();
+      if (custom && custom.trim().length >= 8) {
+        // Formato novo (hash): nao ha como recuperar a senha, e nao ha por que.
+        // Quem precisa validar usa verifyMasterPasswordCandidate().
+        if (isMasterHash(custom.trim())) return "";
+        return custom.trim();
+      }
     }
   } catch {}
   return process.env.CRM_MASTER_PASSWORD?.trim() || "";
@@ -163,6 +231,40 @@ export function getMasterPassword(): string {
     return inMemoryDynamicPassword;
   }
   return process.env.CRM_MASTER_PASSWORD?.trim() || "";
+}
+
+/**
+ * Valor guardado no Redis para a senha master (hash ou, durante a migracao,
+ * o texto puro antigo). Usado pelo login para verificar sem nunca ler a senha.
+ */
+export async function getStoredMasterSecret(): Promise<string> {
+  try {
+    const redis = getRedis();
+    if (redis && redis.status !== "end") {
+      const custom = await redis.get("crm:master_custom_password");
+      if (custom && custom.trim().length >= 8) return custom.trim();
+    }
+  } catch {}
+  return "";
+}
+
+/**
+ * Migra um valor legado em texto puro para hash, sem exigir que o usuario
+ * troque de senha. Roda uma vez; nas seguintes o valor ja e hash.
+ */
+export async function migrateMasterPasswordToHash(): Promise<boolean> {
+  try {
+    const redis = getRedis();
+    if (!redis || redis.status === "end") return false;
+    const custom = await redis.get("crm:master_custom_password");
+    if (!custom) return false;
+    const valor = custom.trim();
+    if (!valor || valor.length < 8 || isMasterHash(valor)) return false;
+    await redis.set("crm:master_custom_password", hashMasterPassword(valor));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function resetMasterDynamicPasswordForTesting(): Promise<void> {
@@ -181,10 +283,11 @@ export async function resetMasterDynamicPasswordForTesting(): Promise<void> {
 export async function saveMasterPassword(newPassword: string): Promise<boolean> {
   if (!newPassword || newPassword.trim().length < 8) return false;
   inMemoryDynamicPassword = newPassword.trim();
+  const hashed = hashMasterPassword(newPassword.trim());
   try {
     const redis = getRedis();
     if (redis && redis.status !== "end") {
-      await redis.set("crm:master_custom_password", newPassword.trim());
+      await redis.set("crm:master_custom_password", hashed);
       return true;
     }
   } catch {}

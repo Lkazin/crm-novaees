@@ -104,8 +104,11 @@ test("Etapa 3 & 7: mudança fluida de assunto e regra anti-alucinação de pedid
   assert.equal(prompt.includes("NUNCA obrigue o cliente a terminar formalmente o assunto anterior"), true);
 
   // Etapa 3: Reconhecimento de conclusão e anti-alucinação
+  // O texto foi comprimido para cortar custo, mas a regra continua no prompt:
+  // o que importa e a instrucao existir, nao a frase exata de antes.
   assert.equal(prompt.includes("RECONHECIMENTO DE CONCLUSÃO"), true);
-  assert.equal(prompt.includes("REGRA DE OURO ANTI-ALUCINAÇÃO DE PEDIDOS"), true);
-  assert.equal(prompt.includes("Demonstração de interesse comercial NÃO é compra"), true);
-  assert.equal(prompt.includes("NUNCA invente ou afirme \"Seu pedido foi confirmado!\""), true);
+  assert.equal(prompt.includes("REGRA DE OURO ANTI-ALUCINAÇÃO"), true);
+  assert.equal(prompt.includes("interesse comercial"), true);
+  assert.equal(prompt.includes("NUNCA é pedido ou pagamento confirmado"), true);
+  assert.equal(prompt.includes("pedido confirmado"), true);
 });

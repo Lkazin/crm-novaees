@@ -9,6 +9,9 @@ import {
   verifyMasterRequest,
   getMasterPassword,
   getDynamicMasterPassword,
+  getStoredMasterSecret,
+  verifyMasterPasswordCandidate,
+  migrateMasterPasswordToHash,
   getLegacyAdminToken,
   revokeMasterToken,
   dispatchMasterRecoveryOtp,
@@ -154,8 +157,13 @@ export async function POST(request: NextRequest) {
     const adminToken = getLegacyAdminToken();
 
     const cleanPassword = password.trim();
+    // A senha master no Redis agora e hash: verifica sem nunca ler o texto puro.
+    const storedSecret = await getStoredMasterSecret();
+    const isMasterPasswordMatchByHash = Boolean(
+      storedSecret && verifyMasterPasswordCandidate(cleanPassword, storedSecret)
+    );
     // Robust timing-safe matching for Master secret: handles exact, trailing dot, and case-insensitivity
-    const isMasterPasswordMatch = Boolean(
+    const isMasterPasswordMatch = isMasterPasswordMatchByHash || Boolean(
       masterPassword && (
         timingSafeMatch(cleanPassword, masterPassword) ||
         (masterPassword.endsWith(".") && timingSafeMatch(cleanPassword, masterPassword.slice(0, -1))) ||
@@ -166,6 +174,11 @@ export async function POST(request: NextRequest) {
       )
     );
     const isAdminTokenMatch = Boolean(adminToken && timingSafeMatch(cleanPassword, adminToken));
+
+    // Migracao transparente: texto puro no Redis vira hash no primeiro login valido.
+    if (isMasterPasswordMatch && storedSecret && !storedSecret.startsWith("scrypt:")) {
+      await migrateMasterPasswordToHash();
+    }
 
     // 1. Attempt Supabase Auth if email is provided
     let supaAccessToken: string | null = null;

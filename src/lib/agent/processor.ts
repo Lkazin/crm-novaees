@@ -210,8 +210,24 @@ async function getStoreAiContext(instanceName: string): Promise<{
       }
     );
     const articles = (await rArticles.json()) as Array<{ title: string; body: string }>;
+    // Um artigo grande (4.400 chars num caso real) inflava o prompt em ~1.100 tokens
+    // e o custo e 98% de entrada. O teto por artigo e um total garantem o contexto
+    // util sem pagar por texto que a IA nao vai ler inteiro.
+    const ARTICLE_CHARS = 2000;
+    const TOTAL_CHARS = 6000;
+    let budget = TOTAL_CHARS;
     const storeInfo = Array.isArray(articles)
-      ? articles.map(a => `### ${a.title}\n${a.body}`).join("\n\n")
+      ? articles
+          .map(a => {
+            if (budget <= 0) return "";
+            const body = (a.body ?? "").trim();
+            const limite = Math.min(ARTICLE_CHARS, budget);
+            const trecho = body.length > limite ? `${body.slice(0, limite).trimEnd()}…` : body;
+            budget -= trecho.length;
+            return `### ${a.title}\n${trecho}`;
+          })
+          .filter(Boolean)
+          .join("\n\n")
       : "";
 
     // 5. Fetch effective plan & operating hours
