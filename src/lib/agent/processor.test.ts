@@ -248,7 +248,8 @@ test("cinco respostas IA ao mesmo contato cobram cinco unidades e a sexta é blo
   };
   for (let i = 1; i <= 5; i++) {
     const message = { ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "per-message-" + i } } };
-    assert.equal((await processWebhook(message, cfg, deps)).status, "sent");
+    const r = await processWebhook(message, cfg, deps);
+    assert.equal(r.status, "sent", `rodada ${i}: esperava 'sent', veio ${JSON.stringify(r)}`);
     assert.equal(await db.get("crm:quota:message-quota:2026-11"), String(i));
   }
   const result = await processWebhook({ ...payload, data: { ...payload.data, key: { ...payload.data.key, id: "sixth" } } }, cfg, deps);

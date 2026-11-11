@@ -1,4 +1,5 @@
 import "server-only";
+import { existsSync } from "node:fs";
 
 export type AiConfig = {
   aiUrl: string;
@@ -33,9 +34,25 @@ function validUrl(name: string, value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+/** Detecta execucao dentro de container sem depender de variavel manual. */
+function isInsideContainer(): boolean {
+  if ((process.env.DOCKER_CONTAINER ?? "").trim() === "true") return true;
+  try {
+    // /.dockerenv existe em containers Docker; /run/.containerenv em Podman.
+    return existsSync("/.dockerenv") || existsSync("/run/.containerenv");
+  } catch {
+    return false;
+  }
+}
+
 export function getAiConfig(): AiConfig {
   let rawAi = read("AI_OPENAI_BASE_URL");
-  if (rawAi.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+  // Dentro de um container, 127.0.0.1 e o proprio container: host.docker.internal
+  // precisa ficar como esta. So reescrevemos quando rodamos direto no Windows,
+  // fora do Docker. A checagem antiga usava `!process.env.DOCKER_CONTAINER`, que
+  // e verdadeira tambem dentro do container (a variavel nunca e definida), e por
+  // isso o CRM tentava 127.0.0.1:20128 e caia em ECONNREFUSED.
+  if (rawAi.includes("host.docker.internal") && process.platform === "win32" && !isInsideContainer()) {
     rawAi = rawAi.replace("host.docker.internal", "127.0.0.1");
   }
   const aiUrl = validUrl("AI_OPENAI_BASE_URL", rawAi);
@@ -68,7 +85,8 @@ export function getAgentConfig(): AgentConfig {
     ...getAiConfig(),
     evolutionUrl: (() => {
       let rawEvo = read("EVOLUTION_API_URL");
-      if (rawEvo.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
+      // Mesma regra da IA: dentro do container host.docker.internal fica como esta.
+      if (rawEvo.includes("host.docker.internal") && process.platform === "win32" && !isInsideContainer()) {
         rawEvo = rawEvo.replace("host.docker.internal", "127.0.0.1");
       }
       return validUrl("EVOLUTION_API_URL", rawEvo);
