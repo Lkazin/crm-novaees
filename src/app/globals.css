@@ -412,9 +412,12 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
   top: 0;
   height: 100vh;
   height: 100dvh;
+  max-height: 100dvh;
   z-index: 50;
-  overflow-y: auto;
-  overflow-x: hidden;
+  /* A sidebar inteira nao rola mais: marca e rodape ficam fixos e so a lista
+     de funcoes rola. O master tem muito mais itens que o cliente, e antes o
+     rodape (sair, master) saia da tela junto com a rolagem. */
+  overflow: hidden;
   padding: 18px 14px;
   gap: 12px;
   box-sizing: border-box;
@@ -498,6 +501,7 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
   align-items: center;
   gap: 10px;
   border-bottom: none;
+  flex-shrink: 0;
 }
 
 .nw-sidebar-logo {
@@ -521,8 +525,27 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(225, 29, 72, 0.45) transparent;
+}
+
+.nw-sidebar-nav::-webkit-scrollbar {
+  width: 5px;
+}
+.nw-sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nw-sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(225, 29, 72, 0.45);
+  border-radius: 4px;
+}
+.nw-sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(225, 29, 72, 0.7);
 }
 
 .nw-nav-button {
@@ -643,6 +666,7 @@ div[style*="overflowX: \"auto\""]::-webkit-scrollbar-thumb,
   .nw-sidebar-nav {
     flex-direction: row;
     overflow-x: auto;
+    overflow-y: hidden;
     padding: 0;
   }
   .nw-nav-button {
