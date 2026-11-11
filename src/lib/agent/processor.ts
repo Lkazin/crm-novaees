@@ -293,7 +293,10 @@ async function getStoreAiContext(instanceName: string): Promise<{
           if (parsed.ai_settings?.fallbackModel && effectivePlan.featureStates?.model_fallback?.state === "allowed") {
             fallbackModel = parsed.ai_settings.fallbackModel;
           }
-        } catch {}
+        } catch (err) {
+          // JSON de settings corrompido fazia a IA cair no modelo padrao sem aviso.
+          console.error("[crm-ai] ai_settings invalido, usando padroes:", err instanceof Error ? err.message : String(err));
+        }
       }
     }
 
@@ -503,7 +506,11 @@ export async function processWebhook(
         await markItemsDone();
         try {
           await persistOutboundInSupabase(incoming.instance, incoming.number, escalationReply);
-        } catch {}
+        } catch (err) {
+          // A mensagem saiu para o cliente mas nao entrou no historico: sem log,
+          // o painel mostra a conversa sem essa resposta e ninguem percebe.
+          console.error("[crm-ai] resposta de escalonamento enviada mas nao persistida:", err instanceof Error ? err.message : String(err));
+        }
 
         return { status: "sent", reason: `escalated_${escalation.category || "human"}` };
       }
@@ -520,7 +527,9 @@ export async function processWebhook(
             await (deps.send ?? sendText)(incoming.number, closedMsg, cfg, incoming.instance);
             try {
               await persistOutboundInSupabase(incoming.instance, incoming.number, closedMsg);
-            } catch {}
+            } catch (err) {
+              console.error("[crm-ai] aviso de encerramento enviado mas nao persistido:", err instanceof Error ? err.message : String(err));
+            }
           }
         }
         return { status: "disabled", reason: "outside_operating_hours" };

@@ -751,8 +751,16 @@ async function getMasterPlanDraftsFromSupabase(): Promise<Record<string, CrmPlan
             return inMemoryPlanDrafts;
           }
         }
+      } else {
+        // Falha de leitura silenciosa fazia o sistema cair nos planos em memoria
+        // sem ninguem saber que o banco estava fora.
+        console.error(`[crm-plans] leitura dos rascunhos falhou: HTTP ${res.status}`);
       }
-    } catch {}
+    } catch (err) {
+      // Antes: catch {} — um JSON corrompido ou o banco fora caia em memoria em
+      // silencio, e planos/precos errados iam para o cliente sem aviso.
+      console.error("[crm-plans] nao foi possivel ler os rascunhos de plano, usando memoria:", err instanceof Error ? err.message : String(err));
+    }
   }
   return inMemoryPlanDrafts;
 }

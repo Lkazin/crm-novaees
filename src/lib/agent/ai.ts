@@ -301,15 +301,17 @@ export async function generateAnswer(
     const recentHistory = storeContext.history.slice(-HISTORY_WINDOW);
     const olderHistory = storeContext.history.slice(0, -HISTORY_WINDOW);
     if (olderHistory.length > 0) {
+      // Resumo curto: 2 linhas no maximo. Antes eram 8 trechos de 120 chars, o
+      // que somava quase tanto quanto as mensagens que o resumo deveria poupar.
       const resumo = olderHistory
         .filter(m => m.content && m.content.trim())
-        .map(m => `${m.role === "assistant" ? "Atendente" : "Cliente"}: ${m.content.trim().slice(0, 120)}`)
-        .slice(-8)
+        .map(m => m.content.trim().replace(/\s+/g, " ").slice(0, 80))
+        .slice(-2)
         .join(" | ");
       if (resumo) {
         messages.push({
           role: "system",
-          content: `Resumo do que ja foi conversado antes (nao repita, use so como contexto): ${resumo}`
+          content: `Contexto anterior (nao repita): ${resumo}`
         });
       }
     }

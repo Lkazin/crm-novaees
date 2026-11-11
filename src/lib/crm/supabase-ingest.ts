@@ -238,7 +238,11 @@ export type ConversationContext = {
   isReturningAfterClosed?: boolean;
 };
 
-export async function fetchConversationContext(instance: string, phone: string, limit = 10): Promise<ConversationContext> {
+// O limite e quantas mensagens o banco traz. Antes eram 10 e o ai.ts cortava
+// para 6 — mas o corte acontecia DEPOIS de baixar e montar tudo, e o "resumo"
+// das antigas tambem entrava. Trazer so o que sera usado deixa o prompt menor
+// e evita uma ida inutil a mais de dados.
+export async function fetchConversationContext(instance: string, phone: string, limit = 6): Promise<ConversationContext> {
   const fallback: ConversationContext = { mode: "ai", history: [], isFirstInteraction: true, isReturningAfterClosed: false };
   if (!isIngestEnabled(instance)) return fallback;
 
