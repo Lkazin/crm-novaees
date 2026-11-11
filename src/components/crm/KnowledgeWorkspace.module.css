@@ -1,0 +1,11 @@
+.workspace { --knowledge-red:#c9364d; --knowledge-gold:#dfbd79; color:#f4f1f8; }
+.workspace .hint { color:#c4bdcf; font-size:13px; line-height:1.6; margin:0; }
+.workspace .counter { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px 16px; color:#cbc3d8; font-size:12px; font-variant-numeric:tabular-nums; }
+.workspace .help { padding:12px 0; color:#cfc7dc; border-top:1px solid #3d344e; border-bottom:1px solid #3d344e; }
+.workspace .help summary { cursor:pointer; color:#f1d9ad; font-weight:600; }
+.workspace .help li { margin:8px 0; font-size:13px; line-height:1.6; }
+.workspace :global(.op-primary) { background:var(--knowledge-red); color:#fff; border:1px solid #e05b6c; }
+.workspace :global(.op-primary):disabled { opacity:.5; }
+.workspace :global(.kn-article.active) { border-color:#bf8ce2; background:#2d233e; }
+.workspace :global(.kn-editor) textarea { width:100%; max-width:100%; min-height:220px; resize:vertical; padding:14px; background:#13111d; border:1px solid #56465e; color:#f5f1fa; border-radius:10px; font:inherit; line-height:1.6; }
+.workspace :global(.kn-editor) textarea:focus-visible { outline:2px solid #ce97e6; outline-offset:3px; }

@@ -27,7 +27,99 @@
   width: 100%;
 }
 
+.clientSurface {
+  --action-primary: linear-gradient(135deg, #7e22ce 0%, #be185d 50%, #e11d48 100%);
+  --action-hover: #e0445d;
+  --surface-base: #11071c;
+  --surface-panel: #1b0c2a;
+  --surface-field: #120718;
+  --border-soft: #3b184a;
+  --text-main: #faf5fc;
+  --text-muted: #c0adca;
+  --brand-purple: #a855f7;
+  --brand-pink: #ec4899;
+  --grad-primary: var(--action-primary);
+  --glow-pink: none;
+  color: var(--text-main);
+}
+
+.clientSurface :global(.op-primary) {
+  background: var(--action-primary) !important;
+  border-color: #e65a70 !important;
+  box-shadow: none !important;
+  color: #fff !important;
+}
+
+.clientSurface :global(.op-primary):hover:not(:disabled) { filter: brightness(1.1); }
+.clientSurface :global(.nw-nav-button.active) { background: linear-gradient(135deg, #7e22ce, #be185d, #e11d48) !important; box-shadow: 0 4px 18px rgba(190, 24, 93, 0.4) !important; color: #fff !important; }
+.clientSurface :global(.nw-sidebar) { background: #18111f; }
+.clientSurface :global(.nw-sidebar-group-title) { color: #cba5dc; }
+.clientSurface :global(.nw-main-content) { background: radial-gradient(circle at 90% 10%, rgba(225, 29, 72, 0.15) 0%, transparent 45%), radial-gradient(circle at 10% 80%, rgba(147, 51, 234, 0.18) 0%, transparent 50%), linear-gradient(145deg, #100619 0%, #180924 40%, #14051a 100%); }
+.clientSurface :global(.op-card) { box-shadow: 0 6px 20px #08060d20; }
+.workspaceTopbar {
+  background: var(--surface-panel) !important;
+  border-color: var(--border-soft) !important;
+  box-shadow: none !important;
+  border-radius: 15px !important;
+}
+.brandAccent { color: var(--brand-pink); }
+.identityIcon,.sectionIcon { display: grid; place-items: center; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 12px; background: #462333; border: 1px solid #82405a; color: #ffe5ef; }
+.sectionIcon { width: 43px; height: 43px; }
+.primaryPanel { background: var(--surface-panel) !important; border: 1px solid var(--border-soft) !important; border-radius: 16px !important; box-shadow: none !important; }
+.metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 13px; margin: 0 0 22px; }
+.metric { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; min-width: 0; padding: 19px; border: 1px solid var(--border-soft); border-radius: 14px; color: var(--text-main); background: var(--surface-panel); text-align: left; cursor: pointer; transition: border-color .16s,background .16s; }
+.metric:hover { border-color: #aa5c86; background: #281a2d; }
+.metric:focus-visible { outline: 3px solid #eaa3c7; outline-offset: 3px; }
+.metricIcon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--brand-purple); background: #302038; margin-bottom: 2px; }
+.metricLabel { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.metric strong { font-size: 18px; font-weight: 750; line-height: 1.4; }
+.metricAction { display: flex; align-items: center; gap: 7px; margin-top: auto; padding-top: 7px; font-size: 12px; color: var(--brand-pink); font-weight: 650; }
+.successText { color: #95dabc; font-size: 12px; line-height: 1.5; }
+.mutedText { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.attentionText { color: #ffc0cd; font-size: 12px; line-height: 1.5; }
+.aiConfigurationForm { scroll-margin-top: 24px; }
+.configurationField {
+  padding: 20px;
+  background: #19151e;
+  border: 1px solid #44354d;
+  border-radius: 14px;
+  min-width: 0;
+}
+.configurationField label { color: #f1e5f7 !important; font-size: 14px !important; margin-bottom: 12px !important; }
+.configurationField textarea {
+  background: #110f16 !important;
+  border-color: #5d426c !important;
+  font-family: inherit !important;
+  min-height: 160px !important;
+  resize: vertical;
+  scroll-margin-top: 100px;
+}
+.configurationField textarea:focus-visible { outline: 2px solid #d99bc6; outline-offset: 3px; }
+.characterCount { margin: 10px 0 0; font-size: 12px; line-height: 1.5; color: #bcb0c8; text-align: right; }
+.fieldWarning { color: #ffc4ce; background: #42212e; border: 1px solid #8f3a50; border-radius: 8px; font-size: 12px; line-height: 1.6; margin: 12px 0 0; padding: 12px; }
+.activationReview {
+  padding: 19px 21px;
+  border: 1px solid #72573c;
+  border-radius: 14px;
+  background: linear-gradient(105deg, #30231f, #201920);
+  scroll-margin-top: 80px;
+}
+.activationReview h3 { margin: 0 0 8px; color: #fff4e6; font-size: 17px; }
+.activationReview p:not(.sectionEyebrow) { margin: 0; font-size: 12px; color: #d6c3b4; line-height: 1.7; max-width: 900px; }
+.sectionEyebrow { margin: 0 0 8px; color: #dbb780; font-size: 12px; font-weight: 700; letter-spacing: 1.7px; }
+.activationReview dl { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 17px 0 0; }
+.activationReview dl>div { padding: 11px 12px; background: #17121780; border-radius: 8px; border: 1px solid #65503c66; }
+.activationReview dt { color: #cbb5a0; font-size: 12px; margin: 0 0 6px; }
+.activationReview dd { color: #f5ece7; font-size: 12px; line-height: 1.6; margin: 0; }
+
 @media (max-width: 600px) {
+  .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+  .metric { padding: 14px; }
+  .metric strong { font-size: 16px; }
+  .configurationField { padding: 15px; }
+  .configurationField label { font-size: 12px !important; }
+  .activationReview { padding: 16px; }
+  .activationReview dl { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .sections {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -37,4 +129,66 @@
     flex-shrink: 0;
     white-space: nowrap;
   }
+}
+
+@media (min-width: 601px) and (max-width: 1200px) { .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (prefers-reduced-motion: reduce) { .metric { transition: none; } }
+
+.reviewAction{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:17px}.reviewAction button{padding:11px 15px;border-radius:9px;font-size:13px}.reviewAction p{flex:1;min-width:180px;font-size:12px;line-height:1.6}.reviewAction button:disabled{opacity:.5;cursor:not-allowed}
+
+.optionalTemplates{border:1px solid #49344e;background:#211626;border-radius:12px;padding:14px 17px}.optionalTemplates summary{font-size:13px;font-weight:650;color:#e9c1dc;cursor:pointer}.optionalTemplates>p{font-size:12px;line-height:1.7;color:#c4afce;margin:12px 0 17px}.optionalTemplates>div{margin-top:15px}.optionalTemplates summary:focus-visible{outline:2px solid #e8add4;outline-offset:4px}
+
+.clientSurface :global(.op-card) {
+  background: rgba(22, 8, 32, 0.72) !important;
+  border: 1px solid rgba(225, 29, 72, 0.28) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 16px rgba(225, 29, 72, 0.08) !important;
+  backdrop-filter: blur(12px) !important;
+}
+.clientSurface :global(.op-card):hover {
+  border-color: rgba(225, 29, 72, 0.45) !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 0 20px rgba(225, 29, 72, 0.14) !important;
+}
+
+/* ================= PADRÃO NOVAESWEB: BRILHO VERMELHO SUAVE NAS PÁGINAS ================= */
+.clientSurface {
+  background: #0f0717 !important;
+}
+
+.clientSurface :global(.op-card),
+.clientSurface :global(.op-inbox),
+.clientSurface :global(.op-chat-container),
+.clientSurface :global(.op-chat-header),
+.clientSurface :global(.op-chat-footer) {
+  background: rgba(22, 9, 32, 0.75) !important;
+  border: 1px solid rgba(225, 29, 72, 0.32) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), 0 0 16px rgba(225, 29, 72, 0.12) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.clientSurface :global(.op-card):hover {
+  border-color: rgba(225, 29, 72, 0.5) !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), 0 0 20px rgba(225, 29, 72, 0.18) !important;
+}
+
+/* Campos de Input e Textarea Padronizados */
+.clientSurface :global(input:not([type="checkbox"]):not([type="radio"])),
+.clientSurface :global(textarea),
+.clientSurface :global(select) {
+  background: rgba(16, 7, 24, 0.85) !important;
+  border: 1px solid rgba(225, 29, 72, 0.25) !important;
+  color: #ffffff !important;
+}
+
+.clientSurface :global(input:focus),
+.clientSurface :global(textarea:focus),
+.clientSurface :global(select:focus) {
+  border-color: rgba(225, 29, 72, 0.6) !important;
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.25) !important;
+}
+
+/* Topbar com Brilho Vermelho Suave */
+.workspaceTopbar {
+  background: rgba(22, 9, 32, 0.85) !important;
+  border: 1px solid rgba(225, 29, 72, 0.35) !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(225, 29, 72, 0.15) !important;
 }

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireTenantFeature } from "@/lib/crm/plans";
 import { authorizeCrmTenant, crmServiceConfig } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseRows, supabaseSettings } from "@/lib/crm/supabase-server";
+import { KNOWLEDGE_BODY_MAX_LENGTH, KNOWLEDGE_TITLE_MAX_LENGTH, KNOWLEDGE_REQUEST_MAX_BYTES } from "@/lib/crm/knowledge-limits";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 type Article={id:string;title:string;body:string;status:string;updated_at:string};
@@ -46,11 +47,11 @@ export async function GET(request:NextRequest) {
 export async function POST(request:NextRequest) {
   if(!checkOrigin(request))return privateJson({error:"origin_forbidden"},403);
   if(!request.headers.get("content-type")?.includes("application/json"))return privateJson({error:"json_required"},415);
-  if(Number(request.headers.get("content-length")??0)>22000)return privateJson({error:"payload_too_large"},413);
+  if(Number(request.headers.get("content-length")??0)>KNOWLEDGE_REQUEST_MAX_BYTES)return privateJson({error:"payload_too_large"},413);
   let data:unknown;
   try{data=await request.json();}catch{return privateJson({error:"invalid_json"},400);}
   const payload=data&&typeof data==="object"?data as Record<string,unknown>:{};
-  if(!UUID.test(String(payload.tenantId??""))||!valid(payload.title,3,200)||!valid(payload.body,1,20000))
+  if(!UUID.test(String(payload.tenantId??""))||!valid(payload.title,3,KNOWLEDGE_TITLE_MAX_LENGTH)||!valid(payload.body,1,KNOWLEDGE_BODY_MAX_LENGTH))
     return privateJson({error:"invalid_article"},400);
   const articleStatus=["draft","published","archived"].includes(String(payload.status??""))
     ? String(payload.status)
@@ -74,12 +75,12 @@ export async function POST(request:NextRequest) {
 export async function PATCH(request:NextRequest) {
   if(!checkOrigin(request))return privateJson({error:"origin_forbidden"},403);
   if(!request.headers.get("content-type")?.includes("application/json"))return privateJson({error:"json_required"},415);
-  if(Number(request.headers.get("content-length")??0)>22000)return privateJson({error:"payload_too_large"},413);
+  if(Number(request.headers.get("content-length")??0)>KNOWLEDGE_REQUEST_MAX_BYTES)return privateJson({error:"payload_too_large"},413);
   let data:unknown;
   try{data=await request.json();}catch{return privateJson({error:"invalid_json"},400);}
   const payload=data&&typeof data==="object"?data as Record<string,unknown>:{};
   if(!UUID.test(String(payload.tenantId??""))||!UUID.test(String(payload.id??""))||
-     !valid(payload.title,3,200)||!valid(payload.body,1,20000)||
+     !valid(payload.title,3,KNOWLEDGE_TITLE_MAX_LENGTH)||!valid(payload.body,1,KNOWLEDGE_BODY_MAX_LENGTH)||
      !["draft","published","archived"].includes(String(payload.status??"")))
     return privateJson({error:"invalid_article"},400);
   try {

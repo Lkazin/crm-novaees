@@ -1,9 +1,13 @@
 "use client";
 import { ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
 import KnowledgeWorkspace from "./KnowledgeWorkspace";
+import SetupJourney, { type SetupStep, type SetupStepId } from "./SetupJourney";
+import { ClientSidebar } from './ClientSidebar';
+import WorkspaceNavigation, { type WorkspaceNavItem } from "./WorkspaceNavigation";
+import { KNOWLEDGE_BODY_MAX_LENGTH } from "@/lib/crm/knowledge-limits";
 import { DEFAULT_AUTOCLOSE_MESSAGE } from "@/lib/crm/settings-types";
 import type { AutoCloseSettings } from "@/lib/crm/settings-types";
 import {
@@ -34,6 +38,21 @@ import {
   type FeatureStateItem,
   type ReportsPayload
 } from "@/components/crm/ClientPlanModules";
+
+type SavedSetup = {
+  tenantId: string; agentLabel: string; instructions: string; storeInfo: string; enabled: boolean;
+  operatingHours: unknown; agentSaved: boolean; knowledgeSaved: boolean; hoursSaved: boolean;
+};
+function setupHoursSignature(value: unknown): string {
+  if (!value || typeof value !== "object") return "unconfirmed";
+  const hours = value as Record<string,unknown>;
+  const schedule = hours.schedule && typeof hours.schedule === "object" ? hours.schedule as Record<string,Record<string,unknown>> : {};
+  return JSON.stringify([hours.enabled,hours.timezone,hours.openTime,hours.closeTime,hours.days,hours.sendClosedMessage,hours.closedMessage,
+    ["seg","ter","qua","qui","sex","sab","dom"].map(day=>{const item=schedule[day]??{};return [day,item.enabled,item.openTime,item.closeTime,Boolean(item.hasBreak),item.breakStart,item.breakEnd,item.intervals??[]];})]);
+}
+function setupSignature(value: SavedSetup): string {
+  return JSON.stringify([value.tenantId,value.agentLabel,value.instructions,value.storeInfo,value.enabled,setupHoursSignature(value.operatingHours)]);
+}
 
 type Tenant = { id: string; name: string; status: string };
 type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
@@ -365,6 +384,11 @@ export default function ClientWorkspace({
     }
   };
 
+  const setupFieldId = useId();
+  const [savedSetup, setSavedSetup] = useState<SavedSetup | null>(null);
+  const [simulatedSetupSignature, setSimulatedSetupSignature] = useState<string | null>(null);
+  const [reviewedSetupSignature, setReviewedSetupSignature] = useState<string | null>(null);
+
   // AI Configuration state (Store Owner inputs what the AI says)
   const [agentLabel, setAgentLabel] = useState("Assistente Virtual");
   const [instructions, setInstructions] = useState("");
@@ -386,6 +410,7 @@ export default function ClientWorkspace({
     hasBreak?: boolean;
     breakStart?: string;
     breakEnd?: string;
+    intervals?: Array<{ start: string; end: string }>;
   };
   const DEFAULT_DAY_SCHEDULE: Record<string, DayScheduleCfg> = {
     seg: { enabled: false, openTime: "08:00", closeTime: "18:00", hasBreak: false, breakStart: "12:00", breakEnd: "13:00" },
@@ -711,6 +736,13 @@ export default function ClientWorkspace({
       const res = await fetch(`/api/crm/operator/ai-settings?tenant=${encodeURIComponent(tenantId)}`, { cache: "no-store" });
       if (res.ok) {
         const json = await res.json();
+        setSavedSetup({
+          tenantId, agentLabel: json.agentLabel ?? "Assistente Virtual", instructions: json.instructions ?? "",
+          storeInfo: json.storeInfo ?? "", enabled: json.enabled !== false, operatingHours: json.operatingHours,
+          agentSaved: json.setupEvidence?.agentSaved === true,
+          knowledgeSaved: json.setupEvidence?.knowledgeSaved === true,
+          hoursSaved: json.setupEvidence?.hoursSaved === true
+        });
         if (force || !isAiDirtyRef.current) {
           setAgentLabel(json.agentLabel ?? "Assistente Virtual");
           setInstructions(json.instructions ?? "");
@@ -733,6 +765,7 @@ export default function ClientWorkspace({
               hasBreak: Boolean(ds?.hasBreak),
               breakStart: ds?.breakStart || "12:00",
               breakEnd: ds?.breakEnd || "13:00",
+              intervals: Array.isArray(ds?.intervals) ? ds.intervals : [],
             };
           }
           setOperatingHours(prev => ({
@@ -1191,6 +1224,10 @@ export default function ClientWorkspace({
   const handleSaveAiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenant) return;
+    if (storeInfo.length > KNOWLEDGE_BODY_MAX_LENGTH) {
+      setAiNotice(`A base de conhecimento ultrapassa ${KNOWLEDGE_BODY_MAX_LENGTH.toLocaleString("pt-BR")} caracteres. Revise o texto antes de salvar; o conteúdo existente foi preservado.`);
+      return;
+    }
     setSavingAi(true);
     setAiNotice("");
     try {
@@ -1210,7 +1247,8 @@ export default function ClientWorkspace({
       if (!res.ok) throw new Error();
       setAgentLabel(finalLabel);
       isAiDirtyRef.current = false;
-      setAiNotice("Configurações salvas com sucesso! Sua IA já está respondendo no WhatsApp com os novos dados.");
+      await fetchAiSettings(tenant, true);
+      setAiNotice("Configurações gravadas. Teste as respostas no simulador e revise a conexão e a ativação da IA.");
     } catch {
       setAiNotice("Falha ao salvar configurações da IA.");
     } finally {
@@ -1250,6 +1288,7 @@ export default function ClientWorkspace({
       }
       isHoursDirtyRef.current = false;
       setOperatingHours(payloadHours);
+      await fetchAiSettings(tenant);
       setHoursNotice("Horários de atendimento salvos com sucesso no Supabase! A IA respeitará rigorosamente esta configuração.");
       setTimeout(() => setHoursNotice(""), 8000);
     } catch {
@@ -1316,6 +1355,11 @@ export default function ClientWorkspace({
   const handleSendSimulator = async (textToSend?: string) => {
     const prompt = (textToSend || simInput).trim();
     if (!prompt || !tenant || simLoading) return;
+    setReviewedSetupSignature(null);
+    setSimulatedSetupSignature(null);
+    const testedSignature = savedSetup?.tenantId === tenant &&
+      savedSetup.instructions === instructions && savedSetup.storeInfo === storeInfo && savedSetup.agentLabel === agentLabel && savedSetup.enabled === aiEnabled &&
+      !isHoursDirtyRef.current ? setupSignature(savedSetup) : null;
     setSimInput("");
     const userMsg = {
       role: "user" as const,
@@ -1340,7 +1384,8 @@ export default function ClientWorkspace({
       });
       const data = await res.json();
       const replyContent = data.answer || data.reply;
-      if (res.ok && replyContent) {
+      if (res.ok && typeof replyContent === "string" && replyContent.trim()) {
+        if (testedSignature) setSimulatedSetupSignature(testedSignature);
         setSimMessages(prev => [
           ...prev,
           {
@@ -1906,10 +1951,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             }
             return conv;
           }),
-          escalations: {
-            ...(prev.escalations || {}),
-            [conversationId]: undefined as any
-          }
+          escalations: Object.fromEntries(Object.entries(prev.escalations || {}).filter(([id]) => id !== conversationId))
         };
       });
       if (targetMode === "human") {
@@ -2004,6 +2046,34 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
   const tabFeatures: Partial<Record<Tab,string>> = {whatsapp:"ai_chat",conhecimento:"ai_chat",artigos:"ai_chat",simulador:"simulator",horarios:"business_hours_basic",atendimentos:"human_handoff",contatos:"human_handoff",equipe:"human_handoff",relatorios:"basic_indicators"};
   const activeFeatureState = tabFeatures[activeTab] ? featureStates[tabFeatures[activeTab]!] : undefined;
   const activeFeatureBlocked = activeTab !== "plano" && activeTab !== "seguranca" && (isSuspended || !activeFeatureState || activeFeatureState.state !== "allowed");
+  const savedForTenant = savedSetup?.tenantId === tenant ? savedSetup : null;
+  const setupConnected = whatsappSlots.some(slot => slot.status === "connected" && slot.unlocked);
+  const setupTested = Boolean(savedForTenant && simulatedSetupSignature === setupSignature(savedForTenant));
+  const hasUnsavedSetupChanges = Boolean(savedForTenant && (
+    instructions !== savedForTenant.instructions || storeInfo !== savedForTenant.storeInfo || agentLabel !== savedForTenant.agentLabel ||
+    aiEnabled !== savedForTenant.enabled || setupHoursSignature(operatingHours) !== setupHoursSignature(savedForTenant.operatingHours)
+  ));
+  const setupSteps: SetupStep[] = [
+    {id:"whatsapp",title:"Conectar WhatsApp",featureId:"ai_chat",confirmed:setupConnected,description:"Escolha um espaço liberado pelo seu plano e leia o QR Code no WhatsApp da empresa.",evidence:setupConnected?"Conexão confirmada pelo sistema.":"Nenhuma conexão liberada foi confirmada. Gere o QR Code e acompanhe o status.",action:"Abrir conexão"},
+    {id:"business",title:"Informações da empresa",featureId:"ai_chat",confirmed:Boolean(savedForTenant?.knowledgeSaved),description:"Organize produtos, serviços, preços, endereço e perguntas frequentes. Use somente informações reais do seu negócio.",evidence:savedForTenant?.knowledgeSaved?"Existe uma base publicada e salva. Revise a exatidão dos dados.":"Base de conhecimento salva ainda não confirmada.",action:"Organizar informações"},
+    {id:"instructions",title:"Comportamento da IA",featureId:"ai_chat",confirmed:Boolean(savedForTenant?.agentSaved),description:"Defina o tom de voz, como responder e quando encaminhar o atendimento para sua equipe.",evidence:savedForTenant?.agentSaved?"Instruções salvas no sistema. Teste como a IA interpreta as regras.":"Instruções salvas ainda não confirmadas. Um rascunho não conclui esta etapa.",action:"Editar instruções"},
+    {id:"hours",title:"Horários",featureId:"business_hours_basic",confirmed:Boolean(savedForTenant?.hoursSaved),description:"Revise os dias, o expediente e a mensagem de ausência. As pausas avançadas seguem seu plano.",evidence:savedForTenant?.hoursSaved?"Configuração de horários gravada. Confira se corresponde ao expediente da empresa.":"Horários salvos ainda não confirmados. Os valores iniciais não comprovam sua configuração.",action:"Revisar horários"},
+    {id:"test",title:"Testar respostas",featureId:"simulator",confirmed:setupTested,description:"Faça perguntas reais no simulador. Ele usa as informações salvas sem enviar mensagens ao WhatsApp.",evidence:setupTested?"O simulador retornou uma resposta para a configuração salva nesta sessão. Revise a qualidade da resposta.":"Teste ainda não confirmado para a configuração atual. Erros de simulação não concluem esta etapa.",action:"Abrir simulador"},
+    {id:"review",title:"Revisar ativação",featureId:"ai_chat",confirmed:Boolean(savedForTenant && reviewedSetupSignature === setupSignature(savedForTenant) && !hasUnsavedSetupChanges),description:"Confira a conexão, os dados salvos, os testes e a opção de respostas automáticas. A ativação exige sua revisão.",evidence:savedForTenant && reviewedSetupSignature === setupSignature(savedForTenant) && !hasUnsavedSetupChanges ? "Você confirmou a revisão desta configuração nesta sessão. Nenhum envio real foi realizado pelo guia." : "Revisão manual necessária. Este guia não ativa o atendimento e não comprova um envio real pelo WhatsApp.",action:"Revisar configuração"}
+  ];
+  const canConfirmSetupReview = setupSteps.slice(0,5).every(step=>step.confirmed && featureStates[step.featureId]?.state === "allowed") && !hasUnsavedSetupChanges && !isSuspended && canUseFeature("ai_chat");
+  function confirmSetupReview() {
+    if (canConfirmSetupReview && savedForTenant) setReviewedSetupSignature(setupSignature(savedForTenant));
+  }
+  function openSetupStep(step: SetupStepId) {
+    const tabs: Record<SetupStepId,Tab> = {whatsapp:"whatsapp",business:"conhecimento",instructions:"conhecimento",hours:"horarios",test:"simulador",review:"conhecimento"};
+    setActiveTab(tabs[step]);
+    window.setTimeout(()=>{
+      const element = document.getElementById(`${setupFieldId}-${step}`);
+      element?.scrollIntoView({behavior:"smooth",block:"center"});
+      if (element instanceof HTMLTextAreaElement || step === "review") element?.focus({preventScroll:true});
+    },80);
+  }
   const Content = embedded ? "section" : "main";
   const WorkspaceHeading = embedded ? "h2" : "h1";
   const workspaceSections: Array<{ id: Tab; label: string }> = [
@@ -2020,8 +2090,24 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     { id: "seguranca", label: "Segurança" }
   ];
 
+  const navigationIcons = {whatsapp:Smartphone,conhecimento:Bot,artigos:BookOpen,simulador:Play,horarios:Clock,atendimentos:Inbox,equipe:UserPlus,relatorios:BarChart3,contatos:Users,plano:CreditCard,seguranca:KeyRound};
+  const clientLabels:Record<Tab,string> = {whatsapp:"Conectar WhatsApp",conhecimento:"Minha IA (Cérebro da Loja)",artigos:"Base de Conhecimento",simulador:"Chat de Teste (Simulador)",horarios:"Horários de Atendimento",atendimentos:"Atendimentos ao Vivo",equipe:"Equipe & Operadores",relatorios:"Indicadores & Relatórios",contatos:"Contatos da Loja",plano:"Meu Plano & Recargas",seguranca:"Recuperação de Senha"};
+  const navigationOrder:Tab[] = embedded ? workspaceSections.map(section=>section.id) : ["whatsapp","conhecimento","simulador","atendimentos","horarios","contatos","equipe","relatorios","artigos","plano","seguranca"];
+  const navigationItems:WorkspaceNavItem<Tab>[] = navigationOrder.map(id=>({
+    id,label:embedded ? workspaceSections.find(section=>section.id===id)!.label : clientLabels[id],
+    group:["whatsapp","conhecimento","simulador","atendimentos","horarios"].includes(id)?"Atendimento e IA":["plano","seguranca"].includes(id)?"Conta e segurança":"Gestão da empresa",
+    icon:navigationIcons[id],keywords:id==="conhecimento"?"instruções comportamento treinamento informações empresa base":id==="seguranca"?"senha acesso recuperação":id==="relatorios"?"indicadores métricas desempenho":undefined,
+    badge:embedded?undefined:id==="whatsapp"&&qrState==="open"?{text:"Online",tone:"success"}:id==="atendimentos"&&pendingHumanList.length>0?{text:String(pendingHumanList.length),tone:"attention"}:id==="plano"?{text:data?.plan?.isTrial?"Teste":data?.plan?.name?.replace("CRM ","")||"Plano",tone:"neutral"}:undefined
+  }));
+  function selectWorkspaceSection(id:Tab) {
+    if (id === "artigos" && !embedded) { window.location.assign("/cliente/knowledge"); return; }
+    setActiveTab(id);
+    if(id === "relatorios" && tenant) void fetchReports(tenant);
+    if(id === "seguranca") void fetchClientRecoverySettings();
+  }
+
   return (
-    <div className={embedded ? styles.workspace : "nw-layout-shell"}>
+    <div className={`${styles.clientSurface} ${embedded ? styles.workspace : "nw-layout-shell"}`}>
       {checking || (loading && !data) ? (
         <ClientWorkspaceSkeleton embedded={embedded} />
       ) : !authenticated && embedded ? (
@@ -2039,519 +2125,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
       ) : (
         <>
           {/* O Master já fornece a navegação e a sessão globais. */}
-          {!embedded && <aside className="nw-sidebar">
-            <div className="nw-sidebar-brand" style={{display: "flex", alignItems: "center", gap: "12px"}}>
-              <img
-                src="/novaes-crm-logo.jpg"
-                alt="Novaes CRM IA"
-                style={{
-                  width: "42px",
-                  height: "42px",
-                  borderRadius: "10px",
-                  objectFit: "cover",
-                  border: "1px solid rgba(236, 72, 153, 0.4)",
-                  boxShadow: "0 0 15px rgba(236, 72, 153, 0.3)"
-                }}
-              />
-              <div>
-                <strong style={{display: "block", fontSize: "16px", color: "#fff", letterSpacing: "-0.3px", fontWeight: 800}}>
-                  Novaes <span style={{background: "linear-gradient(90deg, #ec4899, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent"}}>CRM IA</span>
-                </strong>
-                <small style={{display: "block", fontSize: "10px", color: "#c084fc", fontWeight: 700, letterSpacing: "0.6px", textTransform: "uppercase"}}>
-                  CRM Inteligente
-                </small>
-              </div>
-            </div>
-
-            {/* Seletor de Loja (se houver mais de uma) */}
-            {data && data.tenants.length > 1 && (
-              <div style={{padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)"}}>
-                <label style={{fontSize: "11px", color: "#9ca3af", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: "6px"}}>
-                  Empresa Ativa
-                </label>
-                <select
-                  value={tenant}
-                  onChange={e => void changeTenant(e.target.value)}
-                  style={{width: "100%", padding: "8px 10px", borderRadius: "8px", background: "#1b172a", border: "1px solid #3c3254", color: "#fff", fontSize: "13px"}}
-                >
-                  {data.tenants.map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Navegação Principal Organizada por Categorias com Cores Chamativas */}
-            <nav className="nw-sidebar-nav">
-              {/* CATEGORIA 1: ATENDIMENTO & IA */}
-              <div style={{padding: "8px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#a78bfa", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
-                <Sparkles size={12} color="#c084fc" />
-                <span>Atendimento &amp; IA</span>
-              </div>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "whatsapp" ? "active" : ""}`}
-                onClick={() => setActiveTab("whatsapp")}
-                style={{
-                  borderLeft: activeTab === "whatsapp" ? "3px solid #00db8c" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "whatsapp" ? "rgba(255,255,255,0.2)" : "rgba(0, 219, 140, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Smartphone size={16} color={activeTab === "whatsapp" ? "#fff" : "#00db8c"} />
-                </div>
-                <span>Conectar WhatsApp</span>
-                <span style={{
-                  marginLeft: "auto",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  background: qrState === "open" ? "rgba(0, 219, 140, 0.2)" : "rgba(255,255,255,0.12)",
-                  color: qrState === "open" ? "#00db8c" : "#e2e8f0",
-                  padding: "2px 7px",
-                  borderRadius: "8px",
-                  border: qrState === "open" ? "1px solid rgba(0, 219, 140, 0.4)" : "1px solid rgba(255,255,255,0.15)"
-                }}>
-                  {qrState === "open" ? "ONLINE" : `${data?.plan?.maxWhatsappConnections ?? 1}/5`}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "conhecimento" ? "active" : ""}`}
-                onClick={() => setActiveTab("conhecimento")}
-                style={{
-                  borderLeft: activeTab === "conhecimento" ? "3px solid #c084fc" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "conhecimento" ? "rgba(255,255,255,0.2)" : "rgba(168, 85, 247, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Bot size={16} color={activeTab === "conhecimento" ? "#fff" : "#c084fc"} />
-                </div>
-                <span>Minha IA (Cérebro da Loja)</span>
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "simulador" ? "active" : ""}`}
-                onClick={() => setActiveTab("simulador")}
-                style={{
-                  borderLeft: activeTab === "simulador" ? "3px solid #ec4899" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "simulador" ? "rgba(255,255,255,0.2)" : "rgba(236, 72, 153, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Play size={16} color={activeTab === "simulador" ? "#fff" : "#f472b6"} />
-                </div>
-                <span>Chat de Teste (Simulador)</span>
-                <span style={{
-                  marginLeft: "auto",
-                  background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                  color: "#fff",
-                  padding: "2px 7px",
-                  borderRadius: "6px",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  boxShadow: "0 0 10px rgba(236, 72, 153, 0.4)"
-                }}>
-                  TESTAR
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "atendimentos" ? "active" : ""}`}
-                onClick={() => setActiveTab("atendimentos")}
-                style={{
-                  borderLeft: activeTab === "atendimentos" ? "3px solid #60a5fa" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "atendimentos" ? "rgba(255,255,255,0.2)" : "rgba(59, 130, 246, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Inbox size={16} color={activeTab === "atendimentos" ? "#fff" : "#60a5fa"} />
-                </div>
-                <span>Atendimentos ao Vivo</span>
-                {conversations.length > 0 && (
-                  <span style={{
-                    marginLeft: "auto",
-                    background: pendingHumanList.length > 0 ? "#ef4444" : "rgba(59, 130, 246, 0.25)",
-                    color: "#fff",
-                    padding: "2px 8px",
-                    borderRadius: "10px",
-                    fontSize: "11px",
-                    fontWeight: 800,
-                    boxShadow: pendingHumanList.length > 0 ? "0 0 8px rgba(239, 68, 68, 0.6)" : "none"
-                  }}>
-                    {conversations.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "horarios" ? "active" : ""}`}
-                onClick={() => setActiveTab("horarios")}
-                style={{
-                  borderLeft: activeTab === "horarios" ? "3px solid #fbbf24" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "horarios" ? "rgba(255,255,255,0.2)" : "rgba(245, 158, 11, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Clock size={16} color={activeTab === "horarios" ? "#fff" : "#fbbf24"} />
-                </div>
-                <span>Horários de Atendimento</span>
-              </button>
-
-              {/* CATEGORIA 2: GESTÃO DA LOJA */}
-              <div style={{padding: "16px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
-                <Users size={12} color="#38bdf8" />
-                <span>Gestão da Loja</span>
-              </div>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "contatos" ? "active" : ""}`}
-                onClick={() => setActiveTab("contatos")}
-                style={{
-                  borderLeft: activeTab === "contatos" ? "3px solid #22d3ee" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "contatos" ? "rgba(255,255,255,0.2)" : "rgba(6, 182, 212, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <Users size={16} color={activeTab === "contatos" ? "#fff" : "#22d3ee"} />
-                </div>
-                <span>Contatos da Loja</span>
-                {contacts.length > 0 && (
-                  <span style={{
-                    marginLeft: "auto",
-                    background: "rgba(6, 182, 212, 0.2)",
-                    color: "#67e8f9",
-                    padding: "2px 8px",
-                    borderRadius: "10px",
-                    fontSize: "11px",
-                    fontWeight: 700
-                  }}>
-                    {contacts.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "equipe" ? "active" : ""}`}
-                onClick={() => setActiveTab("equipe")}
-                style={{
-                  borderLeft: activeTab === "equipe" ? "3px solid #c084fc" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "equipe" ? "rgba(255,255,255,0.2)" : "rgba(139, 92, 246, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <UserPlus size={16} color={activeTab === "equipe" ? "#fff" : "#c084fc"} />
-                </div>
-                <span>Equipe &amp; Operadores</span>
-                <span style={{
-                  marginLeft: "auto",
-                  background: "rgba(139,92,246,0.22)",
-                  color: "#d8b4fe",
-                  padding: "2px 7px",
-                  borderRadius: "8px",
-                  fontSize: "10px",
-                  fontWeight: 800
-                }}>
-                  {teamOperators.filter(o => o.status === "active").length}/{data?.plan?.maxOperators ?? 1}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "relatorios" ? "active" : ""}`}
-                onClick={() => {
-                  setActiveTab("relatorios");
-                  if (tenant) void fetchReports(tenant);
-                }}
-                style={{
-                  borderLeft: activeTab === "relatorios" ? "3px solid #34d399" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "relatorios" ? "rgba(255,255,255,0.2)" : "rgba(16, 185, 129, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <BarChart3 size={16} color={activeTab === "relatorios" ? "#fff" : "#34d399"} />
-                </div>
-                <span>Indicadores &amp; Relatórios</span>
-              </button>
-
-              {/* CATEGORIA 3: CONTA & SEGURANÇA */}
-              <div style={{padding: "16px 12px 4px", fontSize: "10px", fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px"}}>
-                <Crown size={12} color="#fbbf24" />
-                <span>Conta &amp; Segurança</span>
-              </div>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "plano" ? "active" : ""}`}
-                onClick={() => setActiveTab("plano")}
-                style={{
-                  borderLeft: activeTab === "plano" ? "3px solid #fbbf24" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "plano" ? "rgba(255,255,255,0.2)" : "rgba(245, 158, 11, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <CreditCard size={16} color={activeTab === "plano" ? "#fff" : "#fbbf24"} />
-                </div>
-                <span>Meu Plano &amp; Recargas</span>
-                {data?.plan?.isTrial ? (
-                  <span style={{
-                    marginLeft: "auto",
-                    background: "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                    color: "#fff",
-                    padding: "2px 7px",
-                    borderRadius: "999px",
-                    fontSize: "10px",
-                    fontWeight: 800
-                  }}>
-                    7 DIAS
-                  </span>
-                ) : (
-                  <span style={{
-                    marginLeft: "auto",
-                    background: "rgba(245, 158, 11, 0.2)",
-                    color: "#fcd34d",
-                    padding: "2px 6px",
-                    borderRadius: "6px",
-                    fontSize: "10px",
-                    fontWeight: 700
-                  }}>
-                    {data?.plan?.name?.replace("CRM ", "") || "PLANO"}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                className={`nw-nav-button ${activeTab === "seguranca" ? "active" : ""}`}
-                onClick={() => {
-                  setActiveTab("seguranca");
-                  void fetchClientRecoverySettings();
-                }}
-                style={{
-                  borderLeft: activeTab === "seguranca" ? "3px solid #34d399" : "3px solid transparent",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: activeTab === "seguranca" ? "rgba(255,255,255,0.2)" : "rgba(16, 185, 129, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <KeyRound size={16} color={activeTab === "seguranca" ? "#fff" : "#34d399"} />
-                </div>
-                <span>Recuperação de Senha</span>
-                {clientRecoveryVerified ? (
-                  <span style={{marginLeft: "auto", color: "#34d399", fontSize: "10px", fontWeight: 700}}>
-                    ATIVO
-                  </span>
-                ) : (
-                  <span style={{marginLeft: "auto", color: "#f59e0b", fontSize: "10px", fontWeight: 700}}>
-                    PENDENTE
-                  </span>
-                )}
-              </button>
-
-              <div style={{height: "1px", background: "rgba(255,255,255,0.08)", margin: "10px 4px"}}/>
-
-              <Link
-                href="/cliente/knowledge"
-                className="nw-nav-button"
-                style={{textDecoration: "none"}}
-              >
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  background: "rgba(59, 130, 246, 0.15)",
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0
-                }}>
-                  <BookOpen size={16} color="#60a5fa" />
-                </div>
-                <span>Base de Conhecimento</span>
-                <ChevronRight size={14} style={{marginLeft: "auto", opacity: 0.6}}/>
-              </Link>
-            </nav>
-
-            {/* Rodapé do Menu Lateral */}
-            <div className="nw-sidebar-footer">
-              {/* Medidor de Franquia Visual */}
-              <div
-                onClick={() => setActiveTab("plano")}
-                style={{
-                  background: data?.plan?.isTrial ? "rgba(236, 72, 153, 0.08)" : "rgba(255, 255, 255, 0.03)",
-                  border: data?.plan?.isTrial ? "1px solid rgba(236, 72, 153, 0.35)" : "1px solid rgba(255, 255, 255, 0.08)",
-                  borderRadius: "12px",
-                  padding: "12px 14px",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.2s"
-                }}
-              >
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px"}}>
-                  <span style={{color: data?.plan?.isTrial ? "#f472b6" : "#c9bede", fontWeight: 700}}>
-                    {data?.plan?.isTrial ? "🎁 Teste Grátis (7d)" : "Franquia do Mês"}
-                  </span>
-                  <span style={{
-                    fontSize: "11px",
-                    fontWeight: 800,
-                    color: quotaPercent > 90 ? "#f43f5e" : quotaPercent > 70 ? "#f59e0b" : "#00db8c"
-                  }}>
-                    {quotaData.quotaUsed} / {quotaData.quotaLimit}
-                  </span>
-                </div>
-                {/* Barra de Progresso */}
-                <div style={{width: "100%", height: "6px", background: "rgba(255,255,255,0.1)", borderRadius: "3px", overflow: "hidden"}}>
-                  <div style={{
-                    width: `${quotaPercent}%`,
-                    height: "100%",
-                    background: quotaPercent > 90
-                      ? "#f43f5e"
-                      : quotaPercent > 70
-                        ? "#f59e0b"
-                        : "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                    transition: "width 0.4s ease"
-                  }}/>
-                </div>
-                <small style={{display: "block", color: data?.plan?.isTrial ? "#c4b5fd" : "#8e87a2", fontSize: "10px", marginTop: "6px", fontWeight: data?.plan?.isTrial ? 600 : 400}}>
-                  {data?.plan?.isTrial
-                    ? `${data.plan.trialDaysLeft !== undefined ? `${data.plan.trialDaysLeft} dias restantes` : "7 dias de avaliação"} · Clique p/ detalhes`
-                    : "Renovação mensal automática"}
-                </small>
-              </div>
-
-              {/* Botão Sair */}
-              <button
-                type="button"
-                onClick={() => void signOut()}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                  padding: "10px",
-                  borderRadius: "10px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  color: "#e2e8f0",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  cursor: "pointer"
-                }}
-              >
-                <LogOut size={16}/> Sair do Painel
-              </button>
-            </div>
-          </aside>}
-
-          {embedded && (
-            <nav className={styles.sections} aria-label="Seções do CRM NovaesWeb">
-              {workspaceSections.map(section => (
-                <button
-                  key={section.id}
-                  type="button"
-                  className={`op-tab-button ${activeTab === section.id ? "active" : ""}`}
-                  aria-current={activeTab === section.id ? "page" : undefined}
-                  onClick={() => {
-                    setActiveTab(section.id);
-                    if (section.id === "relatorios" && tenant) void fetchReports(tenant);
-                  }}
-                >
-                  {section.label}
-                </button>
-              ))}
-            </nav>
+          {!embedded && (
+            <ClientSidebar
+              activeTab={activeTab}
+              onSelectTab={selectWorkspaceSection}
+              onSignOut={() => void signOut()}
+              data={data}
+              tenant={tenant}
+              onChangeTenant={t => void changeTenant(t)}
+              quotaData={quotaData}
+              quotaPercent={quotaPercent}
+              whatsappSlots={whatsappSlots}
+              teamOperators={teamOperators}
+              clientRecoveryVerified={clientRecoveryVerified}
+            />
           )}
+
+          {embedded && <WorkspaceNavigation embedded items={navigationItems} active={activeTab} onSelect={selectWorkspaceSection} />}
           {/* CONTEÚDO PRINCIPAL (MAIN CONTENT) */}
           <Content className={embedded ? styles.content : "nw-main-content"}>
             {activeTab !== "plano" && activeFeatureBlocked && <FeatureUnavailable feature={isSuspended && activeFeatureState ? {...activeFeatureState,state:"suspended"} : activeFeatureState} onUpgrade={openUpgradeRequest}/>}
             <fieldset disabled={activeFeatureBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
             {/* Topbar com Nome da Loja e Status em Tempo Real */}
-            <div style={{
+            <div className={styles.workspaceTopbar} style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
@@ -2567,19 +2163,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               position: "relative"
             }}>
               <div style={{display: "flex", alignItems: "center", gap: "16px"}}>
-                <div style={{
-                  width: "50px",
-                  height: "50px",
-                  borderRadius: "14px",
-                  background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
-                  display: "grid",
-                  placeItems: "center",
-                  boxShadow: "0 0 20px rgba(236, 72, 153, 0.4)",
-                  border: "2px solid rgba(255, 255, 255, 0.2)",
-                  flexShrink: 0
-                }}>
-                  <Building2 size={26} color="#fff" />
-                </div>
+                
                 <div>
                   <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
                     <WorkspaceHeading style={{fontSize: embedded ? "20px" : "24px", fontWeight: 800, margin: 0, letterSpacing: "-0.5px", color: "#fff"}}>
@@ -2870,364 +2454,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             )}
 
-            {/* CARDS INTERATIVOS DE KPI & ATALHOS RÁPIDOS */}
-            <section style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "14px",
-              marginBottom: "22px"
-            }}>
-              {/* CARD 1: WHATSAPP CONEXÃO */}
-              <div
-                onClick={() => setActiveTab("whatsapp")}
-                style={{
-                  background: "linear-gradient(135deg, rgba(0, 219, 140, 0.08), rgba(20, 16, 36, 0.95))",
-                  border: "1px solid rgba(0, 219, 140, 0.3)",
-                  borderRadius: "16px",
-                  padding: "16px 20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.25s ease",
-                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = "translateY(-3px)";
-                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(0, 219, 140, 0.25)";
-                  e.currentTarget.style.borderColor = "#00db8c";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
-                  e.currentTarget.style.borderColor = "rgba(0, 219, 140, 0.3)";
-                }}
-              >
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-                  <div style={{
-                    width: "42px",
-                    height: "42px",
-                    borderRadius: "12px",
-                    background: "rgba(0, 219, 140, 0.15)",
-                    display: "grid",
-                    placeItems: "center",
-                    border: "1px solid rgba(0, 219, 140, 0.3)"
-                  }}>
-                    <Smartphone size={22} color="#00db8c" />
-                  </div>
-                  <span style={{
-                    fontSize: "11px",
-                    fontWeight: 800,
-                    padding: "3px 8px",
-                    borderRadius: "12px",
-                    background: qrState === "open" ? "rgba(0, 219, 140, 0.2)" : "rgba(244, 63, 94, 0.2)",
-                    color: qrState === "open" ? "#00db8c" : "#f43f5e"
-                  }}>
-                    {qrState === "open" ? "CONECTADO" : "OFFLINE"}
-                  </span>
-                </div>
-                <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Status do WhatsApp</small>
-                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
-                    {whatsappSlots.filter(s => s.status === "connected").length} de {data?.plan?.maxWhatsappConnections ?? 1} Conexões
-                  </strong>
-                </div>
-                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#00db8c", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
-                  <span>Gerenciar WhatsApp</span>
-                  <ChevronRight size={14} />
-                </div>
-              </div>
-
-              {/* CARD 2: MENSAGENS ATENDIDAS & FRANQUIA */}
-              <div
-                onClick={() => setActiveTab("plano")}
-                style={{
-                  background: "linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(20, 16, 36, 0.95))",
-                  border: "1px solid rgba(236, 72, 153, 0.3)",
-                  borderRadius: "16px",
-                  padding: "16px 20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.25s ease",
-                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = "translateY(-3px)";
-                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(236, 72, 153, 0.25)";
-                  e.currentTarget.style.borderColor = "#ec4899";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
-                  e.currentTarget.style.borderColor = "rgba(236, 72, 153, 0.3)";
-                }}
-              >
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-                  <div style={{
-                    width: "42px",
-                    height: "42px",
-                    borderRadius: "12px",
-                    background: "rgba(236, 72, 153, 0.15)",
-                    display: "grid",
-                    placeItems: "center",
-                    border: "1px solid rgba(236, 72, 153, 0.3)"
-                  }}>
-                    <MessageSquare size={22} color="#ec4899" />
-                  </div>
-                  <span style={{
-                    fontSize: "11px",
-                    fontWeight: 800,
-                    padding: "3px 8px",
-                    borderRadius: "12px",
-                    background: quotaPercent > 90 ? "rgba(244, 63, 94, 0.2)" : "rgba(236, 72, 153, 0.2)",
-                    color: quotaPercent > 90 ? "#f43f5e" : "#f472b6"
-                  }}>
-                    {quotaPercent}% USADO
-                  </span>
-                </div>
-                <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Franquia de Mensagens</small>
-                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
-                    {quotaData.quotaUsed} / {quotaData.quotaLimit}
-                  </strong>
-                  <div style={{width: "100%", height: "4px", background: "rgba(255,255,255,0.1)", borderRadius: "2px", overflow: "hidden", marginTop: "6px"}}>
-                    <div style={{
-                      width: `${quotaPercent}%`,
-                      height: "100%",
-                      background: quotaPercent > 90 ? "#f43f5e" : "linear-gradient(90deg, #ec4899, #8b5cf6)",
-                      transition: "width 0.4s ease"
-                    }} />
-                  </div>
-                </div>
-                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#ec4899", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
-                  <span>Ver Franquia &amp; Recargas</span>
-                  <ChevronRight size={14} />
-                </div>
-              </div>
-
-              {/* CARD 3: ATENDIMENTOS AO VIVO & FILA */}
-              <div
-                onClick={() => setActiveTab("atendimentos")}
-                style={{
-                  background: "linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(20, 16, 36, 0.95))",
-                  border: pendingHumanList.length > 0 ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid rgba(59, 130, 246, 0.3)",
-                  borderRadius: "16px",
-                  padding: "16px 20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.25s ease",
-                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = "translateY(-3px)";
-                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(59, 130, 246, 0.25)";
-                  e.currentTarget.style.borderColor = "#60a5fa";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
-                  e.currentTarget.style.borderColor = pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.5)" : "rgba(59, 130, 246, 0.3)";
-                }}
-              >
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-                  <div style={{
-                    width: "42px",
-                    height: "42px",
-                    borderRadius: "12px",
-                    background: pendingHumanList.length > 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(59, 130, 246, 0.15)",
-                    display: "grid",
-                    placeItems: "center",
-                    border: pendingHumanList.length > 0 ? "1px solid rgba(239, 68, 68, 0.3)" : "1px solid rgba(59, 130, 246, 0.3)"
-                  }}>
-                    <Inbox size={22} color={pendingHumanList.length > 0 ? "#ef4444" : "#60a5fa"} />
-                  </div>
-                  {pendingHumanList.length > 0 ? (
-                    <span style={{
-                      fontSize: "11px",
-                      fontWeight: 800,
-                      padding: "3px 8px",
-                      borderRadius: "12px",
-                      background: "rgba(239, 68, 68, 0.25)",
-                      color: "#fca5a5",
-                      boxShadow: "0 0 10px rgba(239, 68, 68, 0.4)"
-                    }}>
-                      🚨 {pendingHumanList.length} AGUARDANDO
-                    </span>
-                  ) : (
-                    <span style={{
-                      fontSize: "11px",
-                      fontWeight: 800,
-                      padding: "3px 8px",
-                      borderRadius: "12px",
-                      background: "rgba(59, 130, 246, 0.2)",
-                      color: "#93c5fd"
-                    }}>
-                      CHAT EM DIA
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Central de Atendimento</small>
-                  <strong style={{color: "#fff", fontSize: "18px", display: "block", marginTop: "2px"}}>
-                    {conversations.length} Conversas Ativas
-                  </strong>
-                </div>
-                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#60a5fa", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
-                  <span>Abrir Atendimentos ao Vivo</span>
-                  <ChevronRight size={14} />
-                </div>
-              </div>
-
-              {/* CARD 4: SIMULADOR DE CHAT DA IA */}
-              <div
-                onClick={() => setActiveTab("simulador")}
-                style={{
-                  background: "linear-gradient(135deg, rgba(168, 85, 247, 0.08), rgba(20, 16, 36, 0.95))",
-                  border: "1px solid rgba(168, 85, 247, 0.3)",
-                  borderRadius: "16px",
-                  padding: "16px 20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.25s ease",
-                  boxShadow: "0 4px 18px rgba(0, 0, 0, 0.2)"
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = "translateY(-3px)";
-                  e.currentTarget.style.boxShadow = "0 8px 24px rgba(168, 85, 247, 0.25)";
-                  e.currentTarget.style.borderColor = "#c084fc";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 4px 18px rgba(0, 0, 0, 0.2)";
-                  e.currentTarget.style.borderColor = "rgba(168, 85, 247, 0.3)";
-                }}
-              >
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-                  <div style={{
-                    width: "42px",
-                    height: "42px",
-                    borderRadius: "12px",
-                    background: "rgba(168, 85, 247, 0.15)",
-                    display: "grid",
-                    placeItems: "center",
-                    border: "1px solid rgba(168, 85, 247, 0.3)"
-                  }}>
-                    <Play size={22} color="#c084fc" />
-                  </div>
-                  <span style={{
-                    fontSize: "11px",
-                    fontWeight: 800,
-                    padding: "3px 8px",
-                    borderRadius: "12px",
-                    background: "rgba(168, 85, 247, 0.2)",
-                    color: "#d8b4fe"
-                  }}>
-                    ⚡ ~3s RESPOSTA
-                  </span>
-                </div>
-                <div>
-                  <small style={{color: "#a59cb8", fontSize: "11px", fontWeight: 600, display: "block"}}>Status da Inteligência Artificial</small>
-                  <strong style={{color: isSuspended ? "#f43f5e" : "#34d399", fontSize: "18px", display: "block", marginTop: "2px"}}>
-                    {isSuspended ? "IA Em Pausa" : "IA Ativa 24h/dia"}
-                  </strong>
-                </div>
-                <div style={{display: "flex", alignItems: "center", gap: "6px", color: "#c084fc", fontSize: "12px", fontWeight: 700, marginTop: "auto"}}>
-                  <span>Testar no Simulador</span>
-                  <ChevronRight size={14} />
-                </div>
-              </div>
-            </section>
-
-            {/* ONBOARDING GUIADO EM 3 PASSOS (PRIMEIRO ACESSO & TESTE) */}
-            {data?.plan?.isTrial && !isSuspended && (
-              <section style={{
-                background: "linear-gradient(135deg, rgba(24, 16, 44, 0.95), rgba(16, 12, 30, 0.95))",
-                border: "1px solid rgba(139, 92, 246, 0.35)",
-                borderRadius: "16px",
-                padding: "18px 22px",
-                marginBottom: "20px",
-                boxShadow: "0 8px 30px rgba(0, 0, 0, 0.3)"
-              }}>
-                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px"}}>
-                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
-                    <Sparkles size={20} color="#ec4899" />
-                    <strong style={{color: "#fff", fontSize: "15px"}}>
-                      Comece por Aqui: Ativação da sua Loja em 3 Passos Rápidos
-                    </strong>
-                  </div>
-                  <span style={{fontSize: "12px", color: "#a59cb8"}}>Siga os passos abaixo para começar a vender automaticamente</span>
-                </div>
-                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px"}}>
-                  <div
-                    onClick={() => setActiveTab("whatsapp")}
-                    style={{
-                      cursor: "pointer",
-                      padding: "12px 16px",
-                      borderRadius: "12px",
-                      background: whatsappSlots.some(s => s.status === "connected") ? "rgba(0, 219, 140, 0.1)" : "rgba(255, 255, 255, 0.04)",
-                      border: `1px solid ${whatsappSlots.some(s => s.status === "connected") ? "#00db8c" : "rgba(255, 255, 255, 0.1)"}`,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px"
-                    }}
-                  >
-                    <span style={{fontSize: "18px"}}>{whatsappSlots.some(s => s.status === "connected") ? "✅" : "1️⃣"}</span>
-                    <div>
-                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>1. Conectar WhatsApp</strong>
-                      <small style={{fontSize: "11px", color: whatsappSlots.some(s => s.status === "connected") ? "#6ee7b7" : "#a59cb8"}}>
-                        {whatsappSlots.some(s => s.status === "connected") ? "WhatsApp Conectado" : "Ler QR Code agora →"}
-                      </small>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => setActiveTab("conhecimento")}
-                    style={{
-                      cursor: "pointer",
-                      padding: "12px 16px",
-                      borderRadius: "12px",
-                      background: instructions ? "rgba(0, 219, 140, 0.1)" : "rgba(255, 255, 255, 0.04)",
-                      border: `1px solid ${instructions ? "#00db8c" : "rgba(255, 255, 255, 0.1)"}`,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px"
-                    }}
-                  >
-                    <span style={{fontSize: "18px"}}>{instructions ? "✅" : "2️⃣"}</span>
-                    <div>
-                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>2. Configurar IA</strong>
-                      <small style={{fontSize: "11px", color: instructions ? "#6ee7b7" : "#a59cb8"}}>
-                        {instructions ? "IA Configurada" : "Escolher modelo de nicho →"}
-                      </small>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => setActiveTab("simulador")}
-                    style={{
-                      cursor: "pointer",
-                      padding: "12px 16px",
-                      borderRadius: "12px",
-                      background: "rgba(255, 255, 255, 0.04)",
-                      border: "1px solid rgba(255, 255, 255, 0.1)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px"
-                    }}
-                  >
-                    <span style={{fontSize: "18px"}}>3️⃣</span>
-                    <div>
-                      <strong style={{fontSize: "13px", color: "#fff", display: "block"}}>3. Testar Respostas</strong>
-                      <small style={{fontSize: "11px", color: "#a59cb8"}}>Abrir simulador interativo →</small>
-                    </div>
-                  </div>
-                </div>
+            {["whatsapp","atendimentos","plano"].includes(activeTab) && (
+              <section className={styles.metrics} aria-label="Resumo da operação">
+                <button type="button" className={styles.metric} onClick={()=>setActiveTab("whatsapp")}>
+                  <span className={styles.metricIcon}><Smartphone size={21}/></span><span className={styles.metricLabel}>WhatsApp da empresa</span>
+                  <strong>{whatsappSlots.filter(slot=>slot.status==="connected").length} de {data?.plan?.maxWhatsappConnections ?? 1} conexões</strong>
+                  <span className={qrState==="open"?styles.successText:styles.mutedText}>{qrState==="open"?"Conexão confirmada":"Revisar conexão"}</span>
+                  <span className={styles.metricAction}>Gerenciar WhatsApp<ArrowRight size={14}/></span>
+                </button>
+                <button type="button" className={styles.metric} onClick={()=>setActiveTab("plano")}>
+                  <span className={styles.metricIcon}><MessageSquare size={21}/></span><span className={styles.metricLabel}>Franquia de mensagens</span>
+                  <strong>{quotaData.quotaUsed} / {quotaData.quotaLimit}</strong><span className={quotaPercent>90?styles.attentionText:styles.mutedText}>{quotaPercent}% utilizado</span>
+                  <span className={styles.metricAction}>Ver franquia e recargas<ArrowRight size={14}/></span>
+                </button>
+                <button type="button" className={styles.metric} onClick={()=>setActiveTab("atendimentos")}>
+                  <span className={styles.metricIcon}><Inbox size={21}/></span><span className={styles.metricLabel}>Central de atendimento</span>
+                  <strong>{conversations.length} conversas</strong><span className={pendingHumanList.length?styles.attentionText:styles.mutedText}>{pendingHumanList.length?`${pendingHumanList.length} aguardando atendimento humano`:"Nenhuma solicitação humana pendente"}</span>
+                  <span className={styles.metricAction}>Abrir atendimentos<ArrowRight size={14}/></span>
+                </button>
+                <button type="button" className={styles.metric} onClick={()=>setActiveTab("simulador")}>
+                  <span className={styles.metricIcon}><Bot size={21}/></span><span className={styles.metricLabel}>Configuração da IA</span>
+                  <strong>{isSuspended?"IA pausada":savedForTenant?savedForTenant.enabled?"Habilitada":"Pausada":"Não confirmada"}</strong><span className={styles.mutedText}>{isSuspended?"Conta suspensa":"Estado salvo nas configurações"}</span>
+                  <span className={styles.metricAction}>Testar no simulador<ArrowRight size={14}/></span>
+                </button>
               </section>
             )}
 
@@ -3533,7 +2782,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
             {/* SEÇÃO 1: CENTRAL DE ATENDIMENTO & MEUS WHATSAPPS */}
             {activeTab === "whatsapp" && (
-              <>
+              <div id={`${setupFieldId}-whatsapp`}>
                 {/* 4. CENTRAL DE ATENDIMENTO - RESUMO COMPACTO NA TELA INICIAL */}
                 <section
                   style={{
@@ -3592,7 +2841,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         color: "#c4b5fd",
                         border: "1px solid rgba(139, 92, 246, 0.3)"
                       }}>
-                        Plano: {data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "CRM Premium")}
+                        Plano: {data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "Plano não confirmado")}
                       </span>
                     </div>
                   </div>
@@ -4115,134 +3364,19 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 <div style={{marginTop: "24px"}}>
                   <HowAttendanceWorksPanel />
                 </div>
-              </>
+              </div>
             )}
 
             {/* SEÇÃO 2: CONFIGURAR MINHA IA */}
             {activeTab === "conhecimento" && (
-              <section className="op-card" style={{display: "flex", flexDirection: "column", gap: "22px"}}>
+              <section className={`op-card ${styles.primaryPanel}`} style={{display: "flex", flexDirection: "column", gap: "22px"}}>
                 <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "16px", flexWrap: "wrap", gap: "12px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
-                    <div style={{width: "48px", height: "48px", borderRadius: "14px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
-                      <Sparkles size={26} color="#fff"/>
-                    </div>
+                    
                     <div>
                       <h2 style={{margin: 0, fontSize: "20px", color: "#fff"}}>Configurar Minha IA: O que ela vai falar e responder</h2>
                       <small style={{color: "#c2bed4"}}>Você define o nome, a simpatia, os preços e todas as regras do atendimento.</small>
                     </div>
-                  </div>
-                </div>
-
-                {/* 1-CLICK TEMPLATES DE NICHO (100% EDITÁVEIS PELO LOJISTA) */}
-                <div style={{
-                  padding: "16px 20px",
-                  borderRadius: "14px",
-                  background: "linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(139, 92, 246, 0.08))",
-                  border: "1px solid rgba(236, 72, 153, 0.3)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px"
-                }}>
-                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px"}}>
-                    <div>
-                      <strong style={{color: "#fff", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px"}}>
-                        <Sparkles size={16} color="#ec4899" /> Modelos Prontos por Nicho (1 Clique para Preencher)
-                      </strong>
-                      <span style={{color: "#c2bed4", fontSize: "12px"}}>
-                        Clique em um nicho para carregar as informações iniciais. Você pode editar qualquer texto livremente abaixo!
-                      </span>
-                    </div>
-                    {templateLoadedMsg && (
-                      <span style={{fontSize: "12px", color: "#6ee7b7", fontWeight: 700, background: "rgba(16, 185, 129, 0.2)", padding: "4px 10px", borderRadius: "8px", border: "1px solid #10b981"}}>
-                        {templateLoadedMsg}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "10px"}}>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectNicheTemplate("delivery")}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        background: "#18142a",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        color: "#fff",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        textAlign: "left",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      <span>🍕</span> Delivery / Pizzaria
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectNicheTemplate("clinica")}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        background: "#18142a",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        color: "#fff",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        textAlign: "left",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      <span>🏥</span> Clínica / Saúde
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectNicheTemplate("servicos")}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        background: "#18142a",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        color: "#fff",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        textAlign: "left",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      <span>💼</span> Prestador de Serviços
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectNicheTemplate("varejo")}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        background: "#18142a",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        color: "#fff",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        textAlign: "left",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      <span>🛍️</span> Loja / Varejo / Moda
-                    </button>
                   </div>
                 </div>
 
@@ -4496,10 +3630,127 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </div>
                 )}
 
+
+                <details className={styles.optionalTemplates}>
+                  <summary>Começar com um modelo (opcional)</summary>
+                  <p>Exemplos fictícios: revise dados e valores antes de salvar. Substitua preços, endereços e regras pelas informações reais da sua empresa.</p>
+                {/* 1-CLICK TEMPLATES DE NICHO (100% EDITÁVEIS PELO LOJISTA) */}
+                <div style={{
+                  padding: "16px 20px",
+                  borderRadius: "14px",
+                  background: "linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(139, 92, 246, 0.08))",
+                  border: "1px solid rgba(236, 72, 153, 0.3)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px"
+                }}>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px"}}>
+                    <div>
+                      <strong style={{color: "#fff", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px"}}>
+                        <Sparkles size={16} color="#ec4899" /> Modelos Prontos por Nicho (1 Clique para Preencher)
+                      </strong>
+                      <span style={{color: "#c2bed4", fontSize: "12px"}}>
+                        Clique em um nicho para carregar as informações iniciais. Você pode editar qualquer texto livremente abaixo!
+                      </span>
+                    </div>
+                    {templateLoadedMsg && (
+                      <span style={{fontSize: "12px", color: "#6ee7b7", fontWeight: 700, background: "rgba(16, 185, 129, 0.2)", padding: "4px 10px", borderRadius: "8px", border: "1px solid #10b981"}}>
+                        {templateLoadedMsg}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "10px"}}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("delivery")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🍕</span> Delivery / Pizzaria
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("clinica")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🏥</span> Clínica / Saúde
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("servicos")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>💼</span> Prestador de Serviços
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectNicheTemplate("varejo")}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        background: "#18142a",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#fff",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        textAlign: "left",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <span>🛍️</span> Loja / Varejo / Moda
+                    </button>
+                  </div>
+                </div>
+
                 {/* Modelos Prontos por Nicho */}
                 <div>
                   <label style={{fontSize: "13px", fontWeight: 700, color: "#ec4899", display: "block", marginBottom: "8px"}}>
-                    Modelos Prontos (Clique para preencher automaticamente com exemplos reais):
+                    Exemplos de preenchimento — revise todos os dados antes de salvar:
                   </label>
                   <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
                     {INDUSTRY_PRESETS.map((p, idx) => (
@@ -4515,14 +3766,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   </div>
                 </div>
 
+                </details>
+
                 {aiNotice && (
                   <div style={{padding: "14px 18px", borderRadius: "12px", background: "rgba(10, 46, 32, 0.8)", border: "1px solid #00db8c", color: "#b6f5dd", display: "flex", alignItems: "center", gap: "10px"}}>
                     <CheckCircle2 size={20} color="#00db8c" style={{flexShrink: 0}}/>
-                    <span style={{fontSize: "14px"}}>{aiNotice}</span>
+                    <span style={{fontSize: "14px"}} role="status">{aiNotice}</span>
                   </div>
                 )}
 
-                <form onSubmit={handleSaveAiSettings} style={{display: "flex", flexDirection: "column", gap: "18px"}}>
+                <form className={styles.aiConfigurationForm} onSubmit={handleSaveAiSettings} style={{display: "flex", flexDirection: "column", gap: "18px"}}>
                   <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px"}}>
                     <div>
                       <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
@@ -4541,32 +3794,24 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         <input
                           type="checkbox"
                           checked={aiEnabled}
-                          onChange={e => setAiEnabled(e.target.checked)}
+                          onChange={e => { isAiDirtyRef.current = true; setAiEnabled(e.target.checked); }}
                           style={{width: "20px", height: "20px", accentColor: "#ec4899"}}
                         />
-                        <strong>Respostas automáticas da IA ativadas no WhatsApp</strong>
+                        <strong>Permitir respostas automáticas da IA (salvar para aplicar)</strong>
                       </label>
                     </div>
                   </div>
 
-                  <div>
+                  <div className={styles.configurationField}>
                     <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                      Como a IA deve se comportar (Tom de voz, simpatia e regras)
-                    </label>
-                    <textarea
-                      style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "95px", fontSize: "14px", lineHeight: "1.5"}}
-                      value={instructions}
-                      onChange={e => { isAiDirtyRef.current = true; setInstructions(e.target.value); }}
-                      placeholder="Ex.: Você é o especialista de atendimento no WhatsApp. Responda com profissionalismo e simpatia, tire dúvidas sobre serviços e conduza ao agendamento ou fechamento. Seja rápido e claro."
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
-                      Cardápio, Preços, Horários e Informações da sua Loja (A base de respostas da IA)
+                      2. Informações da empresa · base de conhecimento
                     </label>
                     <textarea
                       style={{width: "100%", padding: "14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "220px", fontSize: "14px", lineHeight: "1.6", fontFamily: "monospace"}}
+                      id={`${setupFieldId}-business`}
+                      aria-label="Informações da empresa e base de conhecimento"
+                      aria-describedby={`${setupFieldId}-business-count`}
+                      maxLength={KNOWLEDGE_BODY_MAX_LENGTH}
                       value={storeInfo}
                       onChange={e => { isAiDirtyRef.current = true; setStoreInfo(e.target.value); }}
                       placeholder="Ex.: 
@@ -4583,6 +3828,24 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 - Taxa de entrega no Centro: R$ 5,00
 - Formas de pagamento: Pix (chave: pix@bellapizza.com), Cartão de Crédito e Débito."
                     />
+                    <p id={`${setupFieldId}-business-count`} className={styles.characterCount}>{storeInfo.length.toLocaleString("pt-BR")} / {KNOWLEDGE_BODY_MAX_LENGTH.toLocaleString("pt-BR")} caracteres · {Math.max(0,KNOWLEDGE_BODY_MAX_LENGTH-storeInfo.length).toLocaleString("pt-BR")} restantes</p>
+                    {storeInfo.length > KNOWLEDGE_BODY_MAX_LENGTH && <p role="alert" className={styles.fieldWarning}>O texto existente foi preservado. Reduza a base para até {KNOWLEDGE_BODY_MAX_LENGTH.toLocaleString("pt-BR")} caracteres antes de salvar.</p>}
+                  </div>
+
+                  <div className={styles.configurationField}>
+                    <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
+                      3. Comportamento da IA · tom de voz e regras
+                    </label>
+                    <textarea
+                      style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "95px", fontSize: "14px", lineHeight: "1.5"}}
+                      id={`${setupFieldId}-instructions`}
+                      aria-label="Instruções de comportamento da IA"
+                      aria-describedby={`${setupFieldId}-instructions-count`}
+                      value={instructions}
+                      onChange={e => { isAiDirtyRef.current = true; setInstructions(e.target.value); }}
+                      placeholder="Ex.: Você é o especialista de atendimento no WhatsApp. Responda com profissionalismo e simpatia, tire dúvidas sobre serviços e conduza ao agendamento ou fechamento. Seja rápido e claro."
+                    />
+                    <p id={`${setupFieldId}-instructions-count`} className={styles.characterCount}>{instructions.length.toLocaleString("pt-BR")} caracteres nas instruções</p>
                   </div>
 
                   <div>
@@ -4706,12 +3969,18 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </button>
                   </form>
                 </div>
+                <section id={`${setupFieldId}-review`} className={styles.activationReview} aria-labelledby={`${setupFieldId}-review-title`} tabIndex={-1}>
+                  <div><p className={styles.sectionEyebrow}>REVISÃO FINAL</p><h3 id={`${setupFieldId}-review-title`}>Confira antes de ativar o atendimento</h3><p>Salvar configurações não comprova que mensagens estão sendo enviadas. Revise as informações e teste o comportamento antes de alterar a ativação.</p></div>
+                  <dl><div><dt>WhatsApp</dt><dd>{setupConnected ? "Conexão confirmada" : "Revisar conexão"}</dd></div><div><dt>Configurações</dt><dd>{savedForTenant?.agentSaved && savedForTenant?.knowledgeSaved ? "Dados salvos" : "Revisar dados salvos"}</dd></div><div><dt>Simulador</dt><dd>{setupTested ? "Resposta recebida nesta sessão" : "Revisar e testar"}</dd></div><div><dt>Ativação salva da IA</dt><dd>{savedForTenant ? savedForTenant.enabled ? "Ligada nas configurações" : "Desligada nas configurações" : "Não confirmada"}</dd></div></dl>
+                  <div className={styles.reviewAction}><button type="button" onClick={confirmSetupReview} disabled={!canConfirmSetupReview} className="op-primary">{setupSteps[5].confirmed ? "Revisão confirmada nesta sessão" : "Conferi as configurações"}</button><p>{canConfirmSetupReview ? "Confirmação manual nesta sessão. Não ativa a IA e não envia mensagens pelo WhatsApp." : "Conclua as etapas 1 a 5 com os dados salvos e teste novamente para confirmar esta revisão."}</p></div>
+                </section>
+
               </section>
             )}
 
             {/* SEÇÃO NOVO: CHAT DE TESTE (SIMULADOR) */}
             {activeTab === "simulador" && (
-              <section className="op-card" style={{display: "flex", flexDirection: "column", gap: "18px", minHeight: "600px"}}>
+              <section id={`${setupFieldId}-test`} className={`op-card ${styles.primaryPanel}`} style={{display: "flex", flexDirection: "column", gap: "18px", minHeight: "600px"}}>
                 <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px", flexWrap: "wrap", gap: "10px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
                     <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
@@ -4890,7 +4159,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
             {/* SEÇÃO NOVO: HORÁRIOS DE ATENDIMENTO */}
             {activeTab === "horarios" && (
-              <section className="op-card" style={{display: "flex", flexDirection: "column", gap: "20px"}}>
+              <section id={`${setupFieldId}-hours`} className={`op-card ${styles.primaryPanel}`} style={{display: "flex", flexDirection: "column", gap: "20px"}}>
                 <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "14px", flexWrap: "wrap", gap: "12px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
                     <div style={{width: "44px", height: "44px", borderRadius: "12px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
@@ -7009,7 +6278,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 {/* Header da Seção */}
                 <div className="op-card" style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
-                    <div style={{width: "48px", height: "48px", borderRadius: "14px", background: "var(--grad-primary)", display: "grid", placeItems: "center", boxShadow: "var(--glow-pink)"}}>
+                    <div className={styles.sectionIcon}>
                       <CreditCard size={24} color="#fff"/>
                     </div>
                     <div>
@@ -7217,7 +6486,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <div>
                       <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>WhatsApps Permitidos</span>
                       <strong style={{color: "#fff", fontSize: "16px"}}>
-                        {data?.plan?.maxWhatsappConnections ?? 3} de 5 espaços
+                        {data?.plan?.maxWhatsappConnections ?? 3} conexões de WhatsApp
                       </strong>
                     </div>
                   </div>
@@ -7240,7 +6509,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
                     <div>
                       <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>NovaesWeb IA</span>
-                      <strong style={{color: "#fff", fontSize: "16px"}}>Ativa 24h/dia</strong>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>{savedForTenant ? savedForTenant.enabled ? "Habilitada nas configurações" : "Pausada nas configurações" : "Ativação não confirmada"}</strong>
                     </div>
                   </div>
 
@@ -7250,7 +6519,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </div>
                     <div>
                       <span style={{fontSize: "11px", color: "#c4bed6", display: "block", fontWeight: 600}}>Histórico & Conversas</span>
-                      <strong style={{color: "#fff", fontSize: "16px"}}>100% Preservado</strong>
+                      <strong style={{color: "#fff", fontSize: "16px"}}>Histórico da empresa</strong>
                     </div>
                   </div>
                 </div>

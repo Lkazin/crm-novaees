@@ -4,12 +4,14 @@ import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import {NextRequest} from "next/server";
+import * as knowledgeLimits from "./knowledge-limits";
 const TENANT="11111111-1111-4111-8111-111111111111";
 for(const state of ["locked_by_plan","maintenance"]){
  test("advanced hours deny "+state+" before any configuration write",async()=>{
   let writes=0;
   const plan={isSuspended:false,allowedFeatures:["ai_chat","business_hours_basic"],featureStates:{ai_chat:{state:"allowed"},business_hours_basic:{state:"allowed"},business_hours:{state}}};
   const dependencies:Record<string,unknown>={
+   "@/lib/crm/knowledge-limits":knowledgeLimits,
    "next/server":{NextRequest},
    ioredis:class{},
    "@/lib/crm/tenant-access":{authorizeCrmTenant:async()=>({operatorId:null}),crmFeatureAllowed:(_p:unknown,f:string)=>f!=="business_hours",patchCrmConfig:async()=>{writes++;}},

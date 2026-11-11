@@ -6,6 +6,7 @@ import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { getEffectiveTenantPlan, requireTenantFeature, DEFAULT_QUICK_REPLIES } from "@/lib/crm/plans";
 import { buildTenantWhatsappSlots } from "@/lib/crm/whatsapp-slots";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
+import { KNOWLEDGE_BODY_MAX_LENGTH } from "@/lib/crm/knowledge-limits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -265,6 +266,11 @@ export async function GET(request: NextRequest) {
       enabled: agent.enabled,
       storeInfo,
       storeInfoTitle,
+      setupEvidence: {
+        agentSaved: agents.length > 0 && Boolean(agent.instructions?.trim()),
+        knowledgeSaved: Boolean(mainArticle?.status === "published" && mainArticle.body?.trim()),
+        hoursSaved: Boolean(rawOperatingHours && typeof rawOperatingHours === "object")
+      },
       operatingHours,
       allowAdvancedHours,
       whatsappSlots,
@@ -292,6 +298,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     if (!UUID.test(tenantId)) return privateJson({ error: "invalid_tenant" }, 400);
+    if (body.storeInfo !== undefined && (typeof body.storeInfo !== "string" || body.storeInfo.length > KNOWLEDGE_BODY_MAX_LENGTH)) {
+      return privateJson({ error: "knowledge_too_long", message: `As informações da empresa podem ter até ${KNOWLEDGE_BODY_MAX_LENGTH.toLocaleString("pt-BR")} caracteres.` }, 400);
+    }
 
     const access = await authorizeTenantAccess(request, tenantId);
     if (!access.authorized) return privateJson({ error: "unauthorized" }, 401);
@@ -393,13 +402,15 @@ export async function POST(request: NextRequest) {
           cache: "no-store"
         }
       );
+      if (!rCheckArt.ok) throw new Error("knowledge_lookup_failed");
       const existingArticles = (await rCheckArt.json()) as Array<{ id: string; title: string }>;
+      if (!Array.isArray(existingArticles)) throw new Error("knowledge_lookup_failed");
       const targetArticle =
         (Array.isArray(existingArticles) && existingArticles.find(a => a.title === "Informações da Loja e Cardápio")) ||
         (Array.isArray(existingArticles) && existingArticles.length === 1 ? existingArticles[0] : undefined);
 
       if (targetArticle) {
-        await fetch(url + `/rest/v1/crm_knowledge_articles?id=eq.${targetArticle.id}`, {
+        const savedArticle = await fetch(url + `/rest/v1/crm_knowledge_articles?id=eq.${targetArticle.id}&tenant_id=eq.${tenantId}`, {
           method: "PATCH",
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -409,8 +420,9 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString()
           })
         });
+        if (!savedArticle.ok) throw new Error("knowledge_save_failed");
       } else {
-        await fetch(url + "/rest/v1/crm_knowledge_articles", {
+        const savedArticle = await fetch(url + "/rest/v1/crm_knowledge_articles", {
           method: "POST",
           headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -421,6 +433,7 @@ export async function POST(request: NextRequest) {
             created_by: access.operatorId ?? null
           })
         });
+        if (!savedArticle.ok) throw new Error("knowledge_save_failed");
       }
     }
 
