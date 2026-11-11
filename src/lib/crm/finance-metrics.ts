@@ -261,6 +261,13 @@ export type FinanceMetrics = {
     expenses: number | null;
     operatingProfit: number | null;
     operatingMargin: number | null;
+    /** Custo de inferencia de IA no periodo (BRL). null = ainda sem medicao. */
+    aiCost: number | null;
+    /** Receita realizada menos despesas E custo de IA. */
+    netProfit: number | null;
+    netMargin: number | null;
+    /** Custo de IA por loja no periodo, do maior para o menor. */
+    aiCostByTenant: Array<{ tenantId: string; name: string; costBrl: number; responses: number; revenue: number; margin: number | null }>;
   };
   forecast: { d30: number; d60: number; d90: number };
   plans: PlanRow[];
@@ -280,12 +287,19 @@ function addMonthsKeepingDay(d: Date, months: number): Date {
   return r;
 }
 
+/** Custo real de inferencia de IA por loja, somado a partir de crm_ai_usage_events. */
+export type FinanceAiCost = { tenantId: string; costBrl: number; responses: number };
+
 export function computeFinanceMetrics(input: {
   clients: FinanceClient[];
   recharges?: FinanceRecharge[];
   expenses?: FinanceExpense[];
   planCatalog: FinancePlanCatalogItem[];
   filters: FinanceFilters;
+  /** Custo de IA medido no periodo. Quando ausente, a margem fica nula (nao chutamos). */
+  aiCosts?: FinanceAiCost[];
+  /** Cotacao usada para converter o custo (que nasce em USD) para BRL. */
+  usdBrlRate?: number;
   now?: Date;
 }): FinanceMetrics {
   const now = input.now ?? new Date();
@@ -417,6 +431,40 @@ export function computeFinanceMetrics(input: {
     ? (operatingProfit! / totalRealizedRevenue) * 100
     : null;
 
+  // Custo real de IA: entra no lucro. Sem medicao, a margem liquida fica nula
+  // em vez de um numero otimista.
+  const aiCostRows = (input.aiCosts ?? []).filter(r => scopedIds.has(r.tenantId));
+  const aiCost = input.aiCosts !== undefined
+    ? aiCostRows.reduce((sum, r) => sum + (Number(r.costBrl) || 0), 0)
+    : null;
+  const netProfit = aiCost !== null && operatingProfit !== null ? operatingProfit - aiCost : null;
+  const netMargin = netProfit !== null && totalRealizedRevenue > 0
+    ? (netProfit / totalRealizedRevenue) * 100
+    : null;
+
+  const revenueByTenant = new Map<string, number>();
+  for (const { c } of scoped) {
+    const paid = confirmedPayments(c).filter(p => inRange(p.paidDate, from, to));
+    revenueByTenant.set(c.id, paid.reduce((sum, p) => sum + p.amountNum, 0));
+  }
+  for (const r of recharges) {
+    if (!inRange(parseDate(r.approvedAt || r.purchasedAt), from, to)) continue;
+    revenueByTenant.set(r.tenantId, (revenueByTenant.get(r.tenantId) ?? 0) + (Number(r.pricePaid) || 0));
+  }
+  const aiCostByTenant = aiCostRows
+    .map(r => {
+      const revenue = revenueByTenant.get(r.tenantId) ?? 0;
+      return {
+        tenantId: r.tenantId,
+        name: scoped.find(x => x.c.id === r.tenantId)?.c.name ?? r.tenantId,
+        costBrl: Number(r.costBrl) || 0,
+        responses: r.responses,
+        revenue,
+        margin: revenue > 0 ? revenue - (Number(r.costBrl) || 0) : null
+      };
+    })
+    .sort((a, b) => b.costBrl - a.costBrl);
+
   return {
     generatedAt: now.toISOString(),
     totals,
@@ -435,7 +483,11 @@ export function computeFinanceMetrics(input: {
       averageTicket: payingRows.length ? mrr / payingRows.length : null,
       expenses: totalExpenses,
       operatingProfit,
-      operatingMargin
+      operatingMargin,
+      aiCost,
+      netProfit,
+      netMargin,
+      aiCostByTenant
     },
     forecast,
     plans,

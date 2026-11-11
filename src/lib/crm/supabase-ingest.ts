@@ -256,9 +256,14 @@ export async function fetchConversationContext(instance: string, phone: string, 
       "?select=id,mode,status&tenant_id=eq." + t + "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1", "GET");
     if (!threads.length) return { ...fallback, channelStatus: channel.status };
     const conversation = threads[0];
-    const isAiPaused = conversation.mode !== "ai" || conversation.status === "pending" || conversation.status === "resolved";
-    const mode: "ai" | "human" = isAiPaused ? "human" : "ai";
+    // Atendimento encerrado (resolved/closed) NAO e atendimento humano: quando o
+    // cliente volta a escrever, a IA responde de novo, como um novo ciclo.
+    // Antes, 'resolved' era tratado como 'human' e a IA ficava muda para sempre
+    // depois do auto-close — o cliente escrevia e ninguem respondia.
     const status = conversation.status || "open";
+    const isClosed = status === "resolved" || status === "closed";
+    const isAiPaused = conversation.mode !== "ai" || status === "pending";
+    const mode: "ai" | "human" = isClosed ? "ai" : (isAiPaused ? "human" : "ai");
 
     type DbMsg = { direction: string; sender_type: string; body: string; created_at: string };
     const rawMsgs = await db<DbMsg[]>("crm_messages",
@@ -282,7 +287,7 @@ export async function fetchConversationContext(instance: string, phone: string, 
       }
     } catch {}
 
-    if (conversation.status === "resolved" || conversation.status === "closed") {
+    if (isClosed) {
       isReturningAfterClosed = true;
     }
 

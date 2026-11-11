@@ -1901,19 +1901,31 @@ export async function recordPlanAudit(entry: PlanAuditEntry, providedRedis?: Red
     if (ownsConnection && !providedRedis) redis.disconnect();
   }
 
+  // Persistencia duravel da auditoria. Antes o insert omitia tenant_id (NOT NULL)
+  // e o catch vazio escondia a falha: crm_audit_events ficou com 0 linhas desde
+  // o inicio. Agora usa o tenant dono do catalogo e registra o erro se falhar.
   const { url, serviceKey } = getSupabaseConfig();
   if (url && serviceKey) {
     try {
-      await fetch(url + "/rest/v1/crm_audit_events", {
+      const auditTenant = await catalogOwnerId();
+      const res = await fetch(url + "/rest/v1/crm_audit_events", {
         method: "POST",
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
         body: JSON.stringify({
+          tenant_id: auditTenant,
           action: `plan_${entry.action}`,
           entity_type: "crm_plan",
-          entity_id: entry.planId
-        })
+          entity_id: entry.planId,
+          entity_label: entry.planName
+        }),
+        signal: AbortSignal.timeout(4000)
       });
-    } catch {}
+      if (!res.ok) {
+        console.warn(`[plans] Audit persist failed HTTP ${res.status} for ${entry.action}/${entry.planId}`);
+      }
+    } catch (err) {
+      console.warn("[plans] Audit persist error", err instanceof Error ? err.message : err);
+    }
   }
 }
 

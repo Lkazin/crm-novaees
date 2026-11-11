@@ -769,6 +769,8 @@ export default function AdminCRM() {
   const [finPeriod, setFinPeriod] = useState<PeriodPreset>("month");
   const [finFrom, setFinFrom] = useState("");
   const [finTo, setFinTo] = useState("");
+  // Custo real de IA no periodo (BRL), usado na margem liquida.
+  const [aiCosts, setAiCosts] = useState<Array<{ tenantId: string; costBrl: number; responses: number }> | undefined>(undefined);
   const [finPlan, setFinPlan] = useState("");
   const [finStatus, setFinStatus] = useState<FinanceSubscriptionStatus>("all");
   const [finTenant, setFinTenant] = useState("");
@@ -1043,9 +1045,20 @@ export default function AdminCRM() {
       recharges: adminRecharges,
       expenses: operationalExpenses as FinanceExpense[],
       planCatalog: plans.map(p => ({ id: p.id, name: p.name, price: p.price })),
-      filters: { from, to, planId: finPlan || undefined, subscriptionStatus: finStatus, tenantId: finTenant || undefined }
+      filters: { from, to, planId: finPlan || undefined, subscriptionStatus: finStatus, tenantId: finTenant || undefined },
+      aiCosts
     });
-  }, [clients, adminRecharges, operationalExpenses, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant]);
+  }, [clients, adminRecharges, operationalExpenses, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant, aiCosts]);
+
+  const fetchAiCosts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm/admin/ai-costs", { credentials: "same-origin", cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.costs)) setAiCosts(data.costs);
+      }
+    } catch {}
+  }, []);
 
   const fetchFinanceSettings = useCallback(async () => {
     try {
@@ -4320,6 +4333,9 @@ export default function AdminCRM() {
                     <FinCard label="Despesas (período)" value={brl(finance.money.expenses)} color="#f43f5e" hint="Despesas pagas registradas" />
                     <FinCard label="Lucro operacional estimado" value={brl(finance.money.operatingProfit)} color={finance.money.operatingProfit !== null && finance.money.operatingProfit >= 0 ? "#00db8c" : "#f43f5e"} hint="Receita realizada − despesas" />
                     <FinCard label="Margem operacional" value={finance.money.operatingMargin !== null ? `${finance.money.operatingMargin.toFixed(1)}%` : "—"} color="#a855f7" hint="Lucro ÷ receita realizada" />
+                    <FinCard label="Custo de IA (período)" value={finance.money.aiCost !== null ? brl(finance.money.aiCost) : "—"} color="#38bdf8" hint={finance.money.aiCost !== null ? "Custo real de inferência medido" : "Aguardando medição — defina USD_BRL_RATE"} />
+                    <FinCard label="Lucro líquido (real)" value={finance.money.netProfit !== null ? brl(finance.money.netProfit) : "—"} color={finance.money.netProfit !== null && finance.money.netProfit >= 0 ? "#00db8c" : "#f43f5e"} hint="Receita − despesas − custo de IA" />
+                    <FinCard label="Margem líquida" value={finance.money.netMargin !== null ? `${finance.money.netMargin.toFixed(1)}%` : "—"} color="#22d3ee" hint="Lucro líquido ÷ receita realizada" />
                   </div>
                 </div>
 
