@@ -14,6 +14,7 @@ import {
 import { type OperationalExpense } from "@/app/api/crm/admin/finance/route";
 import { BroadcastManagerSection } from "@/components/crm/BroadcastManagerSection";
 import { PlansSection } from "@/components/crm/admin/PlansSection";
+import { QualitySection, type QualitySummaryView } from "@/components/crm/admin/QualitySection";
 import { QuotaExplainer } from "@/components/crm/QuotaExplainer";
 
 const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace"), {
@@ -21,12 +22,13 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano" | "seguranca";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "security" | "users";
+type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "quality" | "security" | "users";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
   users: { title: "Central de Logins & Clientes", description: "Cadastre os usuários e responsáveis pelos acessos antes de vincular às suas empresas." },
   clients: { title: "Empresas & Lojas", description: "Gerencie as empresas cadastradas, vincule clientes, planos comerciais e status de pagamento." },
   radar: { title: "Radar de WhatsApp (Tempo Real)", description: "Monitore a integridade e o status de conexão de todas as instâncias de WhatsApp de todos os clientes." },
   broadcast: { title: "Comunicados & Avisos Globais", description: "Transmita alertas e comunicados oficiais no topo do painel de todos os lojistas em tempo real." },
+  quality: { title: "Qualidade do Atendimento", description: "Indicadores reais de link inventado, preço fora da base, catálogo misturado, repetição, falha de envio e transferência para humano." },
   plans: { title: "Planos Comerciais & Franquias de IA", description: "Gestão de planos, limites técnicos, sincronização e franquias de mensagens da IA." },
   kpis: { title: "Faturamento & Métricas", description: "Acompanhe receitas, mensalidades e indicadores das empresas." },
   providers: { title: "Provedores de IA", description: "Defina os modelos principal e reserva e teste o atendimento das lojas." },
@@ -705,6 +707,7 @@ export default function AdminCRM() {
 
   function navigateSection(section: MasterSection) {
     setCurrentNav(section);
+    if (section === "quality") void fetchQuality(qualityPeriod);
     const url = new URL(window.location.href);
     url.searchParams.set("section", section);
     window.history.pushState(null, "", url);
@@ -1049,6 +1052,35 @@ export default function AdminCRM() {
       aiCosts
     });
   }, [clients, adminRecharges, operationalExpenses, plans, finPeriod, finFrom, finTo, finPlan, finStatus, finTenant, aiCosts]);
+
+  const [qualitySummary, setQualitySummary] = useState<QualitySummaryView | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(false);
+  const [qualityError, setQualityError] = useState<string | null>(null);
+  const [qualityPeriod, setQualityPeriod] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+
+  const fetchQuality = useCallback(async (period: string) => {
+    setQualityLoading(true);
+    setQualityError(null);
+    try {
+      const res = await fetch(`/api/crm/admin/quality?period=${encodeURIComponent(period)}`, {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (!res.ok) {
+        setQualityError("Não foi possível carregar os indicadores de qualidade.");
+        return;
+      }
+      const data = (await res.json()) as QualitySummaryView;
+      setQualitySummary(data);
+    } catch {
+      setQualityError("Falha de rede ao carregar os indicadores de qualidade.");
+    } finally {
+      setQualityLoading(false);
+    }
+  }, []);
 
   const fetchAiCosts = useCallback(async () => {
     try {
@@ -2763,6 +2795,22 @@ export default function AdminCRM() {
 
           <button
             type="button"
+            className={`nw-nav-button ${currentNav === "quality" ? "active" : ""}`}
+            aria-current={currentNav === "quality" ? "page" : undefined}
+            title="Qualidade do Atendimento"
+            onClick={() => navigateSection("quality")}
+          >
+            <ShieldAlert size={18}/>
+            <span>Qualidade</span>
+            {!sidebarCollapsed && qualitySummary && qualitySummary.pendingReview > 0 && (
+              <span style={{marginLeft: "auto", background: "rgba(244, 63, 94, 0.22)", color: "#fb7185", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {qualitySummary.pendingReview}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`nw-nav-button ${currentNav === "security" ? "active" : ""}`}
             aria-current={currentNav === "security" ? "page" : undefined}
             title="Segurança & Recuperação de Senha"
@@ -3156,6 +3204,20 @@ export default function AdminCRM() {
               whatsappStatus: c.whatsappStatus
             }))}
             onRefresh={() => { void fetchClients(); }}
+          />
+        )}
+        {currentNav === "quality" && (
+          <QualitySection
+            summary={qualitySummary}
+            loading={qualityLoading}
+            error={qualityError}
+            period={qualityPeriod}
+            onPeriodChange={(p) => {
+              setQualityPeriod(p);
+              void fetchQuality(p);
+            }}
+            onRefresh={() => void fetchQuality(qualityPeriod)}
+            tenantNames={Object.fromEntries(clients.map((c) => [c.id, c.name]))}
           />
         )}
         {currentNav === "broadcast" && (

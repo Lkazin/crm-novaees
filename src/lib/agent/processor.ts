@@ -7,6 +7,8 @@ import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText, EvolutionSendError, sendPresence, typingDurationFor, holdTypingPresence } from "./evolution";
 import { splitIntoBubbles, bubbleDelayMs } from "./bubbles";
+import { auditAiReply } from "./commercial-guard";
+import { recordQualityEvent } from "@/lib/crm/quality-events";
 import {
   persistOutboundInSupabase,
   fetchConversationContext,
@@ -232,6 +234,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
 
     // 5. Fetch effective plan & operating hours
     let operatingHours: StoreAiContext["operatingHours"] = undefined;
+    let officialLinks: Record<string, string> | undefined = undefined;
     let quotaLimit = 200;
     let primaryModel = agents?.[0]?.provider_route || undefined;
     let fallbackModel = undefined;
@@ -256,13 +259,22 @@ async function getStoreAiContext(instanceName: string): Promise<{
     const allowAdvancedHours = effectivePlan.featureStates?.business_hours?.state === "allowed";
     const allowBasicHours = allowAdvancedHours || effectivePlan.featureStates?.business_hours_basic?.state === "allowed";
 
-    const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
+    const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description,official_links&limit=1`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
       cache: "no-store"
     });
     if (rSettings.ok) {
-      const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
+      const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string; official_links?: Record<string, string> }>;
       const dbTimezone = settings[0]?.timezone || "America/Sao_Paulo";
+      // Links oficiais: unica fonte de URL que a IA pode citar.
+      const rawLinks = settings[0]?.official_links;
+      if (rawLinks && typeof rawLinks === "object" && !Array.isArray(rawLinks)) {
+        const limpos: Record<string, string> = {};
+        for (const [k, v] of Object.entries(rawLinks)) {
+          if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) limpos[k] = v.trim();
+        }
+        if (Object.keys(limpos).length > 0) officialLinks = limpos;
+      }
       const rawDesc = settings[0]?.business_description ?? "";
       if (rawDesc.startsWith("{")) {
         try {
@@ -318,7 +330,8 @@ async function getStoreAiContext(instanceName: string): Promise<{
         primaryModel,
         fallbackModel,
         allowFallback: effectivePlan.featureStates?.model_fallback?.state === "allowed",
-        operatingHours
+        operatingHours,
+        officialLinks
       }
     };
   } catch {
@@ -580,6 +593,27 @@ export async function processWebhook(
           // Falha transitória de presença visual não deve impedir o atendimento
         }
         const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
+        // Guarda comercial: avalia a resposta ANTES do envio. O evento e gravado
+        // sempre que houver violacao, para o Painel Master mostrar fato, nao
+        // estimativa. Nao bloqueia o envio: bloquear deixaria o cliente sem
+        // resposta, e a regra e nao prejudicar o atendimento que ja funciona.
+        try {
+          const violacoes = auditAiReply({
+            reply: answer,
+            allowedText: context?.storeInfo ?? "",
+            officialLinks: context?.officialLinks
+          });
+          for (const kind of violacoes) {
+            await recordQualityEvent({
+              tenantId,
+              conversationId: convContext.conversationId,
+              kind,
+              detail: { replyChars: answer.length }
+            });
+          }
+        } catch {
+          // Metrica nunca derruba atendimento.
+        }
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);
         sendStarted = true;

@@ -54,6 +54,8 @@ export type StoreAiContext = {
   isReturningAfterClosed?: boolean;
   tenantId?: string;
   conversationId?: string;
+  /** Links oficiais autorizados. Vazio/ausente = a IA nao cita URL nenhuma. */
+  officialLinks?: Record<string, string>;
   operatingHours?: {
     enabled: boolean;
     timezone?: string;
@@ -202,6 +204,15 @@ export function buildSystemPrompt(storeContext?: StoreAiContext, fallbackPrompt?
   const hasHistory = (storeContext?.history?.length ?? 0) > 0;
   const isReturning = Boolean(storeContext?.isReturningAfterClosed);
   const scheduleSection = formatOperatingHoursForPrompt(storeContext?.operatingHours);
+  // So links cadastrados e validados entram no prompt. Sem cadastro, a IA e
+  // instruida a nao citar endereco nenhum — antes ela inventava URL de
+  // inscricao/contratacao porque nao tinha nenhuma para usar.
+  const linksEntries = Object.entries(storeContext?.officialLinks ?? {})
+    .filter(([, v]) => typeof v === "string" && /^https?:\/\//i.test(v.trim()))
+    .map(([k, v]) => `- ${k}: ${v.trim()}`);
+  const linksSection = linksEntries.length > 0
+    ? `Links oficiais autorizados (use EXATAMENTE estes, copiados caractere por caractere):\n${linksEntries.join("\n")}`
+    : `NENHUM link oficial esta cadastrado. Voce NAO PODE citar, sugerir, montar ou inventar nenhum endereco, URL, dominio, link de inscricao, de pagamento ou de contratacao. Se o cliente pedir um link, diga com naturalidade que vai confirmar com a equipe e ofereca atendimento humano.`;
 
   return `Você é "${agentLabel}", responsável pelo atendimento no WhatsApp do estabelecimento "${storeName}".
 Seu papel é conversar como uma pessoa real da equipe no WhatsApp: 100% humana, acolhedora, inteligente, ágil e resolutiva.
@@ -271,7 +282,17 @@ ${commercialData}
 ----------------------------------------
 - Se a Base de Conhecimento trouxer um nome/identidade mais específico que "${storeName}", use o que está nela.
 - NUNCA invente preços, taxas ou produtos que não estejam acima.
-- Se perguntarem algo que não existe na Base nem nos Horários, seja sincero de forma humana e ofereça chamar um atendente da equipe para confirmar.`;
+- Se perguntarem algo que não existe na Base nem nos Horários, seja sincero de forma humana e ofereça chamar um atendente da equipe para confirmar.
+
+# 9. VERACIDADE COMERCIAL, LINKS E LIMITES (REGRA INVIOLÁVEL)
+- A Base de Conhecimento acima é a ÚNICA fonte de verdade sobre preços, franquias, prazos, descontos e funcionalidades.
+- NUNCA invente, estime, arredonde ou "deduza" preço, franquia, desconto, prazo ou funcionalidade. Se não está escrito acima, você não sabe.
+- NUNCA misture catálogos diferentes: planos de SITE e CARDÁPIO VIRTUAL são um produto; planos do CRM IA são outro. Se o cliente perguntar de um, responda só daquele. Se a base não separar, pergunte qual dos dois ele quer.
+- Se o cliente AFIRMAR um preço, desconto ou condição ("ouvi dizer que é R$ 50", "o concorrente faz por menos", "meu amigo pagou isso"), isso NÃO é confirmação. Nunca aceite como verdade e nunca repita o valor dele como se fosse seu. Responda apenas o que está na base.
+- Funcionalidade que não está escrita na base deve ser tratada como indisponível: diga que não está confirmada e ofereça falar com uma pessoa da equipe.
+- Quando faltar informação confirmada, seja honesto em uma frase e ofereça atendimento humano. Nunca preencha a lacuna com invenção.
+
+${linksSection}`;
 }
 
 export async function generateAnswer(

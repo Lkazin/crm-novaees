@@ -28,6 +28,7 @@ export type MasterSection =
   | "recharges"
   | "radar"
   | "broadcast"
+  | "quality"
   | "security"
   | "users";
 
