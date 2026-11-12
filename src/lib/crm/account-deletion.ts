@@ -164,3 +164,78 @@ export async function cancelDeletion(tenantId: string): Promise<boolean> {
   );
   return Array.isArray(rows) && rows.length > 0;
 }
+
+/** Pedidos vencidos: purge_after ja passou e ainda estao agendados. */
+export async function listDueDeletions(now = new Date()): Promise<DeletionRequest[]> {
+  const rows = await rest<
+    Array<{
+      id: string;
+      tenant_id: string;
+      status: DeletionStatus;
+      active_until: string;
+      purge_after: string;
+      created_at: string;
+    }>
+  >(
+    `crm_deletion_requests?status=eq.scheduled&purge_after=lte.${encodeURIComponent(
+      now.toISOString()
+    )}&select=id,tenant_id,status,active_until,purge_after,created_at&limit=50`
+  );
+  if (!rows) return [];
+  return rows.map((r) => ({
+    id: r.id,
+    tenantId: r.tenant_id,
+    status: r.status,
+    activeUntil: r.active_until,
+    purgeAfter: r.purge_after,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Chama a RPC que apaga tudo numa transacao. Devolve as contagens por tabela. */
+export async function purgeTenant(tenantId: string): Promise<Record<string, number> | null> {
+  return rest<Record<string, number>>(`rpc/crm_purge_tenant`, {
+    method: "POST",
+    body: JSON.stringify({ p_tenant: tenantId }),
+  });
+}
+
+/** Marca o pedido como purgado depois que a RPC respondeu. */
+export async function markPurged(requestId: string): Promise<boolean> {
+  const rows = await rest<Array<{ id: string }>>(
+    `crm_deletion_requests?id=eq.${encodeURIComponent(requestId)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ status: "purged", purged_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+    }
+  );
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+export type PurgeRunResult = {
+  checked: number;
+  purged: Array<{ tenantId: string; requestId: string; counts: Record<string, number> }>;
+  failed: Array<{ tenantId: string; requestId: string; error: string }>;
+};
+
+/**
+ * Executa a exclusao dos pedidos vencidos. Idempotente: se a RPC falhar, o
+ * pedido continua 'scheduled' e sera tentado de novo na proxima execucao.
+ */
+export async function runDeletionPurge(now = new Date()): Promise<PurgeRunResult> {
+  const due = await listDueDeletions(now);
+  const result: PurgeRunResult = { checked: due.length, purged: [], failed: [] };
+
+  for (const req of due) {
+    const counts = await purgeTenant(req.tenantId);
+    if (counts === null) {
+      result.failed.push({ tenantId: req.tenantId, requestId: req.id, error: "purge_rpc_failed" });
+      continue;
+    }
+    await markPurged(req.id);
+    result.purged.push({ tenantId: req.tenantId, requestId: req.id, counts });
+  }
+
+  return result;
+}
