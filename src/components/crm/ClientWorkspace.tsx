@@ -7,6 +7,7 @@ import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
 import KnowledgeWorkspace from "./KnowledgeWorkspace";
 import SetupJourney, { type SetupStep, type SetupStepId } from "./SetupJourney";
+import { DangerZoneSection } from "./DangerZoneSection";
 import { ClientSidebar } from './ClientSidebar';
 import WorkspaceNavigation, { type WorkspaceNavItem } from "./WorkspaceNavigation";
 import { KNOWLEDGE_BODY_MAX_LENGTH } from "@/lib/crm/knowledge-limits";
@@ -6926,6 +6927,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     </form>
                   )}
                 </div>
+
+                <DangerZoneSection tenantId={tenant} />
               </div>
             )}
           </Content>
