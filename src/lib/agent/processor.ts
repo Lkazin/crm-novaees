@@ -417,7 +417,10 @@ export async function processWebhook(
     const wait = deps.wait ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
     // 4. Leader worker: wait 1400ms for user to finish rapid consecutive typing
-    await wait(1400);
+    // 800ms e suficiente para agrupar mensagens rapidas. Os 1400ms anteriores
+    // eram atraso puro: o cliente digitava "oi", "tudo bem?" e esperava 1,4s
+    // antes de qualquer coisa comecar.
+    await wait(800);
 
     try {
       // 5. Collect all buffered messages for this user atomically via Lua script

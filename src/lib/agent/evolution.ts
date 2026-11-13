@@ -94,8 +94,10 @@ export async function sendPresence(
  */
 export function typingDurationFor(text: string): number {
   const chars = (text || "").trim().length;
+  // Piso de 800ms (era 1500ms): um "oi" nao pode custar 1,5s de espera antes
+  // da bolha aparecer. O teto de 6s continua para respostas longas.
   const ms = Math.round(chars * 25);
-  return Math.max(1500, Math.min(6000, ms));
+  return Math.max(800, Math.min(6000, ms));
 }
 
 /**

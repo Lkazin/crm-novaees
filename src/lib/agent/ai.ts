@@ -13,9 +13,12 @@ function approvedModels(primary: string, fallback?: string): string[] {
   // When using automatic routing ("auto" or "auto/*"), prioritize fast, fluent
   // Brazilian Portuguese models first so it never falls into weak 7B non-PT models.
   if (primary.startsWith("auto")) {
+    // auto/best-chat NAO entra na lista: ele roteia para um classificador de
+    // seguranca (gpt-oss-safeguard) que devolve finish_reason=length com
+    // content vazio. Cada tentativa custava ~1,2s do tempo do cliente antes de
+    // cair no modelo que responde de verdade.
     const preferred = [
-      primary !== "auto" ? primary : "auto/best-chat",
-      "auto/best-chat",
+      primary !== "auto" ? primary : "auto/gpt",
       "auto/gpt",
       "groq/openai/gpt-oss-20b",
       fallback && !fallback.startsWith("auto") ? fallback : "auto/fast"
@@ -301,7 +304,7 @@ export async function generateAnswer(
   storeContext?: StoreAiContext
 ): Promise<string> {
   const url = cfg.aiUrl.replace(/\/$/, "") + "/chat/completions";
-  const primary = storeContext?.primaryModel || cfg.aiModel || "auto/best-chat";
+  const primary = storeContext?.primaryModel || cfg.aiModel || "auto/gpt";
   const fallback = storeContext?.fallbackModel;
   const models = storeContext?.allowFallback === true ? approvedModels(primary, fallback) : (/^[a-zA-Z0-9_.:/-]{1,140}$/.test(primary) ? [primary] : []);
   if (!models.length) throw new Error("Modelo de IA nao autorizado");
