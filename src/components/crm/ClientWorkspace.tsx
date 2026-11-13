@@ -2202,6 +2202,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     }}>
                       <CheckCircle2 size={12} /> Loja Ativa
                     </span>
+                    {!embedded && data && data.tenants.length > 1 && (
+                      <select
+                        aria-label="Alternar empresa ativa"
+                        value={tenant}
+                        onChange={e => void changeTenant(e.target.value)}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: "10px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          background: "rgba(139, 92, 246, 0.16)",
+                          color: "#ede9fe",
+                          border: "1px solid rgba(139, 92, 246, 0.38)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {data.tenants.map(t => (
+                          <option key={t.id} value={t.id} style={{ background: "#140c1f", color: "#fff" }}>
+                            🏢 {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     {data?.plan?.isTrial && (
                       <span style={{
                         padding: "2px 8px",

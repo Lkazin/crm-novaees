@@ -110,7 +110,9 @@ export async function GET(request: NextRequest) {
       let paymentHistory: Array<Record<string, unknown>> = [];
       let upgradeRequests: Array<Record<string, unknown>> = [];
       let businessDetails = {
+        customerId: "",
         ownerName: "",
+        ownerEmail: "",
         niche: "",
         businessWhatsapp: "",
         document: "",
@@ -165,14 +167,18 @@ export async function GET(request: NextRequest) {
 
       const activeOperatorsCount = tenantMemberships.length;
 
+      const resolvedEmail = primaryUser?.email || businessDetails.ownerEmail || "—";
+
       clients.push({
         id: t.id,
         name: t.name,
         status: t.status,
         isNovaesOwn,
         isMasterOwnTenant:isNovaesOwn,
-        email,
+        email: resolvedEmail,
         userId: primaryMemb?.user_id ?? null,
+        customerId: businessDetails.customerId || null,
+        hasLogin: Boolean(primaryMemb?.user_id),
         ownerName: businessDetails.ownerName || (primaryMemb?.user_id ? (userMap.get(primaryMemb.user_id)?.user_metadata?.name as string) : "") || "",
         businessDetails,
         created_at: t.created_at,
@@ -219,6 +225,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
     const suppliedUserId = typeof body.userId === "string" && TENANT_UUID.test(body.userId.trim()) ? body.userId.trim() : "";
+    const suppliedCustomerId = typeof body.customerId === "string" && TENANT_UUID.test(body.customerId.trim()) ? body.customerId.trim() : "";
     let email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
     let ownerName = typeof body.ownerName === "string" ? body.ownerName.trim() : "";
@@ -247,6 +254,11 @@ export async function POST(request: NextRequest) {
       const existingUser = await rCheckUser.json();
       if (!email && existingUser.email) email = existingUser.email.toLowerCase();
       if (!ownerName && existingUser.user_metadata?.name) ownerName = existingUser.user_metadata.name;
+    } else if (suppliedCustomerId && !password) {
+      // Step 2 of 3-step workflow: Store linked to a commercial Customer (Step 1) before creating Auth Login (Step 3)
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return privateJson({ error: "invalid_email" }, 400);
+      }
     } else {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return privateJson({ error: "invalid_email" }, 400);
       if (password.length < 6) return privateJson({ error: "password_too_short" }, 400);
@@ -258,7 +270,7 @@ export async function POST(request: NextRequest) {
     if (customQuotaValue !== undefined && customQuotaValue !== null && (typeof customQuotaValue !== "number" || !Number.isInteger(customQuotaValue) || customQuotaValue < 0 || customQuotaValue > 1000000)) return privateJson({ error: "invalid_quota" }, 400);
     const isTrial = selectedPlan.id === "crm-trial";
     if (isTrial) {
-      const eligibility = await checkTrialEligibility(storeName, email);
+      const eligibility = await checkTrialEligibility(storeName, email || suppliedCustomerId);
       if (!eligibility.eligible) {
         return privateJson({
           error: "trial_already_used",
@@ -286,9 +298,9 @@ export async function POST(request: NextRequest) {
     if (!tenantId || !TENANT_UUID.test(tenantId)) throw new Error("tenant_creation_unconfirmed");
     createdTenantId = tenantId;
 
-    // 2. Resolve or create user in Supabase Auth via Admin API
+    // 2. Resolve or create user in Supabase Auth via Admin API (only when userId or password was supplied)
     let userId = suppliedUserId;
-    if (!userId) {
+    if (!userId && password.length >= 6) {
       const rUser = await fetch(url + "/auth/v1/admin/users", {
         method: "POST",
         headers: {
@@ -299,7 +311,7 @@ export async function POST(request: NextRequest) {
           email,
           password,
           email_confirm: true,
-          user_metadata: { storeName, tenantId, role: "CLIENT", name: ownerName || storeName }
+          user_metadata: { storeName, tenantId, role: "CLIENT", name: ownerName || storeName, customerId: suppliedCustomerId || undefined }
         })
       });
       if (!rUser.ok) {
@@ -312,19 +324,21 @@ export async function POST(request: NextRequest) {
       createdUserId = userId;
     }
 
-    // 3. Create membership in crm_tenant_memberships
-    const membershipCreated = await fetch(url + "/rest/v1/crm_tenant_memberships", {
-      method: "POST",
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenant_id: tenantId,
-        user_id: userId,
-        role: "admin",
-        is_active: true
-      })
-    });
+    // 3. Create membership in crm_tenant_memberships (when a login userId is already present)
+    if (userId) {
+      const membershipCreated = await fetch(url + "/rest/v1/crm_tenant_memberships", {
+        method: "POST",
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenant_id: tenantId,
+          user_id: userId,
+          role: "admin",
+          is_active: true
+        })
+      });
 
-    if (!membershipCreated.ok) throw new Error("client_membership_creation_failed");
+      if (!membershipCreated.ok) throw new Error("client_membership_creation_failed");
+    }
 
     // 4. Save initial Plan settings strictly derived from the Official Plan Catalog
     let planMeta: StoredTenantConfig;
@@ -332,12 +346,27 @@ export async function POST(request: NextRequest) {
     let finalPlanName: string;
 
     const commonBusinessDetails = {
+      customerId: suppliedCustomerId || "",
       ownerName: ownerName || "",
+      ownerEmail: email || "",
       niche: niche || "",
       businessWhatsapp: businessWhatsapp || "",
       document: document || "",
       agentName: agentName || ""
     };
+
+    const initialTeamOperators = userId
+      ? [
+          {
+            id: userId,
+            name: ownerName || `Administrador (${storeName})`,
+            email,
+            role: "admin",
+            status: "active",
+            createdAt: new Date().toISOString()
+          }
+        ]
+      : [];
 
     if (isTrial) {
       const trialStartedAt = new Date().toISOString();
@@ -361,19 +390,10 @@ export async function POST(request: NextRequest) {
           exceptionReason: null
         },
         businessDetails: commonBusinessDetails,
-        teamOperators: [
-          {
-            id: userId,
-            name: ownerName || `Administrador (${storeName})`,
-            email,
-            role: "admin",
-            status: "active",
-            createdAt: trialStartedAt
-          }
-        ]
+        teamOperators: initialTeamOperators.map(op => ({ ...op, createdAt: trialStartedAt }))
       };
       effectiveLimit = 100;
-      await recordTrialRegistration(tenantId, storeName, email);
+      await recordTrialRegistration(tenantId, storeName, email || suppliedCustomerId);
     } else {
       const matchedPlan = selectedPlan;
 
@@ -409,16 +429,7 @@ export async function POST(request: NextRequest) {
           }
         },
         businessDetails: commonBusinessDetails,
-        teamOperators: [
-          {
-            id: userId,
-            name: ownerName || `Administrador (${storeName})`,
-            email,
-            role: "admin",
-            status: "active",
-            createdAt: new Date().toISOString()
-          }
-        ]
+        teamOperators: initialTeamOperators
       };
       effectiveLimit = customQuota !== null ? customQuota : matchedPlan.quotaLimit;
     }

@@ -22,10 +22,11 @@ const ClientWorkspace = dynamic(() => import("@/components/crm/ClientWorkspace")
 });
 
 type CrmTab = "whatsapp" | "conhecimento" | "artigos" | "simulador" | "horarios" | "atendimentos" | "equipe" | "relatorios" | "contatos" | "plano" | "seguranca";
-type MasterSection = "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "quality" | "security" | "users";
+type MasterSection = "customers" | "clients" | "plans" | "kpis" | "providers" | "crm" | "recharges" | "radar" | "broadcast" | "quality" | "security" | "users";
 const MASTER_SECTIONS: Record<MasterSection, { title: string; description: string }> = {
-  users: { title: "Central de Logins & Clientes", description: "Cadastre os usuários e responsáveis pelos acessos antes de vincular às suas empresas." },
-  clients: { title: "Empresas & Lojas", description: "Gerencie as empresas cadastradas, vincule clientes, planos comerciais e status de pagamento." },
+  customers: { title: "1. Clientes Responsáveis", description: "Cadastre, edite e consulte os dados comerciais dos clientes responsáveis sem precisar criar login nem exigir empresa." },
+  clients: { title: "2. Empresas & Lojas", description: "Selecione o cliente cadastrado, crie a empresa e defina o plano comercial (um cliente pode ter múltiplas empresas)." },
+  users: { title: "3. Logins & Acessos", description: "Crie o login de acesso com senha e permissões vinculado às empresas cadastradas." },
   radar: { title: "Radar de WhatsApp (Tempo Real)", description: "Monitore a integridade e o status de conexão de todas as instâncias de WhatsApp de todos os clientes." },
   broadcast: { title: "Comunicados & Avisos Globais", description: "Transmita alertas e comunicados oficiais no topo do painel de todos os lojistas em tempo real." },
   quality: { title: "Qualidade do Atendimento", description: "Indicadores reais de link inventado, preço fora da base, catálogo misturado, repetição, falha de envio e transferência para humano." },
@@ -75,6 +76,34 @@ function FinCard({ label, value, hint, color = "#fff", unavailable, icon, trend 
   );
 }
 
+type MasterCustomerItem = {
+  id: string;
+  name: string;
+  email: string;
+  whatsapp: string;
+  document: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  hasLogin: boolean;
+  loginUserId: string | null;
+  linkedStores: Array<{
+    tenantId: string;
+    tenantName: string;
+    status: string;
+    planName: string;
+    hasLogin: boolean;
+  }>;
+};
+
+type UserGranularPermissions = {
+  canManageAi: boolean;
+  canManageWhatsapp: boolean;
+  canManageTeam: boolean;
+  canViewReports: boolean;
+  canManageBilling: boolean;
+};
+
 type ClientUser = {
   id: string;
   email: string;
@@ -82,6 +111,9 @@ type ClientUser = {
   whatsapp: string;
   status: "waiting_store" | "linked" | "blocked";
   isBlocked: boolean;
+  accessRole?: "owner" | "admin" | "agent" | "viewer";
+  permissions?: UserGranularPermissions;
+  customerId?: string | null;
   createdAt: string;
   linkedTenants: Array<{
     tenantId: string;
@@ -99,9 +131,13 @@ type Client = {
   status: string;
   email: string;
   userId: string | null;
+  customerId?: string | null;
+  hasLogin?: boolean;
   ownerName?: string;
   businessDetails?: {
+    customerId?: string;
     ownerName?: string;
+    ownerEmail?: string;
     niche?: string;
     businessWhatsapp?: string;
     document?: string;
@@ -739,17 +775,55 @@ export default function AdminCRM() {
   const [creating, setCreating] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
 
+  // Etapa 1: Clientes Responsáveis (Cadastro Comercial sem Login/Senha)
+  const [customers, setCustomers] = useState<MasterCustomerItem[]>([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [customerFormOpen, setCustomerFormOpen] = useState(false);
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [customerFullName, setCustomerFullName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerWhatsapp, setCustomerWhatsapp] = useState("");
+  const [customerDocument, setCustomerDocument] = useState("");
+  const [customerNotes, setCustomerNotes] = useState("");
+  const [savingCustomer, setSavingCustomer] = useState(false);
+  const [customerFilterStatus, setCustomerFilterStatus] = useState<"all" | "with_store" | "no_store" | "multi_store">("all");
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+
   // Store linking & additional business fields (Etapa 2: Criar Loja)
   const [selectedUserId, setSelectedUserId] = useState<string>("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [businessWhatsapp, setBusinessWhatsapp] = useState("");
   const [niche, setNiche] = useState("");
   const [clientDocument, setClientDocument] = useState("");
   const [agentName, setAgentName] = useState("");
 
-  // User Management state (Etapa 1 & 5: Criar Login e Gerenciar Clientes)
+  // User Management state (Etapa 3: Logins & Acessos)
   const [users, setUsers] = useState<ClientUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [userFormOpen, setUserFormOpen] = useState(false);
+  const [selectedLoginTenantId, setSelectedLoginTenantId] = useState<string>("");
+  const [userAccessRole, setUserAccessRole] = useState<"owner" | "admin" | "agent" | "viewer">("owner");
+  const [userPermissions, setUserPermissions] = useState<UserGranularPermissions>({
+    canManageAi: true,
+    canManageWhatsapp: true,
+    canManageTeam: true,
+    canViewReports: true,
+    canManageBilling: true
+  });
+  const [linkStoreModalUser, setLinkStoreModalUser] = useState<ClientUser | null>(null);
+  const [linkStoreTenantId, setLinkStoreTenantId] = useState<string>("");
+  const [linkStoreRole, setLinkStoreRole] = useState<"owner" | "admin" | "agent" | "viewer">("owner");
+  const [linkingStoreLoading, setLinkingStoreLoading] = useState(false);
+  const [permModalUser, setPermModalUser] = useState<ClientUser | null>(null);
+  const [permModalRole, setPermModalRole] = useState<"owner" | "admin" | "agent" | "viewer">("owner");
+  const [permModalFlags, setPermModalFlags] = useState<UserGranularPermissions>({
+    canManageAi: true,
+    canManageWhatsapp: true,
+    canManageTeam: true,
+    canViewReports: true,
+    canManageBilling: true
+  });
+  const [savingPermModal, setSavingPermModal] = useState(false);
   const [userFullName, setUserFullName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userWhatsapp, setUserWhatsapp] = useState("");
@@ -825,6 +899,7 @@ export default function AdminCRM() {
     setGlobalSearchTerm(val);
     setSearchTerm(val);
     setUserSearchTerm(val);
+    setCustomerSearchTerm(val);
   };
 
   useEffect(() => {
@@ -947,7 +1022,26 @@ export default function AdminCRM() {
     } catch {}
   }, []);
 
-  // Fetch Client Users
+  // Fetch Commercial Customers (Etapa 1: Clientes)
+  const fetchCustomers = useCallback(async () => {
+    setLoadingCustomers(true);
+    try {
+      const res = await fetch("/api/crm/admin/customers", {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCustomers(data.customers || []);
+      }
+    } catch {
+      // quiet fail
+    } finally {
+      setLoadingCustomers(false);
+    }
+  }, []);
+
+  // Fetch Client Users (Etapa 3: Logins & Acessos)
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -975,6 +1069,7 @@ export default function AdminCRM() {
           const data = await res.json();
           if (data.authenticated && data.role === "master") {
             setAuthenticated(true);
+            void fetchCustomers();
             void fetchClients();
             void fetchPlans();
             void fetchUsers();
@@ -990,7 +1085,7 @@ export default function AdminCRM() {
       }
     }
     void checkMasterSession();
-  }, [fetchClients, fetchPlans, fetchUsers, fetchMasterRecoverySettings]);
+  }, [fetchCustomers, fetchClients, fetchPlans, fetchUsers, fetchMasterRecoverySettings]);
 
   // Master Login
   const handleMasterLogin = async (e: React.FormEvent) => {
@@ -1216,7 +1311,172 @@ export default function AdminCRM() {
     });
   }, [clients, searchTerm, filterStatus]);
 
-  // User Filtering & Handlers (Etapa 1 & 5)
+  // Etapa 1: Filtered Commercial Customers & Handlers
+  const filteredCustomers = useMemo(() => {
+    return customers.filter(c => {
+      const q = customerSearchTerm.toLowerCase();
+      const matchSearch =
+        c.name.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) ||
+        (c.whatsapp || "").includes(customerSearchTerm) ||
+        (c.document || "").toLowerCase().includes(q);
+      if (!matchSearch) return false;
+      if (customerFilterStatus === "with_store") return c.linkedStores.length > 0;
+      if (customerFilterStatus === "no_store") return c.linkedStores.length === 0;
+      if (customerFilterStatus === "multi_store") return c.linkedStores.length > 1;
+      return true;
+    });
+  }, [customers, customerSearchTerm, customerFilterStatus]);
+
+  const handleResetCustomerForm = () => {
+    setEditingCustomerId(null);
+    setCustomerFullName("");
+    setCustomerEmail("");
+    setCustomerWhatsapp("");
+    setCustomerDocument("");
+    setCustomerNotes("");
+    setCustomerFormOpen(false);
+  };
+
+  const handleOpenEditCustomer = (c: MasterCustomerItem) => {
+    setEditingCustomerId(c.id);
+    setCustomerFullName(c.name);
+    setCustomerEmail(c.email);
+    setCustomerWhatsapp(c.whatsapp);
+    setCustomerDocument(c.document || "");
+    setCustomerNotes(c.notes || "");
+    setCustomerFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleSaveCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingCustomer(true);
+    setError("");
+    setNotice("");
+    try {
+      const isEdit = Boolean(editingCustomerId);
+      const res = await fetch("/api/crm/admin/customers", {
+        method: isEdit ? "PATCH" : "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId: editingCustomerId || undefined,
+          name: customerFullName,
+          email: customerEmail,
+          whatsapp: customerWhatsapp,
+          document: customerDocument,
+          notes: customerNotes
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || data.error || "Não foi possível salvar os dados do cliente.");
+        return;
+      }
+      setNotice(
+        isEdit
+          ? `Cadastro comercial do cliente "${customerFullName}" atualizado com sucesso!`
+          : `Cliente responsável "${customerFullName}" cadastrado com sucesso (sem criação de login/senha)! Agora você pode vinculá-lo em Empresas & Lojas.`
+      );
+      handleResetCustomerForm();
+      await fetchCustomers();
+    } catch {
+      setError("Falha de comunicação ao salvar dados do cliente.");
+    } finally {
+      setSavingCustomer(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (c: MasterCustomerItem) => {
+    if (c.linkedStores.length > 0) {
+      setError(`O cliente "${c.name}" possui ${c.linkedStores.length} empresa(s) vinculada(s). Exclua a empresa antes de apagar o cadastro do cliente.`);
+      return;
+    }
+    if (!window.confirm(`Deseja realmente apagar o cadastro comercial do cliente "${c.name}" (${c.email})?`)) return;
+    try {
+      const res = await fetch(`/api/crm/admin/customers?customerId=${encodeURIComponent(c.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.message || data.error || "Não foi possível excluir o cliente.");
+        return;
+      }
+      setNotice(`Cadastro comercial de "${c.name}" removido com sucesso.`);
+      await fetchCustomers();
+    } catch {
+      setError("Falha ao remover cliente.");
+    }
+  };
+
+  const handleStartStoreForCustomer = (customer: MasterCustomerItem) => {
+    setSelectedCustomerId(customer.id);
+    setSelectedUserId(customer.loginUserId || "");
+    setEmail(customer.email);
+    setBusinessWhatsapp(customer.whatsapp || "");
+    setClientDocument(customer.document || "");
+    if (!storeName) setStoreName(`Empresa ${customer.name.split(" ")[0]}`);
+    navigateSection("clients");
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleStartLoginForStore = (client: Client) => {
+    setSelectedLoginTenantId(client.id);
+    const matchedCustomer = customers.find(
+      c => c.id === client.customerId || (client.email && c.email.toLowerCase() === client.email.toLowerCase())
+    );
+    setUserFullName(client.ownerName || matchedCustomer?.name || client.name);
+    setUserEmail(
+      client.email && client.email !== "—"
+        ? client.email
+        : client.businessDetails?.ownerEmail || matchedCustomer?.email || ""
+    );
+    setUserWhatsapp(client.businessDetails?.businessWhatsapp || matchedCustomer?.whatsapp || "");
+    setUserAccessRole("owner");
+    setUserPermissions({
+      canManageAi: true,
+      canManageWhatsapp: true,
+      canManageTeam: true,
+      canViewReports: true,
+      canManageBilling: true
+    });
+    navigateSection("users");
+    setUserFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const applyRolePresetPermissions = (role: "owner" | "admin" | "agent" | "viewer"): UserGranularPermissions => {
+    if (role === "owner" || role === "admin") {
+      return {
+        canManageAi: true,
+        canManageWhatsapp: true,
+        canManageTeam: true,
+        canViewReports: true,
+        canManageBilling: role === "owner"
+      };
+    }
+    if (role === "agent") {
+      return {
+        canManageAi: false,
+        canManageWhatsapp: true,
+        canManageTeam: false,
+        canViewReports: false,
+        canManageBilling: false
+      };
+    }
+    return {
+      canManageAi: false,
+      canManageWhatsapp: false,
+      canManageTeam: false,
+      canViewReports: true,
+      canManageBilling: false
+    };
+  };
+
+  // User Filtering & Handlers (Etapa 3: Logins & Acessos)
   const filteredUsers = useMemo(() => {
     return users.filter(u => {
       const matchSearch =
@@ -1245,6 +1505,44 @@ export default function AdminCRM() {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const existingLoginByEmail = users.find(
+      u => u.email.trim().toLowerCase() === userEmail.trim().toLowerCase()
+    );
+
+    // If user already exists and a target company is selected, link existing login to this company
+    if (existingLoginByEmail && selectedLoginTenantId && !userInitialPassword) {
+      setCreatingUser(true);
+      setError("");
+      setNotice("");
+      try {
+        const res = await fetch("/api/crm/admin/users", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            existingUserId: existingLoginByEmail.id,
+            tenantId: selectedLoginTenantId,
+            role: userAccessRole,
+            permissions: userPermissions
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.message || data.error || "Não foi possível vincular o login existente à empresa.");
+          return;
+        }
+        setNotice(`Login existente de "${existingLoginByEmail.name}" vinculado com sucesso à empresa selecionada!`);
+        setSelectedLoginTenantId("");
+        setUserFormOpen(false);
+        await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
+      } catch {
+        setError("Falha de comunicação ao vincular login.");
+      } finally {
+        setCreatingUser(false);
+      }
+      return;
+    }
+
     if (userInitialPassword !== userConfirmPassword) {
       setError("As senhas informadas não coincidem. Digite novamente.");
       return;
@@ -1257,6 +1555,7 @@ export default function AdminCRM() {
     setError("");
     setNotice("");
     try {
+      const targetClient = clients.find(c => c.id === selectedLoginTenantId);
       const res = await fetch("/api/crm/admin/users", {
         method: "POST",
         credentials: "same-origin",
@@ -1266,7 +1565,11 @@ export default function AdminCRM() {
           email: userEmail,
           whatsapp: userWhatsapp,
           password: userInitialPassword,
-          status: userStatus
+          status: userStatus,
+          tenantId: selectedLoginTenantId || undefined,
+          customerId: targetClient?.customerId || undefined,
+          role: userAccessRole,
+          permissions: userPermissions
         })
       });
       const data = await res.json();
@@ -1274,18 +1577,113 @@ export default function AdminCRM() {
         setError(data.message || data.error || "Não foi possível cadastrar o login do cliente.");
         return;
       }
-      setNotice(`Login do cliente "${userFullName}" cadastrado com sucesso! Agora você pode criar ou vincular sua loja.`);
+      setNotice(
+        selectedLoginTenantId
+          ? `Login de "${userFullName}" criado e vinculado à empresa "${targetClient?.name || "selecionada"}" com permissões configuradas!`
+          : `Login do cliente "${userFullName}" cadastrado com sucesso!`
+      );
       setUserFullName("");
       setUserEmail("");
       setUserWhatsapp("");
       setUserInitialPassword("");
       setUserConfirmPassword("");
+      setSelectedLoginTenantId("");
       setUserFormOpen(false);
-      await fetchUsers();
+      await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
     } catch {
       setError("Falha de comunicação ao cadastrar novo usuário.");
     } finally {
       setCreatingUser(false);
+    }
+  };
+
+  const handleLinkStoreToExistingUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkStoreModalUser || !linkStoreTenantId) return;
+    setLinkingStoreLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: linkStoreModalUser.id,
+          action: "link_tenant",
+          tenantId: linkStoreTenantId,
+          role: linkStoreRole
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || data.error || "Falha ao vincular empresa ao login.");
+        return;
+      }
+      const storeObj = clients.find(c => c.id === linkStoreTenantId);
+      setNotice(`Empresa "${storeObj?.name || "selecionada"}" vinculada ao login de "${linkStoreModalUser.name}"!`);
+      setLinkStoreModalUser(null);
+      setLinkStoreTenantId("");
+      await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
+    } catch {
+      setError("Falha ao vincular empresa.");
+    } finally {
+      setLinkingStoreLoading(false);
+    }
+  };
+
+  const handleUnlinkStoreFromUser = async (user: ClientUser, tenantId: string, tenantName: string) => {
+    if (!window.confirm(`Deseja desvincular a empresa "${tenantName}" do login de "${user.name}"?`)) return;
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          action: "unlink_tenant",
+          tenantId
+        })
+      });
+      if (!res.ok) {
+        setError("Não foi possível desvincular a empresa.");
+        return;
+      }
+      setNotice(`Empresa "${tenantName}" desvinculada de "${user.name}".`);
+      await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
+    } catch {
+      setError("Falha ao desvincular empresa.");
+    }
+  };
+
+  const handleSaveUserPermissions = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!permModalUser) return;
+    setSavingPermModal(true);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/admin/users", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: permModalUser.id,
+          action: "update_permissions",
+          tenantId: permModalUser.linkedTenants[0]?.tenantId,
+          role: permModalRole,
+          permissions: permModalFlags
+        })
+      });
+      if (!res.ok) {
+        setError("Não foi possível salvar as permissões.");
+        return;
+      }
+      setNotice(`Permissões de "${permModalUser.name}" atualizadas com sucesso!`);
+      setPermModalUser(null);
+      await fetchUsers();
+    } catch {
+      setError("Falha ao salvar permissões.");
+    } finally {
+      setSavingPermModal(false);
     }
   };
 
@@ -1326,7 +1724,7 @@ export default function AdminCRM() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Create Client Store
+  // Create Client Store (Etapa 2: Empresas & Lojas)
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
@@ -1336,19 +1734,29 @@ export default function AdminCRM() {
       const isTrial = planName === "Teste Grátis (7 Dias)" || planName.includes("Teste Grátis");
       const selectedPlanObj = plans.find(p => p.name === planName);
       const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-premium");
+      const selectedCust = customers.find(c => c.id === selectedCustomerId);
+      const effectiveUserId = selectedUserId || selectedCust?.loginUserId || undefined;
+      const effectiveOwnerName =
+        selectedCust?.name ||
+        (selectedUserId ? users.find(u => u.id === selectedUserId)?.name : undefined);
+      const effectiveEmail =
+        selectedCust?.email ||
+        (selectedUserId ? users.find(u => u.id === selectedUserId)?.email : email);
+
       const res = await fetch("/api/crm/admin/clients", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeName,
-          userId: selectedUserId || undefined,
-          email: selectedUserId ? undefined : email,
-          password: selectedUserId ? undefined : password,
-          ownerName: selectedUserId ? users.find(u => u.id === selectedUserId)?.name : undefined,
-          businessWhatsapp,
+          customerId: selectedCustomerId || undefined,
+          userId: effectiveUserId,
+          email: effectiveEmail || undefined,
+          password: effectiveUserId || selectedCustomerId ? undefined : password,
+          ownerName: effectiveOwnerName,
+          businessWhatsapp: businessWhatsapp || selectedCust?.whatsapp || "",
           niche,
-          document: clientDocument,
+          document: clientDocument || selectedCust?.document || "",
           agentName,
           isTrial,
           planId,
@@ -1375,19 +1783,26 @@ export default function AdminCRM() {
         }
         return;
       }
-      setNotice(`Loja "${storeName}" cadastrada e vinculada com sucesso!`);
+      const createdPayload = await res.json().catch(() => ({}));
+      setNotice(
+        effectiveUserId
+          ? `Empresa "${storeName}" cadastrada e já vinculada ao login existente de ${effectiveOwnerName || effectiveEmail}!`
+          : `Empresa "${storeName}" e plano configurados com sucesso! Agora você pode criar o login e permissões na Etapa 3 (Logins & Acessos).`
+      );
       setStoreName("");
       setEmail("");
       setPassword("");
       setSelectedUserId("");
+      setSelectedCustomerId("");
       setBusinessWhatsapp("");
       setNiche("");
       setClientDocument("");
       setAgentName("");
       setFormOpen(false);
-      await fetchClients();
-      await fetchPlans();
-      await fetchUsers();
+      await Promise.all([fetchClients(), fetchPlans(), fetchUsers(), fetchCustomers()]);
+      if (createdPayload?.tenantId && !effectiveUserId) {
+        setSelectedLoginTenantId(createdPayload.tenantId);
+      }
     } catch {
       setError("Falha ao salvar nova loja.");
     } finally {
@@ -2626,13 +3041,31 @@ export default function AdminCRM() {
 
           <button
             type="button"
+            className={`nw-nav-button ${currentNav === "customers" ? "active" : ""}`}
+            aria-current={currentNav === "customers" ? "page" : undefined}
+            title="1. Clientes Responsáveis"
+            onClick={() => navigateSection("customers")}
+          >
+            <Users size={18}/>
+            <span>1. Clientes</span>
+            {sidebarCollapsed ? (
+              customers.length > 0 && <span className="nw-nav-badge-dot" title={`${customers.length} clientes`} />
+            ) : (
+              <span style={{marginLeft: "auto", background: "rgba(255,255,255,0.15)", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700}}>
+                {customers.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`nw-nav-button ${currentNav === "clients" ? "active" : ""}`}
             aria-current={currentNav === "clients" ? "page" : undefined}
-            title="Empresas & Lojas"
+            title="2. Empresas & Lojas"
             onClick={() => navigateSection("clients")}
           >
             <Building2 size={18}/>
-            <span>Empresas &amp; Lojas</span>
+            <span>2. Empresas &amp; Lojas</span>
             {sidebarCollapsed ? (
               clients.length > 0 && <span className="nw-nav-badge-dot" title={`${clients.length} lojas`} />
             ) : (
@@ -2646,11 +3079,11 @@ export default function AdminCRM() {
             type="button"
             className={`nw-nav-button ${currentNav === "users" ? "active" : ""}`}
             aria-current={currentNav === "users" ? "page" : undefined}
-            title="Criar Login / Clientes"
+            title="3. Logins & Acessos"
             onClick={() => navigateSection("users")}
           >
             <UserCheck size={18}/>
-            <span>Criar Login &amp; Clientes</span>
+            <span>3. Logins &amp; Acessos</span>
             {sidebarCollapsed ? (
               users.length > 0 && <span className="nw-nav-badge-dot" title={`${users.length} logins`} />
             ) : (
@@ -3116,6 +3549,30 @@ export default function AdminCRM() {
                 </button>
               </>
             )}
+            {currentNav === "customers" && (
+              <>
+                <button
+                  className="op-primary"
+                  style={{display: "flex", alignItems: "center", gap: "8px", padding: "12px 20px", fontWeight: 700, borderRadius: "10px"}}
+                  onClick={() => {
+                    if (customerFormOpen) {
+                      handleResetCustomerForm();
+                    } else {
+                      setCustomerFormOpen(true);
+                    }
+                  }}
+                >
+                  <PlusCircle size={18}/> {customerFormOpen ? "Fechar Formulário" : "+ Cadastrar Cliente"}
+                </button>
+                <button
+                  className="op-refresh"
+                  onClick={() => { void fetchCustomers(); void fetchClients(); void fetchUsers(); }}
+                  disabled={loadingCustomers}
+                >
+                  <RefreshCw size={16}/> Atualizar
+                </button>
+              </>
+            )}
             {currentNav === "users" && (
               <>
                 <button
@@ -3124,9 +3581,6 @@ export default function AdminCRM() {
                   onClick={() => setUserFormOpen(!userFormOpen)}
                 >
                   <PlusCircle size={18}/> {userFormOpen ? "Fechar Formulário" : "+ Criar Login"}
-                </button>
-                <button className="op-refresh" onClick={() => { void fetchUsers(); }} disabled={loadingUsers}>
-                  <RefreshCw size={16}/> Atualizar
                 </button>
               </>
             )}
@@ -3160,7 +3614,7 @@ export default function AdminCRM() {
               </button>
             )}
             {["clients", "plans", "kpis", "radar", "users"].includes(currentNav) && (
-              <button className="op-refresh" onClick={() => { void fetchClients(); void fetchPlans(); void fetchUsers(); }} disabled={loading || loadingUsers}>
+              <button className="op-refresh" onClick={() => { void fetchCustomers(); void fetchClients(); void fetchPlans(); void fetchUsers(); }} disabled={loading || loadingUsers}>
                 <RefreshCw size={16}/> Atualizar
               </button>
             )}
@@ -3336,7 +3790,301 @@ export default function AdminCRM() {
           />
         )}
 
-        {/* ===================== VIEW: CENTRAL DE LOGINS & CLIENTES ===================== */}
+        {/* ===================== VIEW 1: CLIENTES RESPONSÁVEIS (ETAPA 1 — SEM SENHA/LOGIN) ===================== */}
+        {currentNav === "customers" && (
+          <section>
+            {/* CARDS DE RESUMO DE CLIENTES */}
+            <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "24px"}}>
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Total de Clientes</span>
+                <strong style={{display: "block", fontSize: "28px", color: "white", marginTop: "4px"}}>{customers.length}</strong>
+                <small style={{color: "#ec4899", fontSize: "12px"}}>Titulares responsáveis cadastrados</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Aguardando Empresa</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#fbbf24", marginTop: "4px"}}>
+                  {customers.filter(c => c.linkedStores.length === 0).length}
+                </strong>
+                <small style={{color: "#fbbf24", fontSize: "12px"}}>Prontos para criar loja na Etapa 2</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Com Empresa Ativa</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#00db8c", marginTop: "4px"}}>
+                  {customers.filter(c => c.linkedStores.length > 0).length}
+                </strong>
+                <small style={{color: "#00db8c", fontSize: "12px"}}>Vinculados a 1 ou mais lojas</small>
+              </div>
+
+              <div className="op-card" style={{padding: "18px"}}>
+                <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Multi-Empresas</span>
+                <strong style={{display: "block", fontSize: "28px", color: "#a855f7", marginTop: "4px"}}>
+                  {customers.filter(c => c.linkedStores.length > 1).length}
+                </strong>
+                <small style={{color: "#a855f7", fontSize: "12px"}}>Responsáveis por múltiplas lojas</small>
+              </div>
+            </div>
+
+            {/* FORMULÁRIO COMERCIAL DE CLIENTE RESPONSÁVEL (ETAPA 1 — SEM SENHA/LOGIN) */}
+            {customerFormOpen && (
+              <div className="op-card" style={{padding: "26px", marginBottom: "26px", border: "1px solid #ec4899", boxShadow: "0 8px 30px rgba(236,72,153,0.15)"}}>
+                <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
+                  <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                    <Users size={22} color="#ec4899"/>
+                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>
+                      {editingCustomerId ? "Editar Cliente Responsável" : "1. Cadastrar Cliente Responsável (Dados Comerciais)"}
+                    </h3>
+                  </div>
+                  <button type="button" className="op-refresh" onClick={handleResetCustomerForm} style={{padding: "4px 12px", fontSize: "12px"}}>
+                    Cancelar
+                  </button>
+                </div>
+
+                <p style={{fontSize: "13px", color: "#aba8bf", margin: "0 0 18px", lineHeight: "1.5"}}>
+                  Cadastre apenas os dados comerciais do titular responsável (sem criar senha e sem exigir empresa neste momento). Depois, selecione este cliente em <strong>2. Empresas &amp; Lojas</strong>.
+                </p>
+
+                <form onSubmit={handleSaveCustomer} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "18px"}}>
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome Completo do Cliente *</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Carlos Eduardo Silva"
+                      value={customerFullName}
+                      onChange={e => setCustomerFullName(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail Principal do Responsável *</label>
+                    <input
+                      type="email"
+                      placeholder="carlos@empresa.com.br"
+                      value={customerEmail}
+                      onChange={e => setCustomerEmail(e.target.value)}
+                      required
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>WhatsApp de Contato (com DDD)</label>
+                    <input
+                      type="tel"
+                      placeholder="Ex: 51981964238"
+                      value={customerWhatsapp}
+                      onChange={e => setCustomerWhatsapp(e.target.value)}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>CPF ou CNPJ do Titular</label>
+                    <input
+                      type="text"
+                      placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                      value={customerDocument}
+                      onChange={e => setCustomerDocument(e.target.value)}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div style={{gridColumn: "1 / -1"}}>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Observações Comerciais (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Sócio proprietário da rede de pizzarias, atendimento preferencial pelo WhatsApp"
+                      value={customerNotes}
+                      onChange={e => setCustomerNotes(e.target.value)}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                    />
+                  </div>
+
+                  <div style={{gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: "12px"}}>
+                    <button type="submit" className="op-primary" disabled={savingCustomer} style={{padding: "14px 28px", fontWeight: 700, borderRadius: "10px"}}>
+                      {savingCustomer
+                        ? "Salvando..."
+                        : editingCustomerId
+                          ? "Salvar Alterações do Cliente"
+                          : "Salvar Cliente Responsável"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* BARRA DE BUSCA & FILTROS DE CLIENTES */}
+            <div style={{display: "flex", gap: "14px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center"}}>
+              <div style={{position: "relative", flex: 1, minWidth: "260px"}}>
+                <Search size={18} color="#8e87a2" style={{position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)"}}/>
+                <input
+                  type="text"
+                  placeholder="Pesquisar cliente por nome, e-mail, WhatsApp ou CPF/CNPJ..."
+                  value={customerSearchTerm}
+                  onChange={e => setCustomerSearchTerm(e.target.value)}
+                  style={{width: "100%", padding: "12px 14px 12px 42px", borderRadius: "10px", border: "1px solid #332b49", background: "#151222", color: "white", fontSize: "14px"}}
+                />
+              </div>
+
+              <div style={{display: "flex", gap: "8px", flexWrap: "wrap"}}>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${customerFilterStatus === "all" ? "active" : ""}`}
+                  onClick={() => setCustomerFilterStatus("all")}
+                >
+                  Todos ({customers.length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${customerFilterStatus === "no_store" ? "active" : ""}`}
+                  onClick={() => setCustomerFilterStatus("no_store")}
+                >
+                  Sem Empresa ({customers.filter(c => c.linkedStores.length === 0).length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${customerFilterStatus === "with_store" ? "active" : ""}`}
+                  onClick={() => setCustomerFilterStatus("with_store")}
+                >
+                  Com Empresa ({customers.filter(c => c.linkedStores.length > 0).length})
+                </button>
+                <button
+                  type="button"
+                  className={`op-filter-chip ${customerFilterStatus === "multi_store" ? "active" : ""}`}
+                  onClick={() => setCustomerFilterStatus("multi_store")}
+                >
+                  Multi-Empresas ({customers.filter(c => c.linkedStores.length > 1).length})
+                </button>
+              </div>
+            </div>
+
+            {/* LISTA DE CLIENTES RESPONSÁVEIS */}
+            <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+              {filteredCustomers.length === 0 ? (
+                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
+                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
+                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum cliente responsável encontrado.</p>
+                </div>
+              ) : (
+                filteredCustomers.map(cust => {
+                  const hasStores = cust.linkedStores.length > 0;
+                  return (
+                    <div
+                      key={cust.id}
+                      className="op-card"
+                      style={{
+                        padding: "20px 24px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "18px",
+                        borderLeft: hasStores ? "4px solid #00db8c" : "4px solid #fbbf24"
+                      }}
+                    >
+                      <div style={{display: "flex", alignItems: "center", gap: "16px", minWidth: "260px"}}>
+                        <div style={{
+                          width: "48px", height: "48px", borderRadius: "12px",
+                          background: hasStores ? "rgba(0,219,140,0.15)" : "rgba(236,72,153,0.15)",
+                          display: "grid", placeItems: "center",
+                          color: hasStores ? "#00db8c" : "#ec4899",
+                          fontWeight: 800, fontSize: "18px"
+                        }}>
+                          {cust.name.slice(0, 2).toUpperCase()}
+                        </div>
+
+                        <div>
+                          <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                            <strong style={{fontSize: "17px", color: "white"}}>{cust.name}</strong>
+                            <span style={{
+                              background: hasStores ? "rgba(0,219,140,0.2)" : "rgba(251,191,36,0.2)",
+                              color: hasStores ? "#00db8c" : "#fbbf24",
+                              padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
+                            }}>
+                              {hasStores ? `${cust.linkedStores.length} EMPRESA(S)` : "AGUARDANDO EMPRESA"}
+                            </span>
+                            <span style={{
+                              background: cust.hasLogin ? "rgba(168,85,247,0.2)" : "rgba(148,163,184,0.15)",
+                              color: cust.hasLogin ? "#c084fc" : "#94a3b8",
+                              padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
+                            }}>
+                              {cust.hasLogin ? "🔑 LOGIN ATIVO" : "SEM LOGIN AINDA"}
+                            </span>
+                          </div>
+
+                          <div style={{display: "flex", alignItems: "center", gap: "14px", marginTop: "4px", fontSize: "13px", color: "#c4bed6", flexWrap: "wrap"}}>
+                            <span>E-mail: <strong style={{color: "#fff"}}>{cust.email}</strong></span>
+                            {cust.whatsapp && (
+                              <span>• WhatsApp: <strong style={{color: "#00db8c"}}>{cust.whatsapp}</strong></span>
+                            )}
+                            {cust.document && (
+                              <span>• CPF/CNPJ: <strong>{cust.document}</strong></span>
+                            )}
+                          </div>
+
+                          {cust.notes && (
+                            <div style={{marginTop: "4px", fontSize: "12px", color: "#9ca3af"}}>
+                              Nota: {cust.notes}
+                            </div>
+                          )}
+
+                          <div style={{marginTop: "8px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
+                            <span style={{fontSize: "12px", color: "#8e87a2"}}>Empresas vinculadas:</span>
+                            {cust.linkedStores.length === 0 ? (
+                              <span style={{fontSize: "11.5px", color: "#fbbf24", background: "rgba(251,191,36,0.1)", padding: "2px 8px", borderRadius: "6px"}}>
+                                Nenhuma empresa criada ainda
+                              </span>
+                            ) : (
+                              cust.linkedStores.map(st => (
+                                <span key={st.tenantId} style={{fontSize: "11.5px", color: "#a5b4fc", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", padding: "2px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px"}}>
+                                  <Building2 size={11}/> {st.tenantName} ({st.planName})
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+                        <button
+                          type="button"
+                          className="op-primary"
+                          onClick={() => handleStartStoreForCustomer(cust)}
+                          style={{padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px"}}
+                        >
+                          <Building2 size={14}/> {hasStores ? "+ Nova Empresa" : "Criar Empresa (Etapa 2)"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => handleOpenEditCustomer(cust)}
+                          style={{padding: "8px 12px", borderRadius: "8px", fontSize: "12px"}}
+                        >
+                          Editar
+                        </button>
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => handleDeleteCustomer(cust)}
+                          style={{color: "#f43f5e", borderColor: "rgba(244,63,94,0.4)", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px"}}
+                        >
+                          <Trash2 size={14}/> Apagar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ===================== VIEW 3: LOGINS & ACESSOS (ETAPA 3 — SENHA, EMPRESA E PERMISSÕES) ===================== */}
         {currentNav === "users" && (
           <section>
             {/* CARDS DE RESUMO DE USUÁRIOS */}
@@ -3344,7 +4092,7 @@ export default function AdminCRM() {
               <div className="op-card" style={{padding: "18px"}}>
                 <span style={{fontSize: "12px", color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.5px"}}>Total de Logins</span>
                 <strong style={{display: "block", fontSize: "28px", color: "white", marginTop: "4px"}}>{users.length}</strong>
-                <small style={{color: "#a855f7", fontSize: "12px"}}>Clientes cadastrados no sistema</small>
+                <small style={{color: "#a855f7", fontSize: "12px"}}>Acessos autenticados no sistema</small>
               </div>
 
               <div className="op-card" style={{padding: "18px"}}>
@@ -3352,7 +4100,7 @@ export default function AdminCRM() {
                 <strong style={{display: "block", fontSize: "28px", color: "#fbbf24", marginTop: "4px"}}>
                   {users.filter(u => u.status === "waiting_store").length}
                 </strong>
-                <small style={{color: "#fbbf24", fontSize: "12px"}}>Login criado sem empresa</small>
+                <small style={{color: "#fbbf24", fontSize: "12px"}}>Login sem empresa vinculada</small>
               </div>
 
               <div className="op-card" style={{padding: "18px"}}>
@@ -3372,13 +4120,13 @@ export default function AdminCRM() {
               </div>
             </div>
 
-            {/* FORMULÁRIO DE CRIAR LOGIN DO CLIENTE (ETAPA 1) */}
+            {/* FORMULÁRIO DE CRIAR / VINCULAR LOGIN À EMPRESA (ETAPA 3) */}
             {userFormOpen && (
               <div className="op-card" style={{padding: "26px", marginBottom: "26px", border: "1px solid #a855f7", boxShadow: "0 8px 30px rgba(168,85,247,0.15)"}}>
                 <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
                     <UserPlus size={22} color="#a855f7"/>
-                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>Criar Login de Cliente</h3>
+                    <h3 style={{margin: 0, fontSize: "20px", fontWeight: 800}}>3. Criar Login &amp; Vincular Acesso à Empresa</h3>
                   </div>
                   <button type="button" className="op-refresh" onClick={() => setUserFormOpen(false)} style={{padding: "4px 12px", fontSize: "12px"}}>
                     Cancelar
@@ -3386,10 +4134,45 @@ export default function AdminCRM() {
                 </div>
 
                 <p style={{fontSize: "13px", color: "#aba8bf", margin: "0 0 18px", lineHeight: "1.5"}}>
-                  Cadastre o usuário responsável e crie suas credenciais. O cliente poderá existir antes da loja; o acesso ao painel só é liberado após vincular uma empresa.
+                  Selecione a empresa criada na Etapa 2, defina a senha de acesso do cliente e configure o perfil e as permissões de operação. Um mesmo cliente pode acessar múltiplas empresas com segurança.
                 </p>
 
                 <form onSubmit={handleCreateUser} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px"}}>
+                  {/* SELETOR DE EMPRESA / LOJA PARA VINCULAR O LOGIN */}
+                  <div style={{gridColumn: "1 / -1", background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "10px", padding: "16px"}}>
+                    <label style={{fontSize: "13px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px"}}>
+                      <Building2 size={16} color="#a855f7"/> Empresa / Loja para Vincular o Acesso
+                    </label>
+                    <select
+                      value={selectedLoginTenantId}
+                      onChange={e => {
+                        const tid = e.target.value;
+                        setSelectedLoginTenantId(tid);
+                        const foundStore = clients.find(c => c.id === tid);
+                        if (foundStore) {
+                          const foundCust = customers.find(
+                            cust => cust.id === foundStore.customerId || (foundStore.email && cust.email.toLowerCase() === foundStore.email.toLowerCase())
+                          );
+                          setUserFullName(foundStore.ownerName || foundCust?.name || foundStore.name);
+                          if (foundStore.email && foundStore.email !== "—") {
+                            setUserEmail(foundStore.email);
+                          } else if (foundCust?.email) {
+                            setUserEmail(foundCust.email);
+                          }
+                          setUserWhatsapp(foundStore.businessDetails?.businessWhatsapp || foundCust?.whatsapp || "");
+                        }
+                      }}
+                      style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "14px"}}
+                    >
+                      <option value="">-- Selecione a Empresa / Loja Criada --</option>
+                      {clients.filter(c => !c.isMasterOwnTenant).map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} — {c.ownerName ? `Cliente: ${c.ownerName}` : c.email} ({c.plan.name}) {c.hasLogin === false ? "• [Aguardando Login 🔑]" : "• [Com Login]"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div>
                     <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Nome Completo do Responsável *</label>
                     <input
@@ -3403,7 +4186,7 @@ export default function AdminCRM() {
                   </div>
 
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Acesso do Cliente *</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login do Cliente *</label>
                     <input
                       type="email"
                       placeholder="carlos@empresa.com.br"
@@ -3415,7 +4198,7 @@ export default function AdminCRM() {
                   </div>
 
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>WhatsApp de Contato & Recuperação (com DDD) *</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>WhatsApp de Contato &amp; Recuperação (com DDD) *</label>
                     <input
                       type="tel"
                       placeholder="Ex: 51981964238"
@@ -3428,15 +4211,70 @@ export default function AdminCRM() {
                   </div>
 
                   <div>
-                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Situação Inicial do Acesso</label>
+                    <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Papel / Nível de Acesso na Empresa</label>
                     <select
-                      value={userStatus}
-                      onChange={e => setUserStatus(e.target.value as "active" | "blocked")}
+                      value={userAccessRole}
+                      onChange={e => {
+                        const r = e.target.value as "owner" | "admin" | "agent" | "viewer";
+                        setUserAccessRole(r);
+                        setUserPermissions(applyRolePresetPermissions(r));
+                      }}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
-                      <option value="active">Ativo (Aguardando vinculação da loja)</option>
-                      <option value="blocked">Bloqueado (Acesso suspenso administrativamente)</option>
+                      <option value="owner">Titular / Proprietário (Acesso Total)</option>
+                      <option value="admin">Administrador / Gerente</option>
+                      <option value="agent">Operador de Atendimento</option>
+                      <option value="viewer">Visualizador / Auditoria</option>
                     </select>
+                  </div>
+
+                  {/* PERMISSÕES GRANULARES DO ACESSO */}
+                  <div style={{gridColumn: "1 / -1", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "10px", padding: "14px 16px"}}>
+                    <span style={{fontSize: "12px", fontWeight: 700, color: "#cbd5e1", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "10px"}}>
+                      Permissões Liberadas neste Acesso
+                    </span>
+                    <div style={{display: "flex", flexWrap: "wrap", gap: "16px"}}>
+                      <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                        <input
+                          type="checkbox"
+                          checked={userPermissions.canManageAi}
+                          onChange={e => setUserPermissions({...userPermissions, canManageAi: e.target.checked})}
+                        />
+                        Treinar IA &amp; Base de Conhecimento
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                        <input
+                          type="checkbox"
+                          checked={userPermissions.canManageWhatsapp}
+                          onChange={e => setUserPermissions({...userPermissions, canManageWhatsapp: e.target.checked})}
+                        />
+                        Conectar WhatsApp &amp; Atender Chat
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                        <input
+                          type="checkbox"
+                          checked={userPermissions.canManageTeam}
+                          onChange={e => setUserPermissions({...userPermissions, canManageTeam: e.target.checked})}
+                        />
+                        Gerenciar Equipe &amp; Horários
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                        <input
+                          type="checkbox"
+                          checked={userPermissions.canViewReports}
+                          onChange={e => setUserPermissions({...userPermissions, canViewReports: e.target.checked})}
+                        />
+                        Relatórios &amp; Métricas
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#e2e8f0", cursor: "pointer"}}>
+                        <input
+                          type="checkbox"
+                          checked={userPermissions.canManageBilling}
+                          onChange={e => setUserPermissions({...userPermissions, canManageBilling: e.target.checked})}
+                        />
+                        Plano, Faturas &amp; Recargas PIX
+                      </label>
+                    </div>
                   </div>
 
                   <div style={{gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px", background: "rgba(168,85,247,0.06)", padding: "16px", borderRadius: "10px", border: "1px dashed rgba(168,85,247,0.3)"}}>
@@ -3457,7 +4295,7 @@ export default function AdminCRM() {
                           placeholder="Mínimo 6 dígitos"
                           value={userInitialPassword}
                           onChange={e => setUserInitialPassword(e.target.value)}
-                          required
+                          required={!users.some(u => u.email.trim().toLowerCase() === userEmail.trim().toLowerCase())}
                           minLength={6}
                           style={{width: "100%", padding: "12px 40px 12px 12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                         />
@@ -3478,7 +4316,7 @@ export default function AdminCRM() {
                         placeholder="Repita a senha inicial"
                         value={userConfirmPassword}
                         onChange={e => setUserConfirmPassword(e.target.value)}
-                        required
+                        required={!users.some(u => u.email.trim().toLowerCase() === userEmail.trim().toLowerCase())}
                         minLength={6}
                         style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                       />
@@ -3487,7 +4325,7 @@ export default function AdminCRM() {
 
                   <div style={{gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "6px"}}>
                     <button type="submit" className="op-primary" disabled={creatingUser} style={{padding: "14px 28px", fontWeight: 700, borderRadius: "10px", background: "linear-gradient(135deg, #a855f7, #7c3aed)"}}>
-                      {creatingUser ? "Cadastrando Login..." : "Finalizar Cadastro do Cliente"}
+                      {creatingUser ? "Ativando Login e Permissões..." : "Ativar Login & Permissões"}
                     </button>
                   </div>
                 </form>
@@ -3547,7 +4385,7 @@ export default function AdminCRM() {
               {filteredUsers.length === 0 ? (
                 <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
                   <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
-                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum cliente/usuário encontrado com os filtros selecionados.</p>
+                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum login encontrado com os filtros selecionados.</p>
                 </div>
               ) : (
                 filteredUsers.map(user => {
@@ -3589,6 +4427,15 @@ export default function AdminCRM() {
                             }}>
                               {isBlocked ? "ACESSO BLOQUEADO" : isWaitingStore ? "AGUARDANDO VINCULAÇÃO" : "VINCULADO"}
                             </span>
+                            {user.accessRole && (
+                              <span style={{
+                                background: "rgba(168,85,247,0.2)",
+                                color: "#c084fc",
+                                padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
+                              }}>
+                                Perfil: {user.accessRole.toUpperCase()}
+                              </span>
+                            )}
                           </div>
 
                           <div style={{display: "flex", alignItems: "center", gap: "14px", marginTop: "4px", fontSize: "13px", color: "#c4bed6", flexWrap: "wrap"}}>
@@ -3600,15 +4447,25 @@ export default function AdminCRM() {
 
                           {/* Lojas Vinculadas */}
                           <div style={{marginTop: "8px", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
-                            <span style={{fontSize: "12px", color: "#8e87a2"}}>Empresas:</span>
+                            <span style={{fontSize: "12px", color: "#8e87a2"}}>Empresas ({user.linkedTenants.length}):</span>
                             {user.linkedTenants.length === 0 ? (
                               <span style={{fontSize: "11.5px", color: "#fbbf24", background: "rgba(251,191,36,0.1)", padding: "2px 8px", borderRadius: "6px"}}>
                                 Nenhuma loja vinculada até o momento
                               </span>
                             ) : (
                               user.linkedTenants.map(t => (
-                                <span key={t.tenantId} style={{fontSize: "11.5px", color: "#a5b4fc", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", padding: "2px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px"}}>
+                                <span key={t.tenantId} style={{fontSize: "11.5px", color: "#a5b4fc", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", padding: "2px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "6px"}}>
                                   <Building2 size={11}/> {t.tenantName} ({t.planName})
+                                  {user.linkedTenants.length > 1 && (
+                                    <button
+                                      type="button"
+                                      title="Desvincular esta empresa deste login"
+                                      onClick={() => handleUnlinkStoreFromUser(user, t.tenantId, t.tenantName)}
+                                      style={{background: "none", border: "none", color: "#fda4af", cursor: "pointer", padding: 0, fontSize: "11px", fontWeight: 800}}
+                                    >
+                                      ×
+                                    </button>
+                                  )}
                                 </span>
                               ))
                             )}
@@ -3618,16 +4475,39 @@ export default function AdminCRM() {
 
                       {/* Ações do Usuário */}
                       <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
-                        {isWaitingStore && (
-                          <button
-                            type="button"
-                            className="op-primary"
-                            onClick={() => handleStartStoreForUser(user)}
-                            style={{padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px"}}
-                          >
-                            <Building2 size={14}/> Criar Loja para este Cliente
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => {
+                            setLinkStoreModalUser(user);
+                            setLinkStoreTenantId("");
+                            setLinkStoreRole("owner");
+                          }}
+                          style={{padding: "8px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 700, color: "#c084fc", borderColor: "rgba(168,85,247,0.4)", display: "flex", alignItems: "center", gap: "6px"}}
+                        >
+                          <Building2 size={14}/> + Vincular Empresa
+                        </button>
+
+                        <button
+                          type="button"
+                          className="op-refresh"
+                          onClick={() => {
+                            setPermModalUser(user);
+                            setPermModalRole(user.accessRole || "owner");
+                            setPermModalFlags(
+                              user.permissions || {
+                                canManageAi: true,
+                                canManageWhatsapp: true,
+                                canManageTeam: true,
+                                canViewReports: true,
+                                canManageBilling: true
+                              }
+                            );
+                          }}
+                          style={{padding: "8px 12px", borderRadius: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px"}}
+                        >
+                          <ShieldCheck size={14}/> Permissões
+                        </button>
 
                         <button
                           type="button"
@@ -3658,7 +4538,7 @@ export default function AdminCRM() {
                         <button
                           type="button"
                           className="op-refresh"
-                          title="Apagar cliente permanentemente"
+                          title="Apagar login permanentemente"
                           onClick={() => handleDeleteUser(user)}
                           style={{color: "#f43f5e", borderColor: "rgba(244,63,94,0.4)", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px"}}
                         >
@@ -3670,6 +4550,115 @@ export default function AdminCRM() {
                 })
               )}
             </div>
+
+            {/* MODAL: VINCULAR EMPRESA ADICIONAL AO LOGIN */}
+            {linkStoreModalUser && (
+              <div className="nw-modal-backdrop" onClick={() => setLinkStoreModalUser(null)}>
+                <div className="op-card nw-modal-card" style={{maxWidth: "480px", width: "100%", padding: "24px"}} onClick={e => e.stopPropagation()}>
+                  <h3 style={{margin: "0 0 8px", fontSize: "18px", fontWeight: 800}}>
+                    Vincular Empresa a {linkStoreModalUser.name}
+                  </h3>
+                  <p style={{margin: "0 0 16px", fontSize: "13px", color: "#9ca3af"}}>
+                    Permite que este mesmo login acesse e gerencie mais de uma empresa no painel com alternador seguro de loja.
+                  </p>
+                  <form onSubmit={handleLinkStoreToExistingUser} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                    <div>
+                      <label style={{fontSize: "12px", color: "#cbd5e1", display: "block", marginBottom: "4px"}}>Selecione a Empresa *</label>
+                      <select
+                        value={linkStoreTenantId}
+                        onChange={e => setLinkStoreTenantId(e.target.value)}
+                        required
+                        style={{width: "100%", padding: "11px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      >
+                        <option value="">-- Escolha uma empresa --</option>
+                        {clients
+                          .filter(c => !c.isMasterOwnTenant && !linkStoreModalUser.linkedTenants.some(lt => lt.tenantId === c.id))
+                          .map(c => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.plan.name})</option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{fontSize: "12px", color: "#cbd5e1", display: "block", marginBottom: "4px"}}>Papel na Empresa</label>
+                      <select
+                        value={linkStoreRole}
+                        onChange={e => setLinkStoreRole(e.target.value as "owner" | "admin" | "agent" | "viewer")}
+                        style={{width: "100%", padding: "11px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      >
+                        <option value="owner">Titular / Proprietário</option>
+                        <option value="admin">Administrador</option>
+                        <option value="agent">Operador</option>
+                        <option value="viewer">Visualizador</option>
+                      </select>
+                    </div>
+                    <div style={{display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px"}}>
+                      <button type="button" className="op-refresh" onClick={() => setLinkStoreModalUser(null)}>Cancelar</button>
+                      <button type="submit" className="op-primary" disabled={linkingStoreLoading || !linkStoreTenantId}>
+                        {linkingStoreLoading ? "Vinculando..." : "Confirmar Vínculo"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* MODAL: EDITAR PERMISSÕES DO LOGIN */}
+            {permModalUser && (
+              <div className="nw-modal-backdrop" onClick={() => setPermModalUser(null)}>
+                <div className="op-card nw-modal-card" style={{maxWidth: "500px", width: "100%", padding: "24px"}} onClick={e => e.stopPropagation()}>
+                  <h3 style={{margin: "0 0 8px", fontSize: "18px", fontWeight: 800}}>
+                    Permissões de Acesso — {permModalUser.name}
+                  </h3>
+                  <form onSubmit={handleSaveUserPermissions} style={{display: "flex", flexDirection: "column", gap: "14px"}}>
+                    <div>
+                      <label style={{fontSize: "12px", color: "#cbd5e1", display: "block", marginBottom: "4px"}}>Papel / Nível</label>
+                      <select
+                        value={permModalRole}
+                        onChange={e => {
+                          const r = e.target.value as "owner" | "admin" | "agent" | "viewer";
+                          setPermModalRole(r);
+                          setPermModalFlags(applyRolePresetPermissions(r));
+                        }}
+                        style={{width: "100%", padding: "11px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
+                      >
+                        <option value="owner">Titular / Proprietário</option>
+                        <option value="admin">Administrador</option>
+                        <option value="agent">Operador de Atendimento</option>
+                        <option value="viewer">Visualizador</option>
+                      </select>
+                    </div>
+                    <div style={{display: "flex", flexDirection: "column", gap: "10px", background: "rgba(255,255,255,0.03)", padding: "14px", borderRadius: "8px"}}>
+                      <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0"}}>
+                        <input type="checkbox" checked={permModalFlags.canManageAi} onChange={e => setPermModalFlags({...permModalFlags, canManageAi: e.target.checked})}/>
+                        Treinar IA &amp; Base de Conhecimento
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0"}}>
+                        <input type="checkbox" checked={permModalFlags.canManageWhatsapp} onChange={e => setPermModalFlags({...permModalFlags, canManageWhatsapp: e.target.checked})}/>
+                        Conectar WhatsApp &amp; Atender Conversas
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0"}}>
+                        <input type="checkbox" checked={permModalFlags.canManageTeam} onChange={e => setPermModalFlags({...permModalFlags, canManageTeam: e.target.checked})}/>
+                        Gerenciar Equipe &amp; Horários
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0"}}>
+                        <input type="checkbox" checked={permModalFlags.canViewReports} onChange={e => setPermModalFlags({...permModalFlags, canViewReports: e.target.checked})}/>
+                        Visualizar Relatórios &amp; CSAT
+                      </label>
+                      <label style={{display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0"}}>
+                        <input type="checkbox" checked={permModalFlags.canManageBilling} onChange={e => setPermModalFlags({...permModalFlags, canManageBilling: e.target.checked})}/>
+                        Gerenciar Assinatura, Planos &amp; Recargas PIX
+                      </label>
+                    </div>
+                    <div style={{display: "flex", justifyContent: "flex-end", gap: "10px"}}>
+                      <button type="button" className="op-refresh" onClick={() => setPermModalUser(null)}>Cancelar</button>
+                      <button type="submit" className="op-primary" disabled={savingPermModal}>
+                        {savingPermModal ? "Salvando..." : "Salvar Permissões"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -3690,52 +4679,65 @@ export default function AdminCRM() {
                 </div>
 
                 <form onSubmit={handleCreateClient} style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px"}}>
-                  {/* SELETOR DE CLIENTE RESPONSÁVEL */}
+                  {/* SELETOR DE CLIENTE RESPONSÁVEL (BUSCA DA TABELA/CATÁLOGO DE CLIENTES — ETAPA 1) */}
                   <div style={{gridColumn: "1 / -1", background: "rgba(236,72,153,0.06)", border: "1px solid rgba(236,72,153,0.25)", borderRadius: "10px", padding: "16px"}}>
                     <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px"}}>
                       <label style={{fontSize: "13px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "6px"}}>
-                        <UserCheck size={16} color="#ec4899"/> Selecionar Cliente Responsável (Login Cadastrado)
+                        <UserCheck size={16} color="#ec4899"/> Selecionar Cliente Responsável (Cadastrado em 1. Clientes)
                       </label>
                       <button
                         type="button"
                         onClick={() => {
-                          setCurrentNav("users");
-                          setUserFormOpen(true);
+                          navigateSection("customers");
+                          setCustomerFormOpen(true);
                         }}
                         style={{background: "none", border: "none", color: "#ec4899", fontSize: "12px", fontWeight: 700, cursor: "pointer", textDecoration: "underline"}}
                       >
-                        + Criar Novo Login Primeiro
+                        + Cadastrar Novo Cliente Primeiro (Etapa 1)
                       </button>
                     </div>
 
                     <select
-                      value={selectedUserId}
+                      value={selectedCustomerId}
                       onChange={e => {
-                        const uid = e.target.value;
-                        setSelectedUserId(uid);
-                        const found = users.find(u => u.id === uid);
-                        if (found) {
-                          if (!storeName) setStoreName(`Loja ${found.name.split(" ")[0]}`);
+                        const cid = e.target.value;
+                        setSelectedCustomerId(cid);
+                        const foundCust = customers.find(c => c.id === cid);
+                        if (foundCust) {
+                          setSelectedUserId(foundCust.loginUserId || "");
+                          setEmail(foundCust.email);
+                          if (foundCust.whatsapp) setBusinessWhatsapp(foundCust.whatsapp);
+                          if (foundCust.document) setClientDocument(foundCust.document);
+                          if (!storeName) setStoreName(`Empresa ${foundCust.name.split(" ")[0]}`);
+                        } else {
+                          setSelectedUserId("");
                         }
                       }}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white", fontSize: "14px"}}
                     >
-                      <option value="">-- Selecione o Cliente na Lista (ou cadastre novo login) --</option>
-                      {users.map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.name} — {u.email} {u.whatsapp ? `(WhatsApp: ${u.whatsapp})` : ""} {u.linkedTenants.length > 0 ? `• [${u.linkedTenants.length} loja(s)]` : "• [Aguardando Loja ⭐]"}
+                      <option value="">-- Selecione o Cliente Responsável na Lista --</option>
+                      {customers.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} — {c.email} {c.whatsapp ? `(WhatsApp: ${c.whatsapp})` : ""} {c.linkedStores.length > 0 ? `• [${c.linkedStores.length} empresa(s)]` : "• [Aguardando Empresa ⭐]"}
                         </option>
                       ))}
                     </select>
 
-                    {selectedUserId && (
-                      <div style={{marginTop: "10px", padding: "10px 14px", borderRadius: "8px", background: "rgba(0,219,140,0.1)", border: "1px solid rgba(0,219,140,0.3)", display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#b9f5dc"}}>
-                        <CheckCircle2 size={16} color="#00db8c"/>
-                        <span>
-                          Responsável Vinculado: <strong>{users.find(u => u.id === selectedUserId)?.name}</strong> ({users.find(u => u.id === selectedUserId)?.email}). O acesso já está registrado no sistema!
-                        </span>
-                      </div>
-                    )}
+                    {selectedCustomerId && (() => {
+                      const selCust = customers.find(c => c.id === selectedCustomerId);
+                      if (!selCust) return null;
+                      return (
+                        <div style={{marginTop: "10px", padding: "10px 14px", borderRadius: "8px", background: "rgba(0,219,140,0.1)", border: "1px solid rgba(0,219,140,0.3)", display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#b9f5dc"}}>
+                          <CheckCircle2 size={16} color="#00db8c"/>
+                          <span>
+                            Cliente Responsável selecionado: <strong>{selCust.name}</strong> ({selCust.email}).{" "}
+                            {selCust.hasLogin
+                              ? "Este cliente já possui login ativo e esta nova empresa será adicionada ao mesmo acesso automaticamente."
+                              : "Após criar a empresa e definir o plano, ative a senha e as permissões em 3. Logins & Acessos."}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Nome da Loja */}
@@ -3799,29 +4801,27 @@ export default function AdminCRM() {
                     />
                   </div>
 
-                  {/* Fallback de E-mail & Senha quando não seleciona cliente prévio */}
-                  {!selectedUserId && (
+                  {/* Fallback de E-mail & Senha apenas quando não seleciona cliente prévio da Etapa 1 */}
+                  {!selectedUserId && !selectedCustomerId && (
                     <>
                       <div>
-                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail de Login *</label>
+                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>E-mail do Responsável (Opcional se selecionar Cliente acima)</label>
                         <input
                           type="email"
                           placeholder="contato@empresa.com.br"
                           value={email}
                           onChange={e => setEmail(e.target.value)}
-                          required={!selectedUserId}
                           style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                         />
                       </div>
 
                       <div>
-                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha Inicial *</label>
+                        <label style={{fontSize: "13px", color: "var(--muted)", display: "block", marginBottom: "4px"}}>Senha Inicial (Opcional — recomendável criar na Etapa 3)</label>
                         <input
                           type="password"
-                          placeholder="Mínimo 6 dígitos"
+                          placeholder="Deixe em branco para criar na Etapa 3 (Logins & Acessos)"
                           value={password}
                           onChange={e => setPassword(e.target.value)}
-                          required={!selectedUserId}
                           minLength={6}
                           style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                         />
@@ -4012,10 +5012,21 @@ export default function AdminCRM() {
                             }}>
                               {isBlocked ? "SUSPENSO / BLOQUEADO" : isOverdue ? "PAGAMENTO PENDENTE" : "ATIVO"}
                             </span>
+                            {!client.isMasterOwnTenant && client.hasLogin === false && (
+                              <span style={{
+                                background: "rgba(168,85,247,0.2)",
+                                color: "#c084fc",
+                                border: "1px solid rgba(168,85,247,0.4)",
+                                padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700
+                              }}>
+                                🔑 AGUARDANDO LOGIN (ETAPA 3)
+                              </span>
+                            )}
                           </div>
 
                           <span style={{fontSize: "13px", color: "#8e87a2", display: "block", marginTop: "2px"}}>
-                            Login: <strong>{client.email}</strong>
+                            {client.ownerName ? <>Responsável: <strong style={{color: "#fff"}}>{client.ownerName}</strong> • </> : null}
+                            E-mail: <strong>{client.email}</strong>
                           </span>
 
                           <div style={{display: "flex", alignItems: "center", gap: "12px", marginTop: "6px", fontSize: "12px", color: "#b3a9c7", flexWrap: "wrap"}}>
@@ -4166,6 +5177,27 @@ export default function AdminCRM() {
 
                         {/* Botões de Ação */}
                         <div style={{display: "flex", gap: "6px", flexWrap: "wrap"}}>
+                          {!client.isMasterOwnTenant && client.hasLogin === false && (
+                            <button
+                              type="button"
+                              className="op-primary"
+                              title="Criar Login e Definir Senha & Permissões (Etapa 3)"
+                              style={{
+                                padding: "8px 12px",
+                                background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+                                color: "white",
+                                fontSize: "12px",
+                                fontWeight: 800,
+                                borderRadius: "8px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px"
+                              }}
+                              onClick={() => handleStartLoginForStore(client)}
+                            >
+                              <KeyRound size={14}/> Criar Login
+                            </button>
+                          )}
                           {client.plan.isTrial && (
                             <button
                               type="button"
