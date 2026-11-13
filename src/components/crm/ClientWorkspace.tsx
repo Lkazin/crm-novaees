@@ -2168,8 +2168,6 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           {embedded && <WorkspaceNavigation embedded items={navigationItems} active={activeTab} onSelect={selectWorkspaceSection} />}
           {/* CONTEÚDO PRINCIPAL (MAIN CONTENT) */}
           <Content className={embedded ? styles.content : "nw-main-content"}>
-            {activeTab !== "plano" && activeFeatureBlocked && <FeatureUnavailable feature={isSuspended && activeFeatureState ? {...activeFeatureState,state:"suspended"} : activeFeatureState} onUpgrade={openUpgradeRequest}/>}
-            <fieldset disabled={activeFeatureBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
             {/* Topbar com Nome da Loja e Status em Tempo Real */}
             <div className={styles.workspaceTopbar} style={{
               display: "flex",
@@ -2177,11 +2175,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               alignItems: "center",
               marginBottom: "20px",
               padding: "18px 24px",
-              borderRadius: "18px",
-              background: "linear-gradient(135deg, rgba(30, 20, 50, 0.75), rgba(18, 14, 32, 0.85))",
-              backdropFilter: "blur(12px)",
-              border: "1px solid rgba(236, 72, 153, 0.25)",
-              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.35)",
+              borderRadius: "16px",
               flexWrap: "wrap",
               gap: "16px",
               position: "relative"
@@ -2478,7 +2472,20 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             )}
 
-            {["whatsapp","atendimentos","plano"].includes(activeTab) && (
+            <SetupJourney
+              steps={setupSteps}
+              featureStates={featureStates}
+              suspended={Boolean(isSuspended)}
+              onOpen={openSetupStep}
+              onUpgrade={(plan, reason) => openUpgradeRequest(plan, reason)}
+              companyName={currentTenantObj?.name || (embedded ? "NovaesWeb" : "Sua Empresa")}
+              hasUnsavedChanges={hasUnsavedSetupChanges}
+            />
+
+            {activeTab !== "plano" && activeFeatureBlocked && <FeatureUnavailable feature={isSuspended && activeFeatureState ? {...activeFeatureState,state:"suspended"} : activeFeatureState} onUpgrade={openUpgradeRequest}/>}
+            <fieldset disabled={activeFeatureBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
+
+            {["atendimentos","plano"].includes(activeTab) && (
               <section className={styles.metrics} aria-label="Resumo da operação">
                 <button type="button" className={styles.metric} onClick={()=>setActiveTab("whatsapp")}>
                   <span className={styles.metricIcon}><Smartphone size={21}/></span><span className={styles.metricLabel}>WhatsApp da empresa</span>
@@ -2810,48 +2817,35 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 {/* 4. CENTRAL DE ATENDIMENTO - RESUMO COMPACTO NA TELA INICIAL */}
                 <section
                   style={{
-                    background: "linear-gradient(135deg, rgba(26, 17, 43, 0.95), rgba(15, 10, 26, 0.98))",
-                    border: "1px solid rgba(139, 92, 246, 0.35)",
-                    borderRadius: "20px",
-                    padding: "24px",
-                    marginBottom: "24px",
-                    boxShadow: "0 12px 40px rgba(0, 0, 0, 0.45)",
+                    background: "linear-gradient(145deg, #181024 0%, #130c1d 100%)",
+                    border: "1px solid #38254a",
+                    borderRadius: "16px",
+                    padding: "22px 24px",
+                    marginBottom: "22px",
+                    boxShadow: "0 6px 22px rgba(0, 0, 0, 0.28)",
                     position: "relative",
                     overflow: "hidden"
                   }}
                 >
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "-60px",
-                      right: "-60px",
-                      width: "200px",
-                      height: "200px",
-                      borderRadius: "50%",
-                      background: "radial-gradient(circle, rgba(236, 72, 153, 0.25) 0%, transparent 70%)",
-                      pointerEvents: "none"
-                    }}
-                  />
-
-                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px", marginBottom: "20px"}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px", marginBottom: "18px"}}>
                     <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
                       <div style={{
                         width: "44px",
                         height: "44px",
-                        borderRadius: "14px",
-                        background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+                        borderRadius: "12px",
+                        background: "#2a172b",
+                        border: "1px solid #593556",
                         display: "grid",
-                        placeItems: "center",
-                        boxShadow: "0 4px 16px rgba(236, 72, 153, 0.35)"
+                        placeItems: "center"
                       }}>
-                        <Sparkles size={22} color="#fff" />
+                        <Sparkles size={20} color="#e6a8cb" />
                       </div>
                       <div>
-                        <h2 style={{margin: 0, fontSize: "20px", fontWeight: 800, color: "#fff", letterSpacing: "-0.3px"}}>
-                          Central de Atendimento
+                        <h2 style={{margin: 0, fontSize: "19px", fontWeight: 800, color: "#fff", letterSpacing: "-0.3px"}}>
+                          Status Operacional da Empresa
                         </h2>
-                        <p style={{margin: "2px 0 0", color: "#aba8bf", fontSize: "13px"}}>
-                          Visão geral em tempo real de conexões, equipe e atendimento da sua empresa
+                        <p style={{margin: "2px 0 0", color: "#c0b2cc", fontSize: "13px"}}>
+                          Acompanhe em tempo real o que está ativo e funcionando no seu atendimento
                         </p>
                       </div>
                     </div>

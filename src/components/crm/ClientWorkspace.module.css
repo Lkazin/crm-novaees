@@ -138,20 +138,9 @@
 
 .optionalTemplates{border:1px solid #49344e;background:#211626;border-radius:12px;padding:14px 17px}.optionalTemplates summary{font-size:13px;font-weight:650;color:#e9c1dc;cursor:pointer}.optionalTemplates>p{font-size:12px;line-height:1.7;color:#c4afce;margin:12px 0 17px}.optionalTemplates>div{margin-top:15px}.optionalTemplates summary:focus-visible{outline:2px solid #e8add4;outline-offset:4px}
 
-.clientSurface :global(.op-card) {
-  background: rgba(22, 8, 32, 0.72) !important;
-  border: 1px solid rgba(225, 29, 72, 0.28) !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 16px rgba(225, 29, 72, 0.08) !important;
-  backdrop-filter: blur(12px) !important;
-}
-.clientSurface :global(.op-card):hover {
-  border-color: rgba(225, 29, 72, 0.45) !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 0 20px rgba(225, 29, 72, 0.14) !important;
-}
-
-/* ================= PADRÃO NOVAESWEB: BRILHO VERMELHO SUAVE NAS PÁGINAS ================= */
+/* ================= PADRÃO NOVAESWEB: CONFORTO VISUAL E CORES MATTE ================= */
 .clientSurface {
-  background: #0f0717 !important;
+  background: #0e0816 !important;
 }
 
 .clientSurface :global(.op-card),
@@ -159,38 +148,38 @@
 .clientSurface :global(.op-chat-container),
 .clientSurface :global(.op-chat-header),
 .clientSurface :global(.op-chat-footer) {
-  background: rgba(22, 9, 32, 0.75) !important;
-  border: 1px solid rgba(225, 29, 72, 0.32) !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), 0 0 16px rgba(225, 29, 72, 0.12) !important;
-  backdrop-filter: blur(12px) !important;
+  background: rgba(24, 15, 36, 0.92) !important;
+  border: 1px solid #352347 !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: blur(8px) !important;
 }
 
 .clientSurface :global(.op-card):hover {
-  border-color: rgba(225, 29, 72, 0.5) !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), 0 0 20px rgba(225, 29, 72, 0.18) !important;
+  border-color: #4d3166 !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.34) !important;
 }
 
-/* Campos de Input e Textarea Padronizados */
+/* Campos de Input e Textarea Padronizados (sem brilho neon cansativo) */
 .clientSurface :global(input:not([type="checkbox"]):not([type="radio"])),
 .clientSurface :global(textarea),
 .clientSurface :global(select) {
-  background: rgba(16, 7, 24, 0.85) !important;
-  border: 1px solid rgba(225, 29, 72, 0.25) !important;
-  color: #ffffff !important;
+  background: #120b1b !important;
+  border: 1px solid #3d2852 !important;
+  color: #f6f1fa !important;
 }
 
 .clientSurface :global(input:focus),
 .clientSurface :global(textarea:focus),
 .clientSurface :global(select:focus) {
-  border-color: rgba(225, 29, 72, 0.6) !important;
-  box-shadow: 0 0 12px rgba(225, 29, 72, 0.25) !important;
+  border-color: #c82952 !important;
+  box-shadow: 0 0 0 2px rgba(200, 41, 82, 0.2) !important;
 }
 
-/* Topbar com Brilho Vermelho Suave */
+/* Topbar Profissional NovaesWeb */
 .workspaceTopbar {
-  background: rgba(22, 9, 32, 0.85) !important;
-  border: 1px solid rgba(225, 29, 72, 0.35) !important;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(225, 29, 72, 0.15) !important;
+  background: linear-gradient(135deg, #191026 0%, #140c1f 100%) !important;
+  border: 1px solid #3a264d !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3) !important;
 }
 
 /* sidebar fixa: so o conteudo principal rola */
