@@ -1,0 +1,45 @@
+name: CRM AI - Rotina de Limpeza e Manutenção
+
+on:
+  schedule:
+    # Executa diariamente às 04:30 UTC (01:30 horário de Brasília)
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-ai-maintenance-purge
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Executar rotina de limpeza de dados vencidos e expurgo
+        env:
+          SUPABASE_URL: ${{ secrets.CRM_SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.CRM_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_SERVICE_KEY:-}" ] || [ -z "${SUPABASE_URL:-}" ]; then
+            echo "Segredos de ambiente não definidos. Ignorando execução automática com segurança."
+            exit 0
+          fi
+          echo "Disparando limpeza periódica de contas e dados pendentes no Supabase..."
+          url="${SUPABASE_URL}/rest/v1/rpc/exec_sql"
+          
+          query="DELETE FROM public.crm_ai_message_reservations WHERE created_at < NOW() - INTERVAL '7 days';"
+          
+          status="$(curl --silent --show-error --write-out '%{http_code}' --output /dev/null --max-time 20 \
+            --request POST \
+            --header "apikey: ${SUPABASE_SERVICE_KEY}" \
+            --header "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "{\"query\": \"${query}\"}" \
+            "$url")" || status="000"
+            
+          echo "Resultado da limpeza: HTTP $status"
+          exit 0

@@ -1,6 +1,6 @@
 "use client";
 
-import { UserPlus, Sparkles, CheckCircle2 } from "lucide-react";
+import { UserPlus, Sparkles, CheckCircle2, Download } from "lucide-react";
 
 // Secao de contatos do painel do cliente, extraida de ClientWorkspace.tsx.
 // Recebe apenas o que usa, em vez de depender do estado gigante do workspace.
@@ -47,9 +47,20 @@ export default function ContactsSection(props: ContactsSectionProps) {
                       <span style={{fontSize: "12px", color: "#aba8bf"}}>{contacts.length} cadastrados</span>
                     </div>
                   </div>
-                  <button className="op-refresh" onClick={() => onToggleNewContact(!newContactOpen)} aria-expanded={newContactOpen}>
-                    {newContactOpen ? "Fechar formulário" : "+ Novo Contato"}
-                  </button>
+                  <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                    <a
+                      href="/api/crm/operator/export?type=contacts"
+                      download
+                      className="op-refresh"
+                      style={{display: "inline-flex", alignItems: "center", gap: "6px", textDecoration: "none", color: "inherit"}}
+                      title="Baixar lista de contatos em formato CSV"
+                    >
+                      <Download size={14} /> Exportar CSV
+                    </a>
+                    <button className="op-refresh" onClick={() => onToggleNewContact(!newContactOpen)} aria-expanded={newContactOpen}>
+                      {newContactOpen ? "Fechar formulário" : "+ Novo Contato"}
+                    </button>
+                  </div>
                 </div>
 
                                 {/* Painel do Recuperador de Clientes Inativos */}
