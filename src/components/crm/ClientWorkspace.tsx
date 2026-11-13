@@ -7,6 +7,7 @@ import Link from "next/link";
 import styles from "./ClientWorkspace.module.css";
 import KnowledgeWorkspace from "./KnowledgeWorkspace";
 import SetupJourney, { type SetupStep, type SetupStepId } from "./SetupJourney";
+import OnboardingInterviewerModal from "./OnboardingInterviewerModal";
 import { DangerZoneSection } from "./DangerZoneSection";
 import { ClientSidebar } from './ClientSidebar';
 import WorkspaceNavigation, { type WorkspaceNavItem } from "./WorkspaceNavigation";
@@ -3399,253 +3400,59 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 </div>
 
                 <div>
-
                   <button
                     type="button"
                     className="op-primary"
-                    onClick={() => {
-                      setWizardData({
-                        storeName: currentTenantObj?.name || "",
-                        productsPrices: "",
-                        hoursDelivery: "",
-                        address: "",
-                        faqs: "",
-                        humanHandoffRules: "",
-                        tone: "amigavel"
-                      });
-                      setWizardStep(1);
-                      setWizardOpen(true);
-                    }}
+                    onClick={() => setWizardOpen(prev => !prev)}
                     style={{display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 18px", borderRadius: "10px", fontWeight: 700, fontSize: "13px"}}
                   >
-                    <Wand2 size={16}/> Assistente Guiado Passo a Passo
+                    <Wand2 size={16}/> Configurar por Perguntas com IA (Entrevista Guiada)
                   </button>
                 </div>
 
-                {/* MODAL / CARD DO ASSISTENTE GUIADO PASSO A PASSO */}
+                {/* ENTREVISTADORA INTELIGENTE NOVAESWEB (PREENCHE BASE, TOM/PROMPT E HORÁRIOS) */}
                 {wizardOpen && (
-                  <div style={{
-                    background: "linear-gradient(135deg, rgba(30, 20, 50, 0.98), rgba(20, 15, 35, 0.98))",
-                    border: "2px solid #ec4899",
-                    borderRadius: "16px",
-                    padding: "24px",
-                    boxShadow: "0 10px 40px rgba(236, 72, 153, 0.25)",
-                    position: "relative"
-                  }}>
-                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #443c5e", paddingBottom: "14px", marginBottom: "18px"}}>
-                      <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
-                        <div style={{width: "36px", height: "36px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center"}}>
-                          <Wand2 size={20} color="#fff"/>
-                        </div>
-                        <div>
-                          <h3 style={{margin: 0, fontSize: "17px", color: "#fff"}}>Assistente Guiado: Passo {wizardStep} de 5</h3>
-                          <small style={{color: "#aba8bf"}}>Responda perguntas simples para que a NovaesWeb IA crie o rascunho de atendimento da sua empresa.</small>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setWizardOpen(false)}
-                        style={{background: "none", border: "none", color: "#aba8bf", cursor: "pointer", fontSize: "18px", padding: "4px"}}
-                      >
-                        ✕
-                      </button>
-                    </div>
+                  <OnboardingInterviewerModal
+                    tenantId={tenant}
+                    storeName={currentTenantObj?.name || "Sua Empresa"}
+                    onClose={() => setWizardOpen(false)}
+                    onApplyProfile={async (profile, autoSave) => {
+                      const trimmedStoreInfo = profile.storeInfo.slice(0, KNOWLEDGE_BODY_MAX_LENGTH);
+                      setAgentLabel(profile.agentLabel);
+                      setInstructions(profile.instructions);
+                      setStoreInfo(trimmedStoreInfo);
+                      setOperatingHours(profile.operatingHours);
+                      isAiDirtyRef.current = !autoSave;
+                      isHoursDirtyRef.current = !autoSave;
 
-                    {/* Passo 1: Nome da Loja e Tom */}
-                    {wizardStep === 1 && (
-                      <div style={{display: "flex", flexDirection: "column", gap: "16px"}}>
-                        <div>
-                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
-                            1. Qual é o nome oficial do seu negócio ou loja?
-                          </label>
-                          <p style={{margin: "0 0 8px", fontSize: "13px", color: "#aba8bf"}}>
-                            A IA utilizará este nome para se apresentar em todas as mensagens no WhatsApp.
-                          </p>
-                          <input
-                            type="text"
-                            value={wizardData.storeName}
-                            onChange={e => setWizardData(prev => ({ ...prev, storeName: e.target.value }))}
-                            placeholder="Ex.: Agência Digital ou Loja Virtual"
-                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
-                          />
-                        </div>
-
-                        <div>
-                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
-                            Qual o tom e personalidade do atendimento?
-                          </label>
-                          <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px"}}>
-                            {[
-                              { id: "amigavel", label: "😊 Amigável e Acolhedor", desc: "Usa emojis leves e tom simpático" },
-                              { id: "formal", label: "👔 Formal e Corporativo", desc: "Educado, refinado e sem gírias" },
-                              { id: "direto", label: "⚡ Ágil e Direto", desc: "Objetivo e focado em respostas rápidas" }
-                            ].map(t => (
-                              <button
-                                key={t.id}
-                                type="button"
-                                onClick={() => setWizardData(prev => ({ ...prev, tone: t.id }))}
-                                style={{
-                                  padding: "12px",
-                                  borderRadius: "10px",
-                                  border: "1px solid",
-                                  borderColor: wizardData.tone === t.id ? "#ec4899" : "#3d345c",
-                                  background: wizardData.tone === t.id ? "rgba(236, 72, 153, 0.2)" : "#141124",
-                                  color: "#fff",
-                                  textAlign: "left",
-                                  cursor: "pointer"
-                                }}
-                              >
-                                <strong style={{fontSize: "13px", display: "block"}}>{t.label}</strong>
-                                <small style={{fontSize: "11px", color: "#9ca3af"}}>{t.desc}</small>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Passo 2: Produtos, Serviços e Preços */}
-                    {wizardStep === 2 && (
-                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
-                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
-                          2. Quais são seus principais produtos ou serviços e seus preços?
-                        </label>
-                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
-                          Coloque de forma simples o que você oferece e quanto custa. A IA consultará esta lista para responder dúvidas de cardápio e valores.
-                        </p>
-                        <textarea
-                          rows={6}
-                          value={wizardData.productsPrices}
-                          onChange={e => setWizardData(prev => ({ ...prev, productsPrices: e.target.value }))}
-                          placeholder="Ex.:
-- Consultoria Estratégica: R$ 450,00
-- Desenvolvimento de Site / Loja Virtual: A partir de R$ 990,00
-- Gestão de Tráfego e Campanhas: R$ 600,00/mês
-- Atendimento IA WhatsApp: A partir de R$ 89,90/mês"
-                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
-                        />
-                      </div>
-                    )}
-
-                    {/* Passo 3: Horários e Endereço */}
-                    {wizardStep === 3 && (
-                      <div style={{display: "flex", flexDirection: "column", gap: "16px"}}>
-                        <div>
-                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
-                            3. Quais são os dias e horários de funcionamento?
-                          </label>
-                          <input
-                            type="text"
-                            value={wizardData.hoursDelivery}
-                            onChange={e => setWizardData(prev => ({ ...prev, hoursDelivery: e.target.value }))}
-                            placeholder="Ex.: Segunda a Sexta, das 08h30 às 18h30 (Sábado sob agendamento)"
-                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
-                          />
-                        </div>
-
-                        <div>
-                          <label style={{fontSize: "14px", color: "#fff", fontWeight: 700, display: "block", marginBottom: "6px"}}>
-                            Qual é o endereço físico da loja (se houver retirada)?
-                          </label>
-                          <input
-                            type="text"
-                            value={wizardData.address}
-                            onChange={e => setWizardData(prev => ({ ...prev, address: e.target.value }))}
-                            placeholder="Ex.: Av. Principal, 1500 - Centro (Próximo à Praça Central)"
-                            style={{width: "100%", padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px"}}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Passo 4: FAQ (Perguntas Frequentes) */}
-                    {wizardStep === 4 && (
-                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
-                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
-                          4. Quais são as perguntas mais frequentes (FAQ) que seus clientes fazem?
-                        </label>
-                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
-                          Regras de frete/entrega, formas de pagamento aceitas (Pix, cartão, dinheiro) e dúvidas recorrentes.
-                        </p>
-                        <textarea
-                          rows={6}
-                          value={wizardData.faqs}
-                          onChange={e => setWizardData(prev => ({ ...prev, faqs: e.target.value }))}
-                          placeholder="Ex.:
-- Qual o prazo de entrega dos projetos? De 7 a 15 dias úteis.
-- Como funciona o suporte? Atendimento direto pelo WhatsApp comercial.
-- Quais formas de pagamento? Pix com desconto, Cartão em até 12x e Boleto Bancário."
-                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
-                        />
-                      </div>
-                    )}
-
-                    {/* Passo 5: Regras de Transferência Humana */}
-                    {wizardStep === 5 && (
-                      <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
-                        <label style={{fontSize: "14px", color: "#fff", fontWeight: 700}}>
-                          5. Em quais situações a IA deverá chamar um atendente humano?
-                        </label>
-                        <p style={{margin: 0, fontSize: "13px", color: "#aba8bf"}}>
-                          Especifique quando você quer ser notificado para intervir na conversa (além de reclamações e cancelamentos que já são automáticos).
-                        </p>
-                        <textarea
-                          rows={5}
-                          value={wizardData.humanHandoffRules}
-                          onChange={e => setWizardData(prev => ({ ...prev, humanHandoffRules: e.target.value }))}
-                          placeholder="Ex.: Quando o cliente solicitar orçamentos para eventos e festas grandes, pedir para falar com a gerência, solicitar parcerias ou pedir personalizações fora do cardápio."
-                          style={{padding: "12px 14px", borderRadius: "10px", background: "#121222", border: "1px solid #443c5e", color: "#fff", fontSize: "14px", lineHeight: "1.5"}}
-                        />
-                      </div>
-                    )}
-
-                    {/* Controles de Navegação do Wizard */}
-                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", borderTop: "1px solid #372f4d", paddingTop: "16px"}}>
-                      <button
-                        type="button"
-                        disabled={wizardStep === 1}
-                        onClick={() => setWizardStep(s => Math.max(1, s - 1))}
-                        className="op-refresh"
-                        style={{opacity: wizardStep === 1 ? 0.4 : 1}}
-                      >
-                        Voltar
-                      </button>
-
-                      <div style={{display: "flex", gap: "8px"}}>
-                        {[1, 2, 3, 4, 5].map(step => (
-                          <span
-                            key={step}
-                            style={{
-                              width: "8px",
-                              height: "8px",
-                              borderRadius: "50%",
-                              background: wizardStep === step ? "#ec4899" : "#443c5e"
-                            }}
-                          />
-                        ))}
-                      </div>
-
-                      {wizardStep < 5 ? (
-                        <button
-                          type="button"
-                          onClick={() => setWizardStep(s => Math.min(5, s + 1))}
-                          className="op-primary"
-                          style={{display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 18px", borderRadius: "10px", fontWeight: 700}}
-                        >
-                          Próximo <ArrowRight size={14}/>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleGenerateFromWizard}
-                          className="op-primary"
-                          style={{display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 20px", borderRadius: "10px", fontWeight: 700, background: "var(--grad-primary)"}}
-                        >
-                          <Check size={16}/> Gerar Rascunho da IA
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                      if (autoSave && tenant) {
+                        try {
+                          await fetch("/api/crm/operator/ai-settings", {
+                            method: "POST",
+                            credentials: "same-origin",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              tenantId: tenant,
+                              agentLabel: profile.agentLabel,
+                              instructions: profile.instructions,
+                              storeInfo: trimmedStoreInfo,
+                              enabled: aiEnabled,
+                              operatingHours: profile.operatingHours,
+                            }),
+                          });
+                          await fetchAiSettings(tenant, true);
+                          setAiNotice("Configurações geradas pela entrevista (Base, Comportamento e Horários) e gravadas! Teste as respostas no simulador.");
+                        } catch {
+                          isAiDirtyRef.current = true;
+                          isHoursDirtyRef.current = true;
+                          setAiNotice("Configurações preenchidas pela entrevista! Revise abaixo e clique em 'Salvar Configurações da Minha IA'.");
+                        }
+                      } else {
+                        setAiNotice("Rascunho completo preenchido pela entrevista (Base, Comportamento e Horários)! Revise abaixo e clique em 'Salvar Configurações da Minha IA'.");
+                      }
+                      setWizardOpen(false);
+                    }}
+                  />
                 )}
 
 
