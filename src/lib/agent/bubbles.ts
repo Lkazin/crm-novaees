@@ -13,7 +13,7 @@
 
 export const MAX_BUBBLES = 3;
 const MIN_BUBBLE_CHARS = 12;
-const SHORT_REPLY_CHARS = 120;
+const SHORT_REPLY_CHARS = 220;
 const LONG_REPLY_CHARS = 320;
 
 const CONNECTORS = /^(e|mas|porém|porem|então|entao|por isso|só que|so que|porque|pois|já|ja|também|tambem|aliás|alias|ou seja)\b/i;

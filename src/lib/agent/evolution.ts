@@ -111,14 +111,24 @@ export async function holdTypingPresence(
   targetInstance?: string,
   intervalMs = 8000
 ): Promise<() => void> {
+  // O campo `delay` da Evolution e por quanto tempo o "digitando" fica ligado
+  // no aparelho do cliente. Antes eram 20000ms renovados a cada 8s, e o
+  // stopTyping() apenas parava o intervalo: nao mandava `paused`. Resultado:
+  // o cliente continuava vendo "digitando..." por ate 20s DEPOIS da resposta
+  // chegar, e para sempre quando a IA nao enviava nada.
+  // Agora o delay casa com o intervalo (nunca sobra tempo pendurado) e o
+  // retorno envia `paused`, que e o unico jeito de desligar de verdade.
+  const holdMs = Math.max(2000, Math.min(intervalMs, 8000));
   let stopped = false;
-  void sendPresence(number, "composing", cfg, targetInstance, 20000).catch(() => {});
+  void sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
   const timer = setInterval(() => {
     if (stopped) return;
-    void sendPresence(number, "composing", cfg, targetInstance, 20000).catch(() => {});
+    void sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
   }, intervalMs);
   return () => {
+    if (stopped) return;
     stopped = true;
     clearInterval(timer);
+    void sendPresence(number, "paused", cfg, targetInstance, 0).catch(() => {});
   };
 }

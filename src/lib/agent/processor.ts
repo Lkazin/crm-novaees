@@ -393,6 +393,12 @@ export async function processWebhook(
   const inflightKey = `crm:lab:inflight:${incoming.instance}:${incoming.id}`;
   const bufferKey = `crm:buf:${incoming.instance}:${incoming.number}`;
   const debounceKey = `crm:dblock:${incoming.instance}:${incoming.number}`;
+  // Trava de turno: enquanto a IA esta gerando/enviando para este contato,
+  // mensagens novas so entram no buffer e NAO disparam outro ciclo. Sem isso,
+  // "Delivery" + "Premium" em 2s geravam DUAS respostas com o mesmo conteudo
+  // (visto em 13/11 18:10:34 e 18:10:38), porque a segunda mensagem chegava
+  // depois que o leader ja tinha consumido o buffer.
+  const turnKey = `crm:turn:${incoming.instance}:${incoming.number}`;
 
   try {
     if (ownsClient) await redis.connect();
@@ -411,6 +417,12 @@ export async function processWebhook(
     // 3. Try to acquire debounce leader lock (waits to group consecutive messages)
     const isLeader = await redis.set(debounceKey, "1", "EX", 10, "NX");
     if (isLeader !== "OK") {
+      return { status: "buffered" };
+    }
+    // Uma resposta em voo por conversa. A segunda mensagem do cliente fica no
+    // buffer e e consumida pelo follow-up do turno que ja esta rodando.
+    const turnFree = await redis.set(turnKey, "1", "EX", 120, "NX");
+    if (turnFree !== "OK") {
       return { status: "buffered" };
     }
 
@@ -586,10 +598,12 @@ export async function processWebhook(
       let accepted = false;
       let sendStarted = false;
       let rejected = false;
+      // Declarado aqui para o finally abaixo conseguir desligar o "digitando"
+      // em QUALQUER saida (erro, bloqueio, sem franquia), nao so no caminho feliz.
+      let stopTyping: (() => void) | null = null;
       try {
         // "digitando..." enquanto a IA pensa. Sem isso o cliente fica 3-8s no
         // silêncio e acha que ninguém está do outro lado.
-        let stopTyping: (() => void) | null = null;
         try {
           stopTyping = await (deps.holdTyping ?? holdTypingPresence)(incoming.number, cfg, incoming.instance);
         } catch {
@@ -623,6 +637,7 @@ export async function processWebhook(
         // Para o "digitando" e simula o tempo de digitação antes de entregar:
         // a bolha "digitando..." precisa aparecer de verdade antes do texto.
         try { stopTyping?.(); } catch { /* ignore */ }
+        stopTyping = null; // o finally nao precisa desligar de novo
         // Uma resposta humana no WhatsApp vem em 1-3 bolhas, nao num bloco so.
         // O split e conservador: resposta curta continua inteira.
         const bubbles = splitIntoBubbles(answer);
@@ -698,6 +713,9 @@ export async function processWebhook(
 
         return { status: "sent" };
       } finally {
+        // Presenca visual nunca pode ficar orfa: se o envio falhou ou o turno
+        // foi bloqueado, o cliente nao pode continuar vendo "digitando...".
+        try { stopTyping?.(); } catch { /* presenca visual nunca bloqueia */ }
         // Unknown provider outcome stays reserved for reconciliation. Confirmed rejection or
         // failure before starting provider I/O can safely release without charging.
         if (!accepted && (!sendStarted || rejected)) await quotaStore.release(input, reservation.token);
@@ -705,6 +723,7 @@ export async function processWebhook(
     } finally {
       try {
         await redis.del(debounceKey);
+        await redis.del(turnKey);
       } catch {}
     }
   } catch (err) {

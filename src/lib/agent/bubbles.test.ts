@@ -13,9 +13,11 @@ test("texto vazio nao gera bolha nenhuma", () => {
 });
 
 test("paragrafos separados viram bolhas separadas", () => {
+  // Precisa passar de SHORT_REPLY_CHARS (220): resposta curta vai inteira numa
+  // bolha so, porque o objetivo agora e nao encher o cliente de notificacoes.
   const text =
-    "Claro, eu te ajudo com isso agora mesmo sem nenhum problema!\n\n" +
-    "O valor do site institucional fica em R$ 2.500,00 e inclui ate 5 paginas com dominio proprio.";
+    "Claro, eu te ajudo com isso agora mesmo sem nenhum problema e ja te explico o passo a passo completo!\n\n" +
+    "O valor do site institucional fica em R$ 2.500,00 e inclui ate 5 paginas com dominio proprio, hospedagem por um ano e suporte no primeiro mes.";
   const r = splitIntoBubbles(text);
   assert.equal(r.length, 2);
   assert.match(r[0], /te ajudo/);
