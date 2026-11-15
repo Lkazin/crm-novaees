@@ -64,17 +64,18 @@ export async function sendPresence(
   presence: PresenceType = "composing",
   cfg: Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance">,
   targetInstance?: string,
-  delayMs = 1200
+  delayMs = 1000
 ): Promise<boolean> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const endpoint = `${cfg.evolutionUrl}/chat/sendPresence/${instance}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6_000);
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+  const safeDelay = presence === "paused" ? 0 : Math.min(Math.max(0, delayMs), 1500);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: cfg.evolutionKey },
-      body: JSON.stringify({ number, presence, delay: delayMs }),
+      body: JSON.stringify({ number, presence, delay: safeDelay }),
       signal: controller.signal,
       cache: "no-store",
     });
@@ -94,41 +95,37 @@ export async function sendPresence(
  */
 export function typingDurationFor(text: string): number {
   const chars = (text || "").trim().length;
-  // Piso de 800ms (era 1500ms): um "oi" nao pode custar 1,5s de espera antes
-  // da bolha aparecer. O teto de 6s continua para respostas longas.
   const ms = Math.round(chars * 25);
-  return Math.max(800, Math.min(6000, ms));
+  return Math.max(1500, Math.min(6000, ms));
 }
 
 /**
- * Mantem o "digitando..." visivel durante a espera. O WhatsApp mostra a presenca
- * por ~20s; renovamos a cada 8s enquanto a IA pensa, para o cliente nunca ver o
- * indicador desaparecer no meio da resposta.
+ * Mantem o "digitando..." visivel durante a espera. Renovamos em janela curta
+ * para nunca deixar o indicador preso no aparelho do cliente e encadeamos o
+ * envio de `paused` apos qualquer requisicao `composing` em voo.
  */
 export async function holdTypingPresence(
   number: string,
   cfg: Pick<AgentConfig, "evolutionUrl" | "evolutionKey" | "instance">,
   targetInstance?: string,
-  intervalMs = 8000
+  intervalMs = 4000
 ): Promise<() => void> {
-  // O campo `delay` da Evolution e por quanto tempo o "digitando" fica ligado
-  // no aparelho do cliente. Antes eram 20000ms renovados a cada 8s, e o
-  // stopTyping() apenas parava o intervalo: nao mandava `paused`. Resultado:
-  // o cliente continuava vendo "digitando..." por ate 20s DEPOIS da resposta
-  // chegar, e para sempre quando a IA nao enviava nada.
-  // Agora o delay casa com o intervalo (nunca sobra tempo pendurado) e o
-  // retorno envia `paused`, que e o unico jeito de desligar de verdade.
-  const holdMs = Math.max(2000, Math.min(intervalMs, 8000));
+  const holdMs = Math.max(1000, Math.min(intervalMs, 1500));
   let stopped = false;
-  void sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
+  let inflight: Promise<unknown> = sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
   const timer = setInterval(() => {
     if (stopped) return;
-    void sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
+    inflight = inflight.then(() => {
+      if (stopped) return;
+      return sendPresence(number, "composing", cfg, targetInstance, holdMs).catch(() => {});
+    });
   }, intervalMs);
   return () => {
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
-    void sendPresence(number, "paused", cfg, targetInstance, 0).catch(() => {});
+    void inflight.finally(() => {
+      void sendPresence(number, "paused", cfg, targetInstance, 0).catch(() => {});
+    });
   };
 }

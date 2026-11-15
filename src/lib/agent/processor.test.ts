@@ -330,3 +330,86 @@ test("envia indicador de presenca 'composing' (digitando...) antes de gerar a re
   assert.equal(presenceCalls[0].presence, "composing");
   assert.equal(presenceCalls[0].number, "5511999998888");
 });
+
+test("desliga 'digitando...' (stopTyping) quando maySend bloqueia apos geracao, quando generate falha ou vem vazio", async () => {
+  // 1. maySend bloqueia depois da geracao
+  {
+    const db = fakeRedis();
+    let maySendCalls = 0;
+    let stopped = 0;
+    let sent = 0;
+    const result = await processWebhook(payload, cfg, {
+      redis: db as never,
+      holdTyping: async () => () => { stopped++; },
+      generate: async () => "Resposta valida",
+      maySend: async () => {
+        maySendCalls++;
+        return maySendCalls === 1; // passa antes de reservar e bloqueia antes de enviar
+      },
+      send: async () => { sent++; },
+    });
+    assert.equal(result.status, "disabled");
+    assert.equal(result.reason, "tenant_or_conversation_blocked");
+    assert.equal(stopped, 1);
+    assert.equal(sent, 0);
+  }
+
+  // 2. generate lanca erro
+  {
+    const db = fakeRedis();
+    let stopped = 0;
+    let sent = 0;
+    await assert.rejects(
+      processWebhook(payload, cfg, {
+        redis: db as never,
+        holdTyping: async () => () => { stopped++; },
+        generate: async () => { throw new Error("llm_timeout"); },
+        send: async () => { sent++; },
+      }),
+      /llm_timeout/
+    );
+    assert.equal(stopped, 1);
+    assert.equal(sent, 0);
+  }
+
+  // 3. generate retorna vazio
+  {
+    const db = fakeRedis();
+    let stopped = 0;
+    let sent = 0;
+    const result = await processWebhook(payload, cfg, {
+      redis: db as never,
+      holdTyping: async () => () => { stopped++; },
+      generate: async () => "   ",
+      send: async () => { sent++; },
+    });
+    assert.equal(result.status, "disabled");
+    assert.equal(result.reason, "empty_ai_reply");
+    assert.equal(stopped, 1);
+    assert.equal(sent, 0);
+  }
+});
+
+test("envia 'paused' ao finalizar multiplas bolhas para nao deixar 'digitando...' preso", async () => {
+  const db = fakeRedis();
+  const presences: string[] = [];
+  let stopped = 0;
+  let sent = 0;
+  const result = await processWebhook(payload, cfg, {
+    redis: db as never,
+    holdTyping: async () => () => { stopped++; },
+    sendPresence: async (_num, presence) => {
+      if (presence) presences.push(presence);
+      return true;
+    },
+    generate: async () =>
+      "Oi Lucas, tudo bem? O site institucional inclui ate cinco paginas e dominio proprio. A entrega fica em dez dias uteis apos a aprovacao do layout.",
+    send: async () => { sent++; },
+  });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(result.status, "sent");
+  assert.ok(sent >= 2);
+  assert.equal(stopped, 1);
+  assert.equal(presences[0], "composing");
+  assert.equal(presences[presences.length - 1], "paused");
+});

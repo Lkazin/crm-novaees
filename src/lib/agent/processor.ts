@@ -182,36 +182,36 @@ async function getStoreAiContext(instanceName: string): Promise<{
       return { isBlocked: true, blockedReason: "channel_paused_by_plan", channelFound: true, tenantId };
     }
 
-    // 2. Check tenant status (active vs suspended)
-    const rTenant = await fetch(`${url}/rest/v1/crm_tenants?id=eq.${tenantId}&select=name,status`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store"
-    });
+    // 2-5. Fetch tenant, agent, knowledge articles, effective plan & settings in parallel
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const [rTenant, rAgent, rArticles, effectivePlan, rSettings] = await Promise.all([
+      fetch(`${url}/rest/v1/crm_tenants?id=eq.${tenantId}&select=name,status`, { headers, cache: "no-store" }),
+      fetch(`${url}/rest/v1/crm_agents?tenant_id=eq.${tenantId}&limit=1`, { headers, cache: "no-store" }),
+      fetch(
+        `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
+        { headers, cache: "no-store" }
+      ),
+      getEffectiveTenantPlan(tenantId),
+      fetch(
+        `${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description,official_links&limit=1`,
+        { headers, cache: "no-store" }
+      )
+    ]);
+
     if (!rTenant.ok) throw new Error("store_status_unavailable");
     const tenants = (await rTenant.json()) as Array<{ name: string; status: string }>;
     if (tenants?.[0]?.status !== "active") {
       return { isBlocked: true, blockedReason: "store_suspended_or_overdue", channelFound: true, tenantId };
     }
 
-    // 3. Fetch agent instructions and preferred route
-    const rAgent = await fetch(`${url}/rest/v1/crm_agents?tenant_id=eq.${tenantId}&limit=1`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store"
-    });
-    const agents = (await rAgent.json()) as Array<{ label: string; instructions: string; enabled: boolean; provider_route: string }>;
+    const agents = rAgent.ok
+      ? ((await rAgent.json()) as Array<{ label: string; instructions: string; enabled: boolean; provider_route: string }>)
+      : [];
     if (agents?.[0] && !agents[0].enabled) {
       return { isBlocked: true, blockedReason: "agent_disabled", channelFound: true, tenantId };
     }
 
-    // 4. Fetch store knowledge articles (up to 20 published articles)
-    const rArticles = await fetch(
-      `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
-      {
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-        cache: "no-store"
-      }
-    );
-    const articles = (await rArticles.json()) as Array<{ title: string; body: string }>;
+    const articles = rArticles.ok ? ((await rArticles.json()) as Array<{ title: string; body: string }>) : [];
     // Um artigo grande (4.400 chars num caso real) inflava o prompt em ~1.100 tokens
     // e o custo e 98% de entrada. O teto por artigo e um total garantem o contexto
     // util sem pagar por texto que a IA nao vai ler inteiro.
@@ -232,14 +232,12 @@ async function getStoreAiContext(instanceName: string): Promise<{
           .join("\n\n")
       : "";
 
-    // 5. Fetch effective plan & operating hours
     let operatingHours: StoreAiContext["operatingHours"] = undefined;
     let officialLinks: Record<string, string> | undefined = undefined;
     let quotaLimit = 200;
     let primaryModel = agents?.[0]?.provider_route || undefined;
     let fallbackModel = undefined;
 
-    const effectivePlan = await getEffectiveTenantPlan(tenantId);
     if (effectivePlan.isSuspended || (effectivePlan.autoBlock && effectivePlan.isOverdue)) {
       return { isBlocked: true, blockedReason: "store_suspended_or_overdue", channelFound: true, tenantId };
     }
@@ -259,10 +257,6 @@ async function getStoreAiContext(instanceName: string): Promise<{
     const allowAdvancedHours = effectivePlan.featureStates?.business_hours?.state === "allowed";
     const allowBasicHours = allowAdvancedHours || effectivePlan.featureStates?.business_hours_basic?.state === "allowed";
 
-    const rSettings = await fetch(`${url}/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description,official_links&limit=1`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store"
-    });
     if (rSettings.ok) {
       const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string; official_links?: Record<string, string> }>;
       const dbTimezone = settings[0]?.timezone || "America/Sao_Paulo";
@@ -428,11 +422,8 @@ export async function processWebhook(
 
     const wait = deps.wait ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
-    // 4. Leader worker: wait 1400ms for user to finish rapid consecutive typing
-    // 800ms e suficiente para agrupar mensagens rapidas. Os 1400ms anteriores
-    // eram atraso puro: o cliente digitava "oi", "tudo bem?" e esperava 1,4s
-    // antes de qualquer coisa comecar.
-    await wait(800);
+    // 4. Leader worker: wait 400ms to group rapid consecutive typing without excessive latency
+    await wait(400);
 
     try {
       // 5. Collect all buffered messages for this user atomically via Lua script
@@ -464,12 +455,55 @@ export async function processWebhook(
         }
       }
 
-      const markItemsDone = async () => {
-        for (const it of items) {
+      const markItemsDone = async (list: Array<{ id: string; text: string }> = items) => {
+        for (const it of list) {
           if (it.id) {
             await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
             await redis.del(`crm:lab:inflight:${incoming.instance}:${it.id}`);
           }
+        }
+      };
+
+      const performEscalation = async (
+        esc: ReturnType<typeof detectCustomerEscalation>,
+        escText: string,
+        escItems: Array<{ id: string; text: string }>
+      ) => {
+        const urgent = esc.isEscalation && (esc.sentiment === "urgent" || esc.sentiment === "frustrated");
+        const convId = await (deps.handoff ?? handoffToHuman)(
+          incoming.instance,
+          incoming.number,
+          urgent,
+          esc.reason || "Solicitação de atendimento humano"
+        );
+
+        if (convId) {
+          try {
+            await redis.set(
+              `crm:escalation:${convId}`,
+              JSON.stringify({
+                category: esc.category,
+                reason: esc.reason || "Solicitação de Atendente Humano",
+                sentiment: esc.sentiment || "neutral",
+                priority: urgent ? "urgent" : "high",
+                text: escText.slice(0, 300),
+                timestamp: new Date().toISOString()
+              }),
+              "EX",
+              86400 * 7
+            );
+          } catch {}
+        }
+
+        const escalationReply = esc.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
+        await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
+        await markItemsDone(escItems);
+        try {
+          await persistOutboundInSupabase(incoming.instance, incoming.number, escalationReply);
+        } catch (err) {
+          // A mensagem saiu para o cliente mas nao entrou no historico: sem log,
+          // o painel mostra a conversa sem essa resposta e ninguem percebe.
+          console.error("[crm-ai] resposta de escalonamento enviada mas nao persistida:", err instanceof Error ? err.message : String(err));
         }
       };
 
@@ -509,42 +543,7 @@ export async function processWebhook(
 
       // 8. If in AI mode and escalation/human request was detected BEFORE AI reply -> hand off to human without charging AI quota
       if (escalation.isEscalation) {
-        const convId = await (deps.handoff ?? handoffToHuman)(
-          incoming.instance,
-          incoming.number,
-          isUrgent,
-          escalation.reason || "Solicitação de atendimento humano"
-        );
-
-        if (convId) {
-          try {
-            await redis.set(
-              `crm:escalation:${convId}`,
-              JSON.stringify({
-                category: escalation.category,
-                reason: escalation.reason || "Solicitação de Atendente Humano",
-                sentiment: escalation.sentiment || "neutral",
-                priority: isUrgent ? "urgent" : "high",
-                text: combinedText.slice(0, 300),
-                timestamp: new Date().toISOString()
-              }),
-              "EX",
-              86400 * 7
-            );
-          } catch {}
-        }
-
-        const escalationReply = escalation.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
-        await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
-        await markItemsDone();
-        try {
-          await persistOutboundInSupabase(incoming.instance, incoming.number, escalationReply);
-        } catch (err) {
-          // A mensagem saiu para o cliente mas nao entrou no historico: sem log,
-          // o painel mostra a conversa sem essa resposta e ninguem percebe.
-          console.error("[crm-ai] resposta de escalonamento enviada mas nao persistida:", err instanceof Error ? err.message : String(err));
-        }
-
+        await performEscalation(escalation, combinedText, items);
         return { status: "sent", reason: `escalated_${escalation.category || "human"}` };
       }
 
@@ -602,6 +601,7 @@ export async function processWebhook(
       // em QUALQUER saida (erro, bloqueio, sem franquia), nao so no caminho feliz.
       let stopTyping: (() => void) | null = null;
       try {
+        const genStartMs = Date.now();
         // "digitando..." enquanto a IA pensa. Sem isso o cliente fica 3-8s no
         // silêncio e acha que ninguém está do outro lado.
         try {
@@ -609,7 +609,13 @@ export async function processWebhook(
         } catch {
           // Falha transitória de presença visual não deve impedir o atendimento
         }
-        const answer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
+        const rawAnswer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
+        const answer = (rawAnswer ?? "").trim();
+        if (!answer) {
+          try { stopTyping?.(); } catch { /* ignore */ }
+          stopTyping = null;
+          return { status: "disabled", reason: "empty_ai_reply" };
+        }
         // Guarda comercial: avalia a resposta ANTES do envio. O evento e gravado
         // sempre que houver violacao, para o Painel Master mostrar fato, nao
         // estimativa. Nao bloqueia o envio: bloquear deixaria o cliente sem
@@ -634,25 +640,35 @@ export async function processWebhook(
         if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
         await quotaStore.dispatch(input, reservation.token);
         sendStarted = true;
-        // Para o "digitando" e simula o tempo de digitação antes de entregar:
-        // a bolha "digitando..." precisa aparecer de verdade antes do texto.
-        try { stopTyping?.(); } catch { /* ignore */ }
-        stopTyping = null; // o finally nao precisa desligar de novo
+        // Desconta o tempo que a LLM ja passou digitando para evitar espera dupla,
+        // encerra o "digitando..." continuo antes de entregar a primeira bolha e
+        // garante `paused` ao final de multiplas bolhas.
+        const elapsedMs = Date.now() - genStartMs;
         // Uma resposta humana no WhatsApp vem em 1-3 bolhas, nao num bloco so.
         // O split e conservador: resposta curta continua inteira.
         const bubbles = splitIntoBubbles(answer);
         let sendOutcome: { messageId?: string } | void = undefined;
+        let bubblePresenceInflight: Promise<unknown> | null = null;
         try {
           for (let i = 0; i < bubbles.length; i++) {
             const bubble = bubbles[i];
             if (i > 0) {
-              // Entre bolhas: volta o "digitando..." e espera o tempo de digitar.
-              try {
-                await (deps.sendPresence ?? sendPresence)(incoming.number, "composing", cfg, incoming.instance, 8000);
-              } catch { /* presenca visual nunca bloqueia envio */ }
-              await wait(bubbleDelayMs(bubble));
+              // Entre bolhas: sinal curto sem bloquear HTTP e pausa curta.
+              bubblePresenceInflight = (deps.sendPresence ?? sendPresence)(
+                incoming.number,
+                "composing",
+                cfg,
+                incoming.instance,
+                1200
+              ).catch(() => {});
+              await wait(Math.min(700, bubbleDelayMs(bubble)));
             } else {
-              await wait(typingDurationFor(bubble));
+              const remainingFirstWait = Math.max(0, Math.min(350, typingDurationFor(bubble) - elapsedMs));
+              if (remainingFirstWait > 0) {
+                await wait(remainingFirstWait);
+              }
+              try { stopTyping?.(); } catch { /* ignore */ }
+              stopTyping = null; // o finally nao precisa desligar de novo
             }
             const outcome = await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
             if (i === 0) sendOutcome = outcome;
@@ -660,6 +676,12 @@ export async function processWebhook(
         } catch (error) {
           rejected = error instanceof EvolutionSendError && error.outcome === "rejected";
           throw error;
+        } finally {
+          if (bubblePresenceInflight) {
+            void bubblePresenceInflight.finally(() => {
+              void (deps.sendPresence ?? sendPresence)(incoming.number, "paused", cfg, incoming.instance, 0).catch(() => {});
+            });
+          }
         }
         accepted = true;
         // Failed or uncertain commit keeps its durable reservation; never silently refund an accepted send.
@@ -697,16 +719,19 @@ export async function processWebhook(
               try { extraItems.push(JSON.parse(it)); } catch { extraItems.push({ id: "", text: it }); }
             }
             const extraText = extraItems.map(it => it.text.trim()).filter(Boolean).join("\n");
-            if (extraText) {
-              for (const it of extraItems) {
-                if (it.id) {
-                  await redis.set(`crm:lab:done:${incoming.instance}:${it.id}`, "sent", "EX", 86_400);
-                  await redis.del(`crm:lab:inflight:${incoming.instance}:${it.id}`);
+            if (extraText && (!deps.maySend || (await deps.maySend(incoming)))) {
+              const extraEscalation = detectCustomerEscalation(extraText);
+              if (extraEscalation.isEscalation) {
+                await performEscalation(extraEscalation, extraText, extraItems);
+              } else {
+                await markItemsDone(extraItems);
+                const rawFollowUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context);
+                const followUp = (rawFollowUp ?? "").trim();
+                if (followUp) {
+                  await (deps.send ?? sendText)(incoming.number, followUp, cfg, incoming.instance);
+                  await persistOutboundInSupabase(incoming.instance, incoming.number, followUp);
                 }
               }
-              const followUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context);
-              await (deps.send ?? sendText)(incoming.number, followUp, cfg, incoming.instance);
-              await persistOutboundInSupabase(incoming.instance, incoming.number, followUp);
             }
           }
         } catch {}

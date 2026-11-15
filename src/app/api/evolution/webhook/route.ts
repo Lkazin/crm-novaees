@@ -160,8 +160,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (incoming) {
-      try { await persistIncomingInSupabase(incoming); } catch {}
-      try { await captureIncoming(incoming); } catch {}
+      await Promise.allSettled([
+        persistIncomingInSupabase(incoming),
+        captureIncoming(incoming),
+      ]);
     }
 
     // 3. Process AI response if configured
