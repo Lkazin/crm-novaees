@@ -5,7 +5,7 @@ import { privateJson, supabaseRows } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { getEffectiveTenantPlan, getMasterPlans } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
-import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
+import { buildTenantWhatsappSlots, extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -291,9 +291,26 @@ export async function GET(request: NextRequest) {
       quotaUsed,
     };
 
+    // O ClientWorkspace (usado tambem embutido no Painel Master) monta o nome
+    // da instancia a partir desta lista. Sem ela, `whatsappSlots` fica vazio e o
+    // front cai num fallback pelo nome do tenant, que pode nao bater com a
+    // instancia real na Evolution -- e o /connect responde "Instancia iniciada"
+    // porque a instancia nao existe. O /operator/ai-settings ja devolvia esta
+    // lista; o /operator/data nao devolvia.
+    const whatsappSlots = buildTenantWhatsappSlots(
+      selectedTenant?.name ?? "",
+      channels.map(ch => ({
+        id: ch.id,
+        instance_name: ch.instance_name ?? "",
+        status: ch.status ?? "disconnected"
+      })),
+      effectivePlan
+    );
+
     return privateJson({
       tenants,
       selectedTenant: selected,
+      whatsappSlots,
       isSuspended,
       suspensionReason,
       publicSuspensionReason: effectivePlan.publicSuspensionReason,
