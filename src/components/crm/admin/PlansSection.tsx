@@ -7,6 +7,7 @@
 // bloco original; a unica mudanca e que os dados e callbacks chegam por props
 // em vez de fecharem sobre o escopo do componente AdminCRM.
 
+import { PlanPricing } from "../PlanPricing";
 import { Check, Copy, Eye, Trash2, Edit3, Zap } from "lucide-react";
 import type { PlanItem, MasterClient } from "./master-types";
 
@@ -88,17 +89,13 @@ export function PlansSection({
                 }}>{isActive ? "ATIVO" : "INATIVO"}</span>
               </div>
 
-              <div style={{display: "flex", alignItems: "baseline", gap: "6px", marginBottom: "12px"}}>
-                <span style={{fontSize: "13px", color: "#9ca3af"}}>R$</span>
-                <strong style={{fontSize: "30px", color: "white", lineHeight: 1}}>{p.price}</strong>
-                <span style={{fontSize: "13px", color: "#9ca3af"}}>/mês</span>
-              </div>
+              <PlanPricing price={p.price} trial={p.id === "crm-trial"} />
 
               <p style={{fontSize: "13px", color: "#c2bed4", lineHeight: "1.5", marginBottom: "14px", minHeight: "54px"}}>{p.description}</p>
 
               <div style={{display: "grid", gap: "6px", marginBottom: "16px", fontSize: "12px", color: "#e2e8f0"}}>
                 <div style={{display: "flex", justifyContent: "space-between", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px"}}>
-                  <span style={{color: "#9ca3af"}}>Mensagens IA / mês</span>
+                  <span style={{color: "#9ca3af"}}>{p.id === "crm-trial" ? "Respostas IA / 7 dias" : "Respostas IA / mês"}</span>
                   <strong>{p.quotaLimit.toLocaleString("pt-BR")}</strong>
                 </div>
                 <div style={{display: "flex", justifyContent: "space-between", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px"}}>

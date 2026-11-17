@@ -10,7 +10,7 @@ export type WhatsappSlotInfo = {
   unlocked: boolean;
   status: "disconnected" | "connecting" | "connected" | "paused" | "locked";
   pausedByDowngrade: boolean;
-  minPlanId: "crm-start" | "crm-business" | "crm-premium";
+  minPlanId: "crm-essential" | "crm-professional" | "crm-enterprise";
   minPlanName: string;
   lockedReason?: string;
 };
@@ -58,8 +58,8 @@ export function buildTenantWhatsappSlots(
   for (const slot of [1, 2, 3, 4, 5] as const) {
     const ch = bySlot.get(slot);
     const unlocked = slot <= maxAllowed && !effectivePlan.isSuspended;
-    const minPlanId = slot === 1 ? "crm-start" : slot <= 3 ? "crm-business" : "crm-premium";
-    const minPlanName = slot === 1 ? "CRM Start" : slot <= 3 ? "CRM Business" : "CRM Premium";
+    const minPlanId = slot === 1 ? "crm-essential" : slot <= 3 ? "crm-professional" : "crm-enterprise";
+    const minPlanName = slot === 1 ? "Essencial" : slot <= 3 ? "Profissional" : "Empresarial";
     const instanceName = ch?.instance_name || expectedSlotInstanceName(tenantName, slot, existingSlot1);
 
     let status: WhatsappSlotInfo["status"] = "locked";
@@ -74,8 +74,8 @@ export function buildTenantWhatsappSlots(
         status = ch ? "paused" : "locked";
         pausedByDowngrade = Boolean(ch);
         lockedReason = slot <= 3
-          ? "Disponível a partir do plano CRM Business (até 3 WhatsApps)."
-          : "Disponível exclusivamente no plano CRM Premium (até 5 WhatsApps).";
+          ? "Disponível a partir do plano Profissional (até 3 WhatsApps)."
+          : "Disponível exclusivamente no plano Empresarial (até 5 WhatsApps).";
       }
     } else {
       if (!ch) {

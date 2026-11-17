@@ -49,7 +49,7 @@ export function WhatsAppRadarSection({ clients, onRefresh }: WhatsAppRadarSectio
     }> = [];
 
     for (const c of clients) {
-      const planName = c.planName || (c.isTrial ? "Teste Grátis" : "CRM Premium");
+      const planName = c.planName || (c.isTrial ? "Teste Grátis" : "Essencial");
       if (Array.isArray(c.whatsappSlots) && c.whatsappSlots.length > 0) {
         for (const s of c.whatsappSlots) {
           if (s.unlocked) {

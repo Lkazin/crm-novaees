@@ -1,3 +1,4 @@
+import { annualPeriodEnd } from "@/lib/crm/billing";
 import type { StoredTenantConfig, StoredTenantPlan } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
@@ -235,7 +236,7 @@ export async function POST(request: NextRequest) {
     const agentName = typeof body.agentName === "string" ? body.agentName.trim() : "";
 
     const requestedPlanId = typeof body.planId === "string" ? body.planId.trim() : "";
-    const requestedPlanName = typeof body.planName === "string" ? body.planName.trim() : "CRM Premium";
+    const requestedPlanName = typeof body.planName === "string" ? body.planName.trim() : "Essencial";
     const dueDate = typeof body.dueDate === "string" && body.dueDate ? body.dueDate : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const paymentStatus = body.paymentStatus === "pending" ? "pending" : "paid";
     const autoBlock = body.autoBlock !== false;
@@ -378,9 +379,9 @@ export async function POST(request: NextRequest) {
           planId: "crm-trial",
           name: TRIAL_PLAN.name,
           price: "0,00",
-          quotaLimit: TRIAL_PLAN.quotaLimit || 100,
-          maxOperators: TRIAL_PLAN.maxOperators || 2,
-          maxWhatsappConnections: TRIAL_PLAN.maxWhatsappConnections || 2,
+          quotaLimit: TRIAL_PLAN.quotaLimit,
+          maxOperators: TRIAL_PLAN.maxOperators,
+          maxWhatsappConnections: TRIAL_PLAN.maxWhatsappConnections,
           trialStartedAt,
           trialExpiresAt,
           dueDate: trialExpiresAt.slice(0, 10),
@@ -621,7 +622,7 @@ export async function PATCH(request: NextRequest) {
 
       let duplicatePrevented = false;
       if (newPaymentStatus === "paid") {
-        const alreadyPaidForCycle = paymentHistory.some(
+        const alreadyPaidForCycle = (planObj.billingCycle === "annual" && planObj.status === "paid" && typeof planObj.paidThrough === "string" && planObj.paidThrough > new Date().toISOString().slice(0,10)) || paymentHistory.some(
           p => p.billingCycleKey === billingCycleKey && p.status === "paid"
         );
         if (alreadyPaidForCycle && planObj.status === "paid") {
@@ -632,7 +633,8 @@ export async function PATCH(request: NextRequest) {
             billingCycleKey,
             planId: planObj.planId || "crm-start",
             planName: planObj.name || "CRM Start",
-            amount: planObj.price || "59,90",
+            amount: planObj.billingCycle === "annual" && typeof planObj.billingAmountCents === "number" ? (planObj.billingAmountCents / 100).toFixed(2).replace(".", ",") : planObj.price || "59,90",
+            billingCycle: planObj.billingCycle || "monthly",
             dueDate,
             paidAt: new Date().toISOString(),
             status: "paid",
@@ -823,7 +825,7 @@ export async function PATCH(request: NextRequest) {
 
     // 6. Action: Convert Trial to Paid Commercial Plan
     if (action === "convert_trial") {
-      const targetPlanId = typeof body.planId === "string" ? body.planId : "crm-premium";
+      const targetPlanId = typeof body.planId === "string" ? body.planId : "crm-essential";
       const targetDueDate = typeof body.dueDate === "string" ? body.dueDate : undefined;
       const result = await convertTrialToPaidPlan(tenantId, targetPlanId, auth.actor || "master_admin", targetDueDate);
       if (!result.success) {

@@ -186,7 +186,7 @@ const INDUSTRY_PRESETS = [
     instructions: "Você é a consultora de vendas virtual da Loja Elegance no WhatsApp. Seja alegre, atenciosa e estilosa. Ajude as clientes a encontrar peças do seu tamanho, tire dúvidas sobre tecidos, caimento e prazo de envio. Incentive o envio de fotos do catálogo e feche a venda com carinho.",
     storeInfo: `✨ COLEÇÃO ATUAL:
 - Vestido Midi Floral: R$ 149,90 (Tamanhos P, M, G)
-- Calça Jeans Wide Leg: R$ 189,90 (Tamanhos 36 ao 44)
+- Calça Jeans Wide Leg: R$ 1139,90 (Tamanhos 36 ao 44)
 - Cropped Canelado Básico: R$ 49,90 (Cores: Preto, Branco, Fúcsia)
 - Blazer Alfaiataria: R$ 229,90 (Tamanhos P, M, G)
 
@@ -621,7 +621,7 @@ export default function ClientWorkspace({
   const [priorityFilter, setPriorityFilter] = useState<"all" | "urgent" | "high" | "normal" | "low">("all");
   const [upgradeModal, setUpgradeModal] = useState<{ open: boolean; targetPlan: string; reason: string }>({
     open: false,
-    targetPlan: "CRM Premium",
+    targetPlan: "Profissional",
     reason: ""
   });
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
@@ -1536,7 +1536,7 @@ export default function ClientWorkspace({
     }
   }
 
-  function openUpgradeRequest(targetPlan = "CRM Premium", reason = "") {
+  function openUpgradeRequest(targetPlan = "Profissional", reason = "") {
     setUpgradeModal({ open: true, targetPlan, reason });
   }
 
@@ -1586,7 +1586,7 @@ export default function ClientWorkspace({
 
   async function handleSetConversationPriority(conversationId: string, priority: "low" | "normal" | "high" | "urgent") {
     if (!canUseFeature("conversation_priority")) {
-      requestFeatureAccess("conversation_priority", "crm-business", "Classificar prioridade de atendimento");
+      requestFeatureAccess("conversation_priority", "crm-professional", "Classificar prioridade de atendimento");
       return;
     }
     try {
@@ -1611,7 +1611,7 @@ export default function ClientWorkspace({
     e.preventDefault();
     if (!current || !tenant) return;
     if (!canUseFeature("satisfaction_survey")) {
-      requestFeatureAccess("satisfaction_survey", "crm-business", "Ativar Pesquisa de Satisfação (1 a 5 estrelas)");
+      requestFeatureAccess("satisfaction_survey", "crm-professional", "Ativar Pesquisa de Satisfação (1 a 5 estrelas)");
       return;
     }
     setSavingSurvey(true);
@@ -1647,7 +1647,7 @@ export default function ClientWorkspace({
     e.preventDefault();
     if (!newTagName.trim() || !tenant) return;
     if (!canUseFeature("commercial_tags")) {
-      requestFeatureAccess("commercial_tags", "crm-business", "Criar e gerenciar Etiquetas Comerciais");
+      requestFeatureAccess("commercial_tags", "crm-professional", "Criar e gerenciar Etiquetas Comerciais");
       return;
     }
     try {
@@ -1723,7 +1723,7 @@ export default function ClientWorkspace({
   // Set Commercial Tag on Contact
   async function handleSetCommercialTag(contactId: string, tagId: string) {
     if (!canUseFeature("commercial_tags")) {
-      openUpgradeRequest("CRM Premium", "Utilizar Etiquetas Comerciais nas conversas");
+      openUpgradeRequest("Profissional", "Utilizar Etiquetas Comerciais nas conversas");
       return;
     }
     try {
@@ -2251,7 +2251,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   type="button"
                   onClick={() => {
                     if (!canUseFeature("sound_notifications")) {
-                      requestFeatureAccess("sound_notifications", "crm-business", "Ativar notificações sonoras");
+                      requestFeatureAccess("sound_notifications", "crm-professional", "Ativar notificações sonoras");
                       return;
                     }
                     const next = !soundEnabled;
@@ -2262,7 +2262,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   className="op-refresh"
                   title={
                     !canUseFeature("sound_notifications")
-                      ? "Notificações sonoras (Recurso CRM Premium)"
+                      ? "Notificações sonoras (Recurso Profissional)"
                       : soundEnabled ? "Som de notificação ativado (clique para silenciar)" : "Som de notificação silenciado (clique para ativar)"
                   }
                   style={{
@@ -2630,18 +2630,18 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       {data?.publicSuspensionReason || data?.plan?.publicSuspensionReason || (
                         suspensionReason === "payment_overdue"
                           ? "A data de vencimento da mensalidade expirou. Regularize seu pagamento para que a IA continue respondendo no WhatsApp."
-                          : "Seu teste grátis encerrou. Para a IA continuar atendendo e vendendo 24h por dia no seu WhatsApp, assine o plano CRM Premium (R$ 89,90/mês)."
+                          : "Seu teste grátis encerrou. Para a IA continuar atendendo e vendendo 24h por dia no seu WhatsApp, assine o plano Profissional (R$ 139,90/mês)."
                       )}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => openUpgradeRequest("CRM Premium", "Reativar conta / Assinar CRM Premium (R$ 89,90)")}
+                  onClick={() => openUpgradeRequest("Profissional", "Reativar conta / Assinar Profissional (R$ 139,90)")}
                   className="op-primary"
                   style={{padding: "12px 22px", borderRadius: "10px", fontWeight: 800, fontSize: "14px", background: "linear-gradient(135deg, #ec4899, #8b5cf6)", border: "none", boxShadow: "0 4px 15px rgba(236,72,153,0.4)"}}
                 >
-                  Fazer Upgrade para CRM Premium (R$ 89,90)
+                  Fazer Upgrade para Profissional (R$ 139,90)
                 </button>
               </section>
             )}
@@ -2741,7 +2741,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <p style={{margin: "4px 0 0", fontSize: "13px", color: "rgba(226, 232, 240, 0.85)"}}>
                       {data.plan.trialDaysLeft !== undefined && data.plan.trialDaysLeft <= 0
                         ? "Escolha um dos planos comerciais para reativar os atendimentos da IA. Seus dados estão seguros."
-                        : "Aproveite todos os recursos do CRM Premium durante o teste. Sem fidelidade e sem cobrança automática."}
+                        : "Aproveite todos os recursos do Profissional durante o teste. Sem fidelidade e sem cobrança automática."}
                     </p>
                   </div>
                 </div>
@@ -2765,7 +2765,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     whiteSpace: "nowrap"
                   }}
                 >
-                  <CreditCard size={15} /> Assinar CRM Premium (R$ 89,90)
+                  <CreditCard size={15} /> Assinar Profissional (R$ 139,90)
                 </button>
               </section>
             )}
@@ -4259,7 +4259,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => openUpgradeRequest("CRM Premium", "Ativar Horários Avançados e Intervalos de Almoço/Pausa")}
+                                    onClick={() => openUpgradeRequest("Profissional", "Ativar Horários Avançados e Intervalos de Almoço/Pausa")}
                                     style={{
                                       padding: "4px 10px",
                                       borderRadius: "8px",
@@ -4271,7 +4271,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                       cursor: "pointer"
                                     }}
                                   >
-                                    🔒 Intervalo / Pausa (CRM Premium)
+                                    🔒 Intervalo / Pausa (Profissional)
                                   </button>
                                 )}
                               </div>
@@ -5001,7 +5001,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openUpgradeRequest("CRM Premium", "Desbloquear Etiquetas Comerciais")}
+                          onClick={() => openUpgradeRequest("Profissional", "Desbloquear Etiquetas Comerciais")}
                           style={{
                             padding: "7px 10px",
                             borderRadius: "8px",
@@ -5014,7 +5014,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             textAlign: "left"
                           }}
                         >
-                          🔒 Etiquetas Comerciais (Disponível no CRM Premium)
+                          🔒 Etiquetas Comerciais (Disponível no Profissional)
                         </button>
                       )}
 
@@ -5069,7 +5069,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openUpgradeRequest("CRM Premium", "Desbloquear Prioridade de Atendimentos")}
+                          onClick={() => openUpgradeRequest("Profissional", "Desbloquear Prioridade de Atendimentos")}
                           style={{
                             padding: "7px 10px",
                             borderRadius: "8px",
@@ -5082,7 +5082,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             textAlign: "left"
                           }}
                         >
-                          🔒 Prioridade dos Atendimentos (Disponível no CRM Premium)
+                          🔒 Prioridade dos Atendimentos (Disponível no Profissional)
                         </button>
                       )}
                     </div>
@@ -5524,10 +5524,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Premium", "Definir Prioridade nos Atendimentos")}
+                                onClick={() => openUpgradeRequest("Profissional", "Definir Prioridade nos Atendimentos")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Prioridade (Premium)
+                                🔒 Prioridade (Profissional)
                               </button>
                             )}
 
@@ -5558,10 +5558,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Premium", "Classificar clientes com Etiquetas Comerciais")}
+                                onClick={() => openUpgradeRequest("Profissional", "Classificar clientes com Etiquetas Comerciais")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Etiquetas (Premium)
+                                🔒 Etiquetas (Profissional)
                               </button>
                             )}
 
@@ -5583,10 +5583,10 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => openUpgradeRequest("CRM Premium", "Registrar Pesquisa de Satisfação (1 a 5 estrelas)")}
+                                onClick={() => openUpgradeRequest("Profissional", "Registrar Pesquisa de Satisfação (1 a 5 estrelas)")}
                                 style={{padding: "4px 10px", borderRadius: "8px", background: "rgba(245,158,11,0.12)", border: "1px dashed #f59e0b", color: "#fcd34d", fontSize: "11px", fontWeight: 700, cursor: "pointer"}}
                               >
-                                🔒 Satisfação (Premium)
+                                🔒 Satisfação (Profissional)
                               </button>
                             )}
                           </div>
@@ -5828,7 +5828,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             onSelectReply={bodyText => setHumanInput(bodyText)}
                             onSaveReply={handleSaveQuickReply}
                             onDeleteReply={handleDeleteQuickReply}
-                            onRequestUpgrade={() => openUpgradeRequest("CRM Premium", "Ativar Respostas Rápidas")}
+                            onRequestUpgrade={() => openUpgradeRequest("Profissional", "Ativar Respostas Rápidas")}
                           />
                           {current.mode === "ai" && (
                             <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#aba8bf", background: "rgba(0, 219, 140, 0.06)", border: "1px solid rgba(0, 219, 140, 0.2)", padding: "6px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
@@ -5892,7 +5892,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                 <TeamOperatorsSection
                   operators={teamOperators}
                   maxOperators={data?.plan?.maxOperators ?? 3}
-                  planName={data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "CRM Premium")}
+                  planName={data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "Profissional")}
                   isSuspended={isSuspended}
                   ownerEmail={data?.viewer?.role === "owner" ? data.viewer.email : undefined}
                   ownerName={currentTenantObj?.name ? `${currentTenantObj.name} (Administrador)` : "Proprietário / Titular"}
@@ -5995,7 +5995,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     {data?.plan?.isTrial && (
                       <button
                         type="button"
-                        onClick={() => openUpgradeRequest("CRM Premium", "Solicitação de ativação do Plano Premium definitivo")}
+                        onClick={() => openUpgradeRequest("Profissional", "Solicitação de ativação do plano mensal escolhido")}
                         style={{
                           padding: "10px 18px",
                           borderRadius: "10px",
@@ -6010,7 +6010,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           cursor: "pointer"
                         }}
                       >
-                        <Crown size={16} color="#f472b6"/> Assinar CRM Premium (R$ 89,90)
+                        <Crown size={16} color="#f472b6"/> Assinar Profissional (R$ 139,90)
                       </button>
                     )}
                   </div>

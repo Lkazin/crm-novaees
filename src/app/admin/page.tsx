@@ -1,4 +1,5 @@
 "use client";
+import { COMMERCIAL_PLANS } from "@/lib/crm/commercial-catalog";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 
@@ -310,142 +311,7 @@ const TECHNICAL_FEATURES_LIST: Array<{ id: FeatureId; name: string; category: st
   { id: "advanced_commercial_filters", name: "Filtros e Análises Comerciais Avançadas", category: "Gestão", description: "Segmentação avançada por período, etiqueta, prioridade e atendente." }
 ];
 
-const DEFAULT_PLANS: PlanItem[] = [
-  {
-    id: "crm-trial",
-    name: "Teste Grátis (7 Dias)",
-    price: "0,00",
-    quotaLimit: 100,
-    maxOperators: 3,
-    maxWhatsAppConnections: 3,
-    isActive: true,
-    description: "Avaliação gratuita de 7 dias com todos os recursos Premium liberados para teste.",
-    allowedFeatures: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours_basic",
-      "quick_replies",
-      "basic_indicators",
-      "business_hours",
-      "commercial_tags",
-      "handoff_summary",
-      "sound_notifications",
-      "model_fallback",
-      "conversation_priority",
-      "satisfaction_survey",
-      "commercial_indicators",
-      "advanced_reports",
-      "satisfaction_analytics",
-      "operator_indicators",
-      "advanced_commercial_filters"
-    ],
-    features: [
-      "7 dias corridos de teste grátis",
-      "Até 100 mensagens da IA no teste",
-      "Até 3 números WhatsApp (3/5 espaços)",
-      "Até 2 operadores humanos",
-      "Todas as funcionalidades Premium disponíveis para teste",
-      "Encerramento automático após 7 dias sem cobrança",
-      "Dados 100% preservados ao final do período"
-    ]
-  },
-  {
-    id: "crm-premium",
-    name: "CRM Premium",
-    price: "89,90",
-    quotaLimit: 1200,
-    maxOperators: 3,
-    maxWhatsAppConnections: 5,
-    isPopular: true,
-    isActive: true,
-    description: "Plano definitivo da NovaesWeb: todas as funcionalidades liberadas, 1.200 mensagens, 5 WhatsApps e 3 operadores.",
-    allowedFeatures: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours_basic",
-      "quick_replies",
-      "basic_indicators",
-      "business_hours",
-      "commercial_tags",
-      "handoff_summary",
-      "sound_notifications",
-      "model_fallback",
-      "conversation_priority",
-      "satisfaction_survey",
-      "commercial_indicators",
-      "advanced_reports",
-      "satisfaction_analytics",
-      "operator_indicators",
-      "advanced_commercial_filters"
-    ],
-    features: [
-      "1.200 mensagens da IA por mês",
-      "Até 5 números WhatsApp simultâneos (5/5 espaços)",
-      "Até 2 operadores humanos",
-      "Todas as funcionalidades liberadas",
-      "Recargas adicionais fixas: R$ 20,00 = 100 mensagens",
-      "Sem divisões em planos Básico, Profissional ou Empresarial"
-    ]
-  },
-  {
-    id: "crm-start",
-    name: "CRM Start",
-    price: "59,90",
-    quotaLimit: 200,
-    maxOperators: 1,
-    maxWhatsAppConnections: 1,
-    isActive: false,
-    description: "Plano legado indisponível para novas assinaturas.",
-    allowedFeatures: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours_basic",
-      "quick_replies",
-      "basic_indicators"
-    ],
-    features: [
-      "200 mensagens da IA por mês",
-      "1 número WhatsApp (1/5 espaços)",
-      "1 operador humano",
-      "Plano legado mantido apenas para contratos ativos anteriores"
-    ]
-  },
-  {
-    id: "crm-business",
-    name: "CRM Business",
-    price: "99,90",
-    quotaLimit: 600,
-    maxOperators: 3,
-    maxWhatsAppConnections: 3,
-    isActive: false,
-    description: "Plano legado indisponível para novas assinaturas.",
-    allowedFeatures: [
-      "ai_chat",
-      "human_handoff",
-      "simulator",
-      "business_hours_basic",
-      "quick_replies",
-      "basic_indicators",
-      "business_hours",
-      "commercial_tags",
-      "handoff_summary",
-      "sound_notifications",
-      "model_fallback",
-      "conversation_priority",
-      "satisfaction_survey",
-      "commercial_indicators"
-    ],
-    features: [
-      "600 mensagens da IA por mês",
-      "Até 3 números WhatsApp",
-      "Até 3 operadores humanos",
-      "Plano legado mantido apenas para contratos ativos anteriores"
-    ]
-  }
-];
+const DEFAULT_PLANS: PlanItem[] = COMMERCIAL_PLANS.map(plan => fromPublishedPlan(plan));
 
 export default function AdminCRM() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -762,9 +628,9 @@ export default function AdminCRM() {
   const [storeName, setStoreName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [planName, setPlanName] = useState("CRM Premium");
-  const [planPrice, setPlanPrice] = useState("89,90");
-  const [quotaLimit, setQuotaLimit] = useState(1200);
+  const [planName, setPlanName] = useState("Essencial");
+  const [planPrice, setPlanPrice] = useState("79,80");
+  const [quotaLimit, setQuotaLimit] = useState(300);
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -917,6 +783,7 @@ export default function AdminCRM() {
   // Change Plan Modal
   const [changePlanModalOpen, setChangePlanModalOpen] = useState(false);
   const [selectedClientForPlan, setSelectedClientForPlan] = useState<Client | null>(null);
+  const [assignBillingCycle, setAssignBillingCycle] = useState<"monthly" | "annual">("monthly");
   const [targetPlanToAssign, setTargetPlanToAssign] = useState<PlanItem>(DEFAULT_PLANS[0]);
   const [assigningPlan, setAssigningPlan] = useState(false);
   const [customQuotaChecked, setCustomQuotaChecked] = useState(false);
@@ -1731,9 +1598,9 @@ export default function AdminCRM() {
     setError("");
     setNotice("");
     try {
-      const isTrial = planName === "Teste Grátis (7 Dias)" || planName.includes("Teste Grátis");
+      const isTrial = planName === "Grátis 7 dias" || planName === "Teste Grátis (7 Dias)" || planName.includes("Teste Grátis");
       const selectedPlanObj = plans.find(p => p.name === planName);
-      const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-premium");
+      const planId = isTrial ? "crm-trial" : (selectedPlanObj?.id || "crm-essential");
       const selectedCust = customers.find(c => c.id === selectedCustomerId);
       const effectiveUserId = selectedUserId || selectedCust?.loginUserId || undefined;
       const effectiveOwnerName =
@@ -1760,7 +1627,7 @@ export default function AdminCRM() {
           agentName,
           isTrial,
           planId,
-          planName: isTrial ? "Teste Grátis (7 Dias)" : planName,
+          planName: isTrial ? "Grátis 7 dias" : planName,
           planPrice: isTrial ? "0,00" : planPrice,
           dueDate,
           paymentStatus: isTrial ? "paid" : paymentStatus,
@@ -1999,8 +1866,8 @@ export default function AdminCRM() {
   };
 
   const handleDeletePlan = async (plan: PlanItem) => {
-    if (plan.id === "crm-trial" || plan.id === "crm-premium") {
-      setError("Os planos oficiais base (Teste Grátis e CRM Premium) são obrigatórios e não podem ser excluídos.");
+    if (COMMERCIAL_PLANS.some(p => p.id === plan.id)) {
+      setError("Os planos oficiais do sistema não podem ser excluídos.");
       return;
     }
     const enrolled = clientCountsMap[plan.id] ?? 0;
@@ -2063,6 +1930,7 @@ export default function AdminCRM() {
       setCustomQuotaValue(cur.quotaLimit);
       setCustomQuotaReason("");
     }
+    setAssignBillingCycle("monthly");
     setChangePlanModalOpen(true);
   };
 
@@ -2080,6 +1948,7 @@ export default function AdminCRM() {
           planId: targetPlanToAssign.id,
           planName: targetPlanToAssign.name,
           planPrice: targetPlanToAssign.price,
+          billingCycle: assignBillingCycle,
           quotaLimit: targetPlanToAssign.quotaLimit,
           customQuotaOverride: customQuotaChecked ? Number(customQuotaValue) : null,
           exceptionReason: customQuotaChecked ? customQuotaReason.trim() : null
@@ -4836,7 +4705,7 @@ export default function AdminCRM() {
                       value={planName}
                       onChange={e => {
                         if (e.target.value === "crm-trial" || e.target.value === "Teste Grátis (7 Dias)") {
-                          setPlanName("Teste Grátis (7 Dias)");
+                          setPlanName("Grátis 7 dias");
                           setPlanPrice("0,00");
                           setQuotaLimit(100);
                           const trialExp = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -4853,7 +4722,7 @@ export default function AdminCRM() {
                       }}
                       style={{width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #443c5e", background: "#121222", color: "white"}}
                     >
-                      <option value="Teste Grátis (7 Dias)">🎁 Teste Grátis (7 Dias — 100 mensagens IA)</option>
+                      <option value="Teste Grátis (7 Dias)">🎁 Teste Grátis (7 Dias — 50 respostas IA)</option>
                       {plans.filter(p => p.id !== "crm-trial" && p.isActive !== false).map(p => (
                         <option key={p.id} value={p.name}>
                           {p.name} — R$ {p.price}/mês ({p.quotaLimit.toLocaleString("pt-BR")} msgs)
@@ -5171,7 +5040,7 @@ export default function AdminCRM() {
                             {client.plan.isTrial ? "Gratuito (7 dias)" : `R$ ${client.plan.price}/mês`}
                           </strong>
                           <small style={{color: "#8e87a2", fontSize: "11px"}}>
-                            {client.plan.isTrial ? "100 mensagens da IA de teste" : `${client.plan.customQuotaOverride || client.plan.quotaLimit || 200} mensagens IA`}
+                            {client.plan.isTrial ? "50 respostas da IA de teste" : `${client.plan.customQuotaOverride || client.plan.quotaLimit || 200} mensagens IA`}
                           </small>
                         </div>
 
@@ -6594,7 +6463,7 @@ export default function AdminCRM() {
                   >
                     Cancelar
                   </button>
-                  {!isCreatingNewPlan && editingPlan.id !== "crm-trial" && editingPlan.id !== "crm-premium" && (
+                  {!isCreatingNewPlan && !COMMERCIAL_PLANS.some(p => p.id === editingPlan.id) && (
                     <button
                       type="button"
                       style={{
@@ -7055,7 +6924,11 @@ export default function AdminCRM() {
                 >
                   Cancelar
                 </button>
-                <button
+                <label style={{display:"grid",gap:8,color:"#d8d2eb"}}>Cobrança do contrato
+<select value={assignBillingCycle} onChange={e=>setAssignBillingCycle(e.target.value as "monthly" | "annual")} style={{padding:10,background:"#18142a",color:"white",border:"1px solid #635579",borderRadius:8}}><option value="monthly">Mensal</option><option value="annual">Anual — pagamento único, desconto de 20%</option></select>
+{assignBillingCycle === "annual" && <small>O contrato fica pendente até confirmar o pagamento. A confirmação libera 12 meses, com franquia mensal.</small>}
+</label>
+<button
                   type="button"
                   className="op-primary"
                   disabled={assigningPlan}

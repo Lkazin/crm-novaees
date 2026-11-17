@@ -1,4 +1,5 @@
 "use client";
+import { AI_USAGE_DESCRIPTION, RECHARGE_DESCRIPTION } from "@/lib/crm/commercial-catalog";
 import React, { useState } from "react";
 import { Copy,
   Smartphone, LockKeyhole, CheckCircle2, Sparkles, Users, UserPlus, Trash2,
@@ -66,66 +67,23 @@ export function CommercialPlansComparison({plans,featureStates,currentPlanId,onR
   plans: CommercialPlanItem[]; featureStates: Record<string,FeatureStateItem>; currentPlanId?: string;
   onRequestUpgrade: (plan:string,reason:string)=>void;
 }) {
-  const isPremium = currentPlanId === "crm-premium";
   return <section className="op-card" aria-labelledby="commercial-plans-heading">
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "12px" }}>
-      <div>
-        <h3 id="commercial-plans-heading" style={{ margin: 0, fontSize: "18px", fontWeight: 800 }}>Planos Oficiais da Plataforma</h3>
-        <p style={{ margin: "4px 0 0", color: "#aba8bf", fontSize: "13px" }}>
-          Oferecemos apenas dois modelos transparentes: <strong>Teste Grátis (7 Dias)</strong> e o <strong>CRM Premium Definitivo</strong>.
-        </p>
-      </div>
-      {isPremium && (
-        <span style={{
-          padding: "6px 14px",
-          borderRadius: "999px",
-          background: "rgba(0, 219, 140, 0.15)",
-          border: "1px solid rgba(0, 219, 140, 0.45)",
-          color: "#00db8c",
-          fontWeight: 800,
-          fontSize: "12px",
-          display: "flex",
-          alignItems: "center",
-          gap: "6px"
-        }}>
-          ⭐ Você tem o Plano Máximo (CRM Premium)
-        </span>
-      )}
-    </div>
-    {!plans.length ? <p role="status">O catálogo de planos está indisponível no momento. Tente novamente antes de solicitar uma mudança.</p> : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,250px),1fr))",gap:16}}>
-      {plans.filter(p => p.id === "crm-trial" || p.id === "crm-premium").map(plan => <article key={plan.id} data-testid={`commercial-plan-${plan.id}`} style={{
-        padding: 20,
-        border: plan.id === "crm-premium" ? "2px solid rgba(236, 72, 153, 0.6)" : "1px solid #514163",
-        borderRadius: 14,
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        background: plan.id === "crm-premium" ? "rgba(236, 72, 153, 0.05)" : "transparent"
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <h3 id="commercial-plans-heading">Escolha seu plano</h3>
+    <p style={{color:"#aba8bf"}}>Grátis 7 dias, Essencial, Profissional e Empresarial. Cobrança mensal, com limites claros.</p>
+    {!plans.length ? <p role="status">O catálogo está indisponível. Tente novamente antes de solicitar uma mudança.</p> :
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,235px),1fr))",gap:16}}>
+        {plans.map(plan => <article key={plan.id} data-testid={`commercial-plan-${plan.id}`} style={{padding:20,border:plan.id === "crm-professional" ? "2px solid #8b5cf6" : "1px solid #514163",borderRadius:14,display:"flex",flexDirection:"column",gap:12,background:plan.id === "crm-professional" ? "rgba(139,92,246,0.07)" : "transparent"}}>
+          {plan.id === "crm-professional" && <span style={{color:"#c4b5fd",fontWeight:800,fontSize:12}}>MAIS POPULAR</span>}
           <h4 style={{fontSize:19,margin:0}}>{plan.name}</h4>
-          {plan.id === "crm-premium" && (
-            <span style={{ fontSize: "11px", fontWeight: 800, background: "rgba(236,72,153,0.2)", color: "#f472b6", padding: "2px 8px", borderRadius: "999px" }}>
-              RECOMENDADO
-            </span>
-          )}
-        </div>
-        <strong style={{fontSize:25}}>{plan.isTrial ? "Grátis" : `R$ ${plan.price}`}<small style={{fontSize:12,fontWeight:400}}>{plan.isTrial ? " por 7 dias" : "/mês"}</small></strong>
-        <p style={{margin:0,fontSize:13}}>{plan.quotaLimit.toLocaleString("pt-BR")} mensagens da IA {plan.isTrial ? "no teste" : "por mês"}<br />{plan.maxWhatsappConnections} WhatsApp(s) simultâneos · {plan.maxOperators} operador(es)</p>
-        <ul style={{paddingLeft:18,fontSize:12,lineHeight:1.8}}>{Object.values(featureStates).map(feature => <li key={feature.id} style={{color:plan.features.includes(feature.id)?"#e9dcf7":"#b0a3bd"}}>{plan.features.includes(feature.id) ? "✓ " : "🔒 "}{feature.name}</li>)}</ul>
-        {currentPlanId === plan.id ? (
-          <div style={{ marginTop: "auto", padding: "8px 12px", borderRadius: "8px", background: "rgba(0,219,140,0.12)", border: "1px solid #00db8c", color: "#85e6b5", textAlign: "center", fontWeight: 700, fontSize: "13px" }}>
-            ✅ Seu plano atual ativo
-          </div>
-        ) : plan.isTrial ? (
-          <p style={{fontSize:12,marginTop:"auto",color:"#8e87a2"}}>Teste inicial para novos clientes. Sem fidelidade.</p>
-        ) : (
-          <button type="button" className="op-primary" style={{marginTop:"auto"}} onClick={()=>onRequestUpgrade(plan.id,`Interesse no plano ${plan.name}`)}>
-            Assinar {plan.name} (R$ {plan.price}/mês)
-          </button>
-        )}
-      </article>)}
-    </div>}
+          <strong style={{fontSize:28}}>R$ {plan.price}<small style={{fontSize:12,fontWeight:400}}>{plan.isTrial ? " /7 dias" : "/mês"}</small></strong>
+          <p style={{margin:0,fontSize:13}}>{plan.quotaLimit.toLocaleString("pt-BR")} respostas da IA {plan.isTrial ? "no teste" : "por mês"}<br />{plan.maxWhatsappConnections} WhatsApp(s) · {plan.maxOperators} acesso(s), incluindo o titular</p>
+          <ul style={{paddingLeft:18,fontSize:12,lineHeight:1.8}}>{Object.values(featureStates).map(feature => <li key={feature.id} style={{color:plan.features.includes(feature.id)?"#e9dcf7":"#8e87a2"}}>{plan.features.includes(feature.id) ? "✓ " : "— "}{feature.name}</li>)}</ul>
+          <p style={{fontSize:12}}>{plan.id === "crm-enterprise" ? "Suporte prioritário + auxílio na configuração" : plan.id === "crm-professional" ? "Suporte prioritário" : "Suporte padrão"}</p>
+          {currentPlanId === plan.id ? <strong style={{marginTop:"auto",color:"#85e6b5"}}>Seu plano atual</strong> : plan.isTrial ? <p style={{fontSize:12,marginTop:"auto"}}>Teste inicial de 7 dias, sem cartão de crédito.</p> : <button type="button" className="op-primary" style={{marginTop:"auto",...(plan.id === "crm-professional" ? {background:"linear-gradient(110deg,#7c3aed,#2563eb)"} : {})}} onClick={()=>onRequestUpgrade(plan.id,`Interesse no plano ${plan.name}`)}>Escolher {plan.name}</button>}
+        </article>)}
+      </div>}
+    <p style={{marginTop:20}}><strong>{RECHARGE_DESCRIPTION}</strong></p>
+    <p style={{fontSize:12,color:"#aba8bf"}}>{AI_USAGE_DESCRIPTION} Os limites de operadores incluem o titular.</p>
   </section>;
 }
 
@@ -141,7 +99,7 @@ export function featureAvailable(states: Record<string, FeatureStateItem>, id: s
 }
 
 export function commercialPlanId(value: string): string {
-  const aliases: Record<string,string> = {"CRM Start":"crm-start","CRM Business":"crm-business","CRM Premium":"crm-premium"};
+  const aliases: Record<string,string> = {"Essencial":"crm-essential","Profissional":"crm-professional","Empresarial":"crm-enterprise"};
   return aliases[value] || value;
 }
 
@@ -412,16 +370,16 @@ export function WhatsappFiveSlotsGrid({
                       🔒 Espaço Bloqueado
                     </button>
                     {planLocked && (
-                      maxConnections >= 3 ? (
+                      maxConnections >= 5 ? (
                         <span style={{ fontSize: "11px", color: "#a59cb8", textAlign: "center", padding: "4px" }}>
-                          Seu plano CRM Premium inclui até 3 WhatsApps simultâneos ativos.
+                          Seu plano inclui até 5 WhatsApps simultâneos ativos.
                         </span>
                       ) : (
                         <button
                           type="button"
                           onClick={e => {
                             e.stopPropagation();
-                            onRequestUpgrade("crm-premium", `Desbloquear WhatsApp ${s.slot} (CRM Premium)`);
+                            onRequestUpgrade(s.slot <= 3 ? "crm-professional" : "crm-enterprise", `Desbloquear WhatsApp ${s.slot}`);
                           }}
                           className="op-primary"
                           style={{
@@ -436,7 +394,7 @@ export function WhatsappFiveSlotsGrid({
                             gap: "6px"
                           }}
                         >
-                          🔓 Assinar CRM Premium
+                          🔓 Assinar Profissional
                         </button>
                       )
                     )}
@@ -678,7 +636,7 @@ export function TeamOperatorsSection({
   const employeeOperators = operators.filter(o => (o.role as string) !== "owner");
   const activeEmployeeOperators = employeeOperators.filter(o => o.status === "active");
   // Total de vagas de equipe: se maxOperators >= 3, são 2 vagas de atendentes (+ 1 titular).
-  const teamLimit = Math.max(1, maxOperators > 1 ? maxOperators - 1 : maxOperators);
+  const teamLimit = Math.max(0, maxOperators - 1);
   const totalUsed = activeEmployeeOperators.length;
   const limitReached = totalUsed >= teamLimit;
 
@@ -843,16 +801,14 @@ export function TeamOperatorsSection({
                 Limite de {teamLimit} operador(es) da equipe atingido ({planName})
               </strong>
               <span style={{ color: "#d1c8e6", fontSize: "13px" }}>
-                {planName.toLowerCase().includes("premium")
-                  ? `Sua equipe atingiu o limite de ${teamLimit} operadores adicionais permitidos no plano CRM Premium (+ 1 titular da conta).`
-                  : `O plano ${planName} permite até ${teamLimit} operadores na sua equipe além do titular da conta.`}
+                {`O plano ${planName} permite ${maxOperators} acesso(s) no total, incluindo o titular.`}
               </span>
             </div>
           </div>
-          {!planName.toLowerCase().includes("premium") && (
+          {planName !== "Empresarial" && (
             <button
               type="button"
-              onClick={() => onRequestUpgrade("CRM Premium", "Expandir limite de operadores da equipe")}
+              onClick={() => onRequestUpgrade(maxOperators < 10 ? "Profissional" : "Empresarial", "Expandir limite de operadores da equipe")}
               className="op-primary"
               style={{ padding: "10px 18px", borderRadius: "10px", fontWeight: 800, fontSize: "13px" }}
             >
@@ -1380,7 +1336,7 @@ export function ReportsAndIndicatorsSection({reports,loadingReports,onRefresh,on
         <p>Transferências IA → humano: <strong>{comm.handoffCount}</strong></p><p>Taxa de transferência: <strong>{comm.handoffRate}%</strong></p><p>Pesquisas respondidas: <strong>{comm.totalSurveys}</strong> · Nota média: <strong>{comm.avgSatisfaction}</strong></p>
       </>}
     </section>
-    <section className="op-card"><h3>Relatórios Avançados — CRM Premium</h3>
+    <section className="op-card"><h3>Relatórios Avançados — Profissional</h3>
       {!featureAvailable(featureStates,"advanced_reports") || !adv ? <FeatureUnavailable feature={featureStates.advanced_reports} onUpgrade={onRequestUpgrade}/> : <>
         {featureAvailable(featureStates,"satisfaction_analytics") ? <><h4>Análise de satisfação</h4><p>CSAT: <strong>{adv.csatPercent}%</strong></p>{Object.entries(adv.starDistribution).map(([rating,count])=><p key={rating}>{rating} estrelas: <strong>{count}</strong></p>)}</> : <FeatureUnavailable feature={featureStates.satisfaction_analytics} onUpgrade={onRequestUpgrade}/>}
         {featureAvailable(featureStates,"operator_indicators") ? <><h4>Indicadores por atendente</h4>{adv.operatorMetrics.length ? adv.operatorMetrics.map(op=><div key={op.operatorId}><strong>{op.name}</strong><p>{op.conversationsHandled} conversas · {op.surveysCount} avaliações · Nota: {op.avgRating ?? "—"}</p></div>) : <p>Nenhum atendente cadastrado.</p>}</> : <FeatureUnavailable feature={featureStates.operator_indicators} onUpgrade={onRequestUpgrade}/>}
@@ -1521,7 +1477,7 @@ export function UpgradeRequestModal({
   onClose: () => void;
   onSubmitUpgrade: (requestedPlan: string, notes: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
-  const [selectedPlan, setSelectedPlan] = useState(commercialPlanId(initialPlan || "CRM Premium"));
+  const [selectedPlan, setSelectedPlan] = useState(commercialPlanId(initialPlan || "Profissional"));
   const [notes, setNotes] = useState(initialNotes || "");
   const [sending, setSending] = useState(false);
   const [doneMsg, setDoneMsg] = useState("");
@@ -1531,7 +1487,7 @@ export function UpgradeRequestModal({
 
   React.useEffect(() => {
     if (open) {
-      setSelectedPlan(commercialPlanId(initialPlan || "CRM Premium"));
+      setSelectedPlan(commercialPlanId(initialPlan || "Profissional"));
       setNotes(initialNotes || "");
       setDoneMsg("");
       setCopiedPix(false);
@@ -1559,7 +1515,7 @@ export function UpgradeRequestModal({
     setSending(true);
     setSubmitError("");
     try {
-      const basePrice = chosenPlan?.price || "89,90";
+      const basePrice = chosenPlan?.price || "139,90";
     const basePriceNum = parseFloat(basePrice.replace(",", "."));
     const finalTotalDisplay = wantsVipOnboarding
       ? (basePriceNum + 197).toFixed(2).replace(".", ",")
@@ -1591,7 +1547,7 @@ export function UpgradeRequestModal({
       <div role="dialog" aria-modal="true" aria-label="Solicitar upgrade de plano" className="op-card" style={{ maxWidth: "520px", width: "100%", background: "#18142a", border: "1px solid rgba(236, 72, 153, 0.4)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0, fontSize: "18px", color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
-            <Sparkles size={20} color="#ec4899" /> Solicitar Upgrade para CRM Premium
+            <Sparkles size={20} color="#ec4899" /> Escolher plano mensal
           </h3>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "18px", cursor: "pointer" }}>✕</button>
         </div>
@@ -1602,7 +1558,7 @@ export function UpgradeRequestModal({
             <div style={{ padding: "16px", borderRadius: "12px", background: "rgba(0,219,140,0.15)", border: "1px solid #00db8c", color: "#d1fae5", fontSize: "14px", lineHeight: 1.5 }}>
               ✅ <strong>{doneMsg}</strong>
               <p style={{ margin: "8px 0 0", fontSize: "12.5px", color: "#a7f3d0" }}>
-                Seus dados continuam 100% preservados. O administrador Master verificará o comprovante e ativará seu CRM Premium no painel.
+                Seus dados continuam 100% preservados. O administrador Master verificará o comprovante e ativará o plano escolhido no painel.
               </p>
             </div>
             <button type="button" onClick={onClose} className="op-primary" style={{ padding: "10px", borderRadius: "10px", fontWeight: 700 }}>
@@ -1673,7 +1629,7 @@ export function UpgradeRequestModal({
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "13px", fontWeight: 700, color: "#fff" }}>
-                  Valor do Pagamento PIX: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {wantsVipOnboarding ? (parseFloat((chosenPlan?.price || "89,90").replace(",", ".")) + 197).toFixed(2).replace(".", ",") : (chosenPlan?.price || "89,90")}</strong>{wantsVipOnboarding ? " (Plano + Implantação VIP)" : "/mês"}
+                  Valor do Pagamento PIX: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {wantsVipOnboarding ? (parseFloat((chosenPlan?.price || "139,90").replace(",", ".")) + 197).toFixed(2).replace(".", ",") : (chosenPlan?.price || "139,90")}</strong>{wantsVipOnboarding ? " (Plano + Implantação VIP)" : "/mês"}
                 </span>
                 <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px", background: "rgba(236,72,153,0.2)", color: "#f472b6", fontWeight: 700 }}>
                   Aprovação pelo Master
@@ -1709,7 +1665,7 @@ export function UpgradeRequestModal({
               </div>
 
               <p style={{ margin: 0, fontSize: "12px", color: "#b9b4cc", lineHeight: 1.4 }}>
-                ℹ️ <strong>Como funciona a liberação:</strong> Realize o PIX de R$ {chosenPlan?.price || "89,90"} e confirme a solicitação abaixo. O administrador Master irá conferir o recebimento no banco e liberar sua conta Premium imediatamente.
+                ℹ️ <strong>Como funciona a liberação:</strong> Realize o PIX de R$ {chosenPlan?.price || "139,90"} e confirme a solicitação abaixo. O administrador Master irá conferir o recebimento no banco e ativar o plano escolhido após a confirmação.
               </p>
             </div>
 

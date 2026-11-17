@@ -7,7 +7,8 @@ import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText, EvolutionSendError, sendPresence, typingDurationFor, holdTypingPresence } from "./evolution";
 import { splitIntoBubbles, bubbleDelayMs } from "./bubbles";
-import { auditAiReply } from "./commercial-guard";
+import { sanitizeAiReply } from "./commercial-guard";
+import { selectKnowledgeArticles } from "./knowledge";
 import { recordQualityEvent } from "@/lib/crm/quality-events";
 import {
   persistOutboundInSupabase,
@@ -25,6 +26,15 @@ export type ProcessResult = {
 };
 
 export const MAX_AI_REPLIES_PER_24H_WINDOW = 25;
+
+/**
+ * Mensagem enviada quando a IA falha (provedor fora, resposta vazia, contexto
+ * indisponivel). Antes o cliente ficava em silencio e achava que ninguem estava
+ * do outro lado; agora recebe uma resposta honesta e o atendimento vai para a
+ * equipe.
+ */
+export const AI_FAILURE_REPLY =
+  "Tive um problema técnico aqui para consultar essa informação. Já chamei uma pessoa da equipe para continuar com você 😊";
 
 export function getBrazilMonthKey(nowDate: Date = new Date()): string {
   try {
@@ -153,7 +163,7 @@ export function isWithinOperatingHours(
   }
 }
 
-async function getStoreAiContext(instanceName: string): Promise<{
+async function getStoreAiContext(instanceName: string, query?: string): Promise<{
   context?: StoreAiContext;
   isBlocked?: boolean;
   blockedReason?: string;
@@ -188,7 +198,7 @@ async function getStoreAiContext(instanceName: string): Promise<{
       fetch(`${url}/rest/v1/crm_tenants?id=eq.${tenantId}&select=name,status`, { headers, cache: "no-store" }),
       fetch(`${url}/rest/v1/crm_agents?tenant_id=eq.${tenantId}&limit=1`, { headers, cache: "no-store" }),
       fetch(
-        `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
+        `${url}/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=50`,
         { headers, cache: "no-store" }
       ),
       getEffectiveTenantPlan(tenantId),
@@ -212,25 +222,18 @@ async function getStoreAiContext(instanceName: string): Promise<{
     }
 
     const articles = rArticles.ok ? ((await rArticles.json()) as Array<{ title: string; body: string }>) : [];
-    // Um artigo grande (4.400 chars num caso real) inflava o prompt em ~1.100 tokens
-    // e o custo e 98% de entrada. O teto por artigo e um total garantem o contexto
-    // util sem pagar por texto que a IA nao vai ler inteiro.
-    const ARTICLE_CHARS = 2000;
-    const TOTAL_CHARS = 6000;
-    let budget = TOTAL_CHARS;
-    const storeInfo = Array.isArray(articles)
-      ? articles
-          .map(a => {
-            if (budget <= 0) return "";
-            const body = (a.body ?? "").trim();
-            const limite = Math.min(ARTICLE_CHARS, budget);
-            const trecho = body.length > limite ? `${body.slice(0, limite).trimEnd()}…` : body;
-            budget -= trecho.length;
-            return `### ${a.title}\n${trecho}`;
-          })
-          .filter(Boolean)
-          .join("\n\n")
-      : "";
+    // Selecao por relevancia (BM25 simplificado) em vez de so recencia: o preco
+    // no fim de um artigo longo nao some mais, e editar um artigo irrelevante
+    // nao empurra os outros para fora do orcamento de 6.000 caracteres.
+    const knowledge = selectKnowledgeArticles(articles, query);
+    if (knowledge.skipped.length > 0 || knowledge.truncated.length > 0) {
+      console.warn(
+        `[crm-ai] base de conhecimento: ${knowledge.used}/${knowledge.total} artigos no prompt`,
+        knowledge.truncated.length > 0 ? `cortados: ${knowledge.truncated.join(", ")}` : "",
+        knowledge.skipped.length > 0 ? `fora: ${knowledge.skipped.join(", ")}` : ""
+      );
+    }
+    const storeInfo = knowledge.text;
 
     let operatingHours: StoreAiContext["operatingHours"] = undefined;
     let officialLinks: Record<string, string> | undefined = undefined;
@@ -347,7 +350,7 @@ export async function processWebhook(
     wait?: (ms: number) => Promise<void>;
     sendPresence?: typeof sendPresence;
     maySend?: (incoming: Incoming) => Promise<boolean>;
-    getStoreContext?: (instanceName: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
+    getStoreContext?: (instanceName: string, query?: string) => Promise<Awaited<ReturnType<typeof getStoreAiContext>>>;
     fetchConvContext?: typeof fetchConversationContext;
     handoff?: typeof handoffToHuman;
     nowDate?: Date;
@@ -364,7 +367,7 @@ export async function processWebhook(
 
   if (!matchesAllowedNumber(incoming.number, cfg.allowedNumber)) return { status: "ignored", reason: "number_not_allowed" };
   if (!cfg.sendEnabled) return { status: "disabled", reason: "reply_switch_off" };
-  const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance);
+  const storeCtx = await (deps.getStoreContext ?? getStoreAiContext)(incoming.instance, incoming.text);
   const {
     context = {},
     isBlocked,
@@ -609,30 +612,46 @@ export async function processWebhook(
         } catch {
           // Falha transitória de presença visual não deve impedir o atendimento
         }
-        const rawAnswer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context);
-        const answer = (rawAnswer ?? "").trim();
-        if (!answer) {
+        const rawAnswer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context).catch((err: unknown) => {
+          // Provedor fora, timeout ou resposta vazia: o cliente nao pode ficar
+          // no silencio. Loga o motivo e cai na mensagem de fallback abaixo.
+          console.error("[crm-ai] falha ao gerar resposta:", err instanceof Error ? err.message : String(err));
+          return "";
+        });
+        const generated = (rawAnswer ?? "").trim();
+        if (!generated) {
           try { stopTyping?.(); } catch { /* ignore */ }
           stopTyping = null;
-          return { status: "disabled", reason: "empty_ai_reply" };
+          await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
+          await markItemsDone();
+          try {
+            await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
+          } catch (err) {
+            console.error("[crm-ai] fallback de falha enviado mas nao persistido:", err instanceof Error ? err.message : String(err));
+          }
+          return { status: "sent", reason: "ai_failure_fallback" };
         }
-        // Guarda comercial: avalia a resposta ANTES do envio. O evento e gravado
-        // sempre que houver violacao, para o Painel Master mostrar fato, nao
-        // estimativa. Nao bloqueia o envio: bloquear deixaria o cliente sem
-        // resposta, e a regra e nao prejudicar o atendimento que ja funciona.
+        // Guarda comercial: avalia a resposta ANTES do envio. Preco fora da base
+        // troca a resposta inteira por uma confirmacao humana; link inventado e
+        // removido do texto. Toda violacao vira evento de qualidade.
+        let answer = generated;
         try {
-          const violacoes = auditAiReply({
-            reply: answer,
+          const sanitized = sanitizeAiReply({
+            reply: generated,
             allowedText: context?.storeInfo ?? "",
             officialLinks: context?.officialLinks
           });
-          for (const kind of violacoes) {
+          answer = sanitized.reply;
+          for (const kind of sanitized.violations) {
             await recordQualityEvent({
               tenantId,
               conversationId: convContext.conversationId,
               kind,
-              detail: { replyChars: answer.length }
+              detail: { replyChars: generated.length, blocked: sanitized.blocked, removedUrls: sanitized.removedUrls.length }
             });
+          }
+          if (sanitized.blocked) {
+            console.warn("[crm-ai] resposta bloqueada pela guarda comercial:", sanitized.violations.join(","));
           }
         } catch {
           // Metrica nunca derruba atendimento.
@@ -725,11 +744,33 @@ export async function processWebhook(
                 await performEscalation(extraEscalation, extraText, extraItems);
               } else {
                 await markItemsDone(extraItems);
-                const rawFollowUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context);
-                const followUp = (rawFollowUp ?? "").trim();
+                const rawFollowUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context).catch((err: unknown) => {
+                  console.error("[crm-ai] falha no follow-up:", err instanceof Error ? err.message : String(err));
+                  return "";
+                });
+                // O follow-up passa pelos mesmos controles da resposta principal:
+                // guarda comercial e divisao em bolhas. Antes ele saia cru, sem
+                // auditoria e num bloco unico.
+                const followUpGuard = sanitizeAiReply({
+                  reply: (rawFollowUp ?? "").trim(),
+                  allowedText: context?.storeInfo ?? "",
+                  officialLinks: context?.officialLinks
+                });
+                for (const kind of followUpGuard.violations) {
+                  await recordQualityEvent({
+                    tenantId,
+                    conversationId: convContext.conversationId,
+                    kind,
+                    detail: { replyChars: (rawFollowUp ?? "").length, blocked: followUpGuard.blocked, followUp: true }
+                  });
+                }
+                const followUp = followUpGuard.reply.trim();
                 if (followUp) {
-                  await (deps.send ?? sendText)(incoming.number, followUp, cfg, incoming.instance);
-                  await persistOutboundInSupabase(incoming.instance, incoming.number, followUp);
+                  const followUpBubbles = splitIntoBubbles(followUp);
+                  for (const bubble of followUpBubbles) {
+                    await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
+                  }
+                  await persistOutboundInSupabase(incoming.instance, incoming.number, followUpBubbles.join("\n\n"));
                 }
               }
             }

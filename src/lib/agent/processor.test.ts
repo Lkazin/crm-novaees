@@ -2,7 +2,7 @@ import { memoryAttendanceQuota } from "../crm/attendance-quota.fixture";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentConfig } from "./config";
-import { processWebhook as processWebhookActual, getBrazilMonthKey } from "./processor";
+import { processWebhook as processWebhookActual, getBrazilMonthKey, AI_FAILURE_REPLY } from "./processor";
 import { EvolutionSendError } from "./evolution";
 
 const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
@@ -354,39 +354,38 @@ test("desliga 'digitando...' (stopTyping) quando maySend bloqueia apos geracao, 
     assert.equal(sent, 0);
   }
 
-  // 2. generate lanca erro
+  // 2. generate lanca erro -> desliga digitando e envia fallback honesto
   {
     const db = fakeRedis();
     let stopped = 0;
-    let sent = 0;
-    await assert.rejects(
-      processWebhook(payload, cfg, {
-        redis: db as never,
-        holdTyping: async () => () => { stopped++; },
-        generate: async () => { throw new Error("llm_timeout"); },
-        send: async () => { sent++; },
-      }),
-      /llm_timeout/
-    );
+    const sentTexts: string[] = [];
+    const result = await processWebhook(payload, cfg, {
+      redis: db as never,
+      holdTyping: async () => () => { stopped++; },
+      generate: async () => { throw new Error("llm_timeout"); },
+      send: async (_number, text) => { sentTexts.push(text); },
+    });
+    assert.equal(result.status, "sent");
+    assert.equal(result.reason, "ai_failure_fallback");
     assert.equal(stopped, 1);
-    assert.equal(sent, 0);
+    assert.deepEqual(sentTexts, [AI_FAILURE_REPLY]);
   }
 
-  // 3. generate retorna vazio
+  // 3. generate retorna vazio -> desliga digitando e envia fallback honesto
   {
     const db = fakeRedis();
     let stopped = 0;
-    let sent = 0;
+    const sentTexts: string[] = [];
     const result = await processWebhook(payload, cfg, {
       redis: db as never,
       holdTyping: async () => () => { stopped++; },
       generate: async () => "   ",
-      send: async () => { sent++; },
+      send: async (_number, text) => { sentTexts.push(text); },
     });
-    assert.equal(result.status, "disabled");
-    assert.equal(result.reason, "empty_ai_reply");
+    assert.equal(result.status, "sent");
+    assert.equal(result.reason, "ai_failure_fallback");
     assert.equal(stopped, 1);
-    assert.equal(sent, 0);
+    assert.deepEqual(sentTexts, [AI_FAILURE_REPLY]);
   }
 });
 

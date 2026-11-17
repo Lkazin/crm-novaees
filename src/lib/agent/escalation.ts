@@ -45,6 +45,7 @@ function normalizePhoneticTypos(norm: string): string {
     .replace(/\bpecim(o|a)\b/g, "pessim$1")
     .replace(/\bpesim(o|a)\b/g, "pessim$1")
     .replace(/\berad(o|a)\b/g, "errad$1")
+    .replace(/\brembol[cs](o|ar)\b/g, "reembols$1")
     .replace(/\breembolc(o|ar)\b/g, "reembols$1")
     .replace(/\bextorn(o|ar|a)\b/g, "estorn$1")
     .replace(/\bprocom\b/g, "procon")
@@ -68,20 +69,25 @@ export function detectCustomerEscalation(text: string): EscalationResult {
   const norm = normalizePhoneticTypos(normalizeText(text));
 
   // 1. Legal / Regulatory / Authorities (Highest urgency)
-  const legalRegex = /\b(procon|policia|delegacia|boletim de ocorrencia|process(o|ar)|advogad(o|a)|juizado|pequenas causas|patrulha do consumidor|denuncia(r)?|denunciando)\b/;
-  if (legalRegex.test(norm)) {
+  // "processo" e "denuncia" sozinhos davam falso positivo ("processo de entrega",
+  // "denunciei um erro no cadastro"). Aqui so entra ameaca real.
+  const legalRegex = /\b(procon|policia|delegacia|boletim de ocorrencia|advogad(o|a)|juizado|pequenas causas|patrulha do consumidor)\b/;
+  const legalThreatRegex = /\b((vou|vamos|vai) (te |lhe |nos )?(processar|denunciar)|(acao|processo) judicial|entrar na justica|processo contra (voce|voces|a empresa|a loja))\b/;
+  if (legalRegex.test(norm) || legalThreatRegex.test(norm)) {
     return {
       isEscalation: true,
       category: "legal",
       sentiment: "urgent",
       reason: "Ameaça Legal / Procon / Denúncia",
       customerReply:
-        "Compreendemos totalmente a seriedade da sua mensagem e pedimos desculpas pelo transtorno. Pausei o atendimento automático agora mesmo e transferi sua conversa com prioridade máxima para a nossa gerência assumir imediatamente. Por favor, aguarde só um instante! 🙏"
+        "Compreendemos totalmente a seriedade da sua mensagem e pedimos desculpas pelo transtorno. Já chamei nossa gerência com prioridade máxima para assumir a sua conversa agora mesmo. Por favor, aguarde só um instante! 🙏"
     };
   }
 
   // 2. Refund / Chargeback / Cancellation demands
-  const refundRegex = /\b(estorno|estornar|estorne|devolver (meu|o) dinheiro|devolva (meu|o) dinheiro|devolucao do (valor|dinheiro|pix)|quero meu dinheiro( de volta)?|quero (o )?reembolso|reembolsar|cancele(m)? meu pedido|cancela(r)? (o|meu) pedido|quero cancelar|cancelamento imediato|estorna o pix|estornar no cartao)\b/;
+  // "quero cancelar" sem objeto acionava estorno ate para agendamento. Agora o
+  // cancelamento precisa ser de pedido, compra, plano, assinatura ou contrato.
+  const refundRegex = /\b(estorno|estornar|estorne|devolver (meu|o) dinheiro|devolva (meu|o) dinheiro|devolucao do (valor|dinheiro|pix)|quero meu dinheiro( de volta)?|quero ((o|meu) )?reembolso|reembolsar|cancele(m)? meu pedido|cancela(r)? (o|meu) pedido|quero cancelar (o |meu |a |minha )?(pedido|compra|assinatura|plano|contrato|servico)|cancelamento imediato|estorna o pix|estornar no cartao)\b/;
   if (refundRegex.test(norm)) {
     return {
       isEscalation: true,
@@ -89,28 +95,32 @@ export function detectCustomerEscalation(text: string): EscalationResult {
       sentiment: "frustrated",
       reason: "Solicitação de Estorno / Cancelamento",
       customerReply:
-        "Entendo perfeitamente a sua solicitação e sinto muito por isso. Já pausei as respostas automáticas e passei sua conversa com prioridade urgente para a nossa equipe resolver o seu cancelamento/estorno agora mesmo. Um atendente já vai falar com você! 🙏"
+        "Entendo perfeitamente a sua solicitação e sinto muito por isso. Já passei sua conversa com prioridade urgente para a nossa equipe resolver o seu cancelamento/estorno agora mesmo. Um atendente já vai falar com você! 🙏"
     };
   }
 
   // 3. Severe Delay / Delivery Complaints
   // Must avoid matching innocent queries like "quanto tempo demora a entrega?"
-  const delayRegex = /\b(atras(o|ado|ada)|muito atrasad(o|a)|atraso absurdo|demorando demais|demora absurda|nao aguento mais esperar|cade meu pedido|cade o pedido|onde esta o pedido|onde ta o pedido|meu pedido nao chegou|ainda nao chegou|nao recebi meu pedido|ja faz mais de|faz (mais de )?\d+ (horas|hora|minutos|min)|esperando ha (mais de )?\d+ (horas|minutos|min)|esperando faz horas|duas horas esperando|mais de uma hora esperando|\d+ (horas|hora|minutos|min) atrasad(o|a))\b/;
-  const orderDelayed = /\b(pedido|entrega|lanche|pizza)\s+.*(atrasad(o|a)|demor(ando|ou))\b/;
+  const delayRegex = /\b(atras(o|ado|ada)|muito atrasad(o|a)|atraso absurdo|demorando demais|demora absurda|nao aguento mais esperar|cade meu pedido|cade o pedido|onde esta o pedido|onde ta o pedido|meu pedido nao chegou|nao recebi meu pedido|ja faz mais de|faz (mais de )?\d+ (horas|hora|minutos|min)|esperando ha (mais de )?\d+ (horas|minutos|min)|esperando faz horas|duas horas esperando|mais de uma hora esperando|\d+ (horas|hora|minutos|min) atrasad(o|a))\b/;
+  const orderDelayed = /\b(pedido|entrega|encomenda|lanche|pizza)\s+.*(atrasad(o|a)|demor(ando|ou))\b/;
+  // "ainda nao chegou" sozinho tambem dava falso positivo ("o e-mail ainda nao
+  // chegou"). So conta quando o assunto e pedido/entrega.
+  const orderMissing = /\b(pedido|entrega|encomenda|lanche|pizza)[^.]{0,40}(ainda nao chegou|nao chegou|nao veio)\b/;
 
-  if (delayRegex.test(norm) || orderDelayed.test(norm)) {
+  if (delayRegex.test(norm) || orderDelayed.test(norm) || orderMissing.test(norm)) {
     return {
       isEscalation: true,
       category: "delay",
       sentiment: "frustrated",
       reason: "Reclamação de Atraso na Entrega",
       customerReply:
-        "Sinto muito pela demora na sua entrega! Entendo sua frustração. Já pausei o atendimento automático e acionei nossa equipe humana com prioridade para verificar o seu pedido agora mesmo. Só um instante que já vão falar com você! 🙏"
+        "Sinto muito pela demora na sua entrega! Entendo sua frustração. Já acionei nossa equipe com prioridade para verificar o seu pedido agora mesmo. Só um instante que já vão falar com você! 🙏"
     };
   }
 
   // 4. Severe Dissatisfaction / Angry Customer / Poor Quality / Bad Experience
-  const complaintRegex = /\b(horrivel|pessim(o|a)|absurdo|palhacada|falta de respeito|pouca vergonha|sacanagem|descaso|lixo|porcaria|comida fria|comida estragada|estragad(o|a)|veio errado|pedido errado|veio faltando|faltando coisa|tudo queimado|nunca mais peco|nunca mais compro|pior atendimento|decepcionado|decepcionada|decepcao|indignado|indignada|muito nervos(o|a)|estou furios(o|a)|to put(o|a)|muita raiva|robo burro|ia burra|atendimento ridiculo)\b/;
+  // "lixo" saiu da lista: "o lixo nao foi coletado" virava reclamacao severa.
+  const complaintRegex = /\b(horrivel|pessim(o|a)|absurdo|palhacada|falta de respeito|pouca vergonha|sacanagem|descaso|porcaria|comida fria|comida estragada|estragad(o|a)|veio errado|pedido errado|veio faltando|faltando coisa|tudo queimado|nunca mais peco|nunca mais compro|pior atendimento|decepcionado|decepcionada|decepcao|indignado|indignada|muito nervos(o|a)|estou furios(o|a)|to put(o|a)|muita raiva|robo burro|ia burra|atendimento ridiculo)\b/;
   if (complaintRegex.test(norm)) {
     return {
       isEscalation: true,
@@ -118,7 +128,7 @@ export function detectCustomerEscalation(text: string): EscalationResult {
       sentiment: "frustrated",
       reason: "Cliente Nervoso / Reclamação Severa",
       customerReply:
-        "Peço sinceras desculpas pelo transtorno! Compreendo totalmente a sua chateação e queremos resolver isso agora mesmo para você. Pausei a inteligência artificial e chamei nossa equipe humana com prioridade máxima. Aguarde só um instante! 🙏"
+        "Peço sinceras desculpas pelo transtorno! Compreendo totalmente a sua chateação e queremos resolver isso agora mesmo para você. Já chamei nossa equipe com prioridade máxima. Aguarde só um instante! 🙏"
     };
   }
 

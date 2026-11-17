@@ -1,3 +1,4 @@
+import { billingQuote } from "@/lib/crm/billing";
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
@@ -257,7 +258,10 @@ export async function PATCH(request: NextRequest) {
     if (matchedPlan.id === "crm-trial") return privateJson({ error: "trial_requires_new_account" }, 400);
 
     const suppliedPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "";
-    const resolvedPrice = (suppliedPrice && suppliedPrice !== "149,00") ? suppliedPrice : matchedPlan.price;
+    if (body.billingCycle !== undefined && !["monthly", "annual"].includes(body.billingCycle)) return privateJson({error:"invalid_billing_cycle"},400);
+    const cycle = body.billingCycle === "annual" ? "annual" : "monthly";
+    const quote = billingQuote(cycle === "annual" ? matchedPlan.price : ((suppliedPrice && suppliedPrice !== "149,00") ? suppliedPrice : matchedPlan.price), cycle);
+    const resolvedPrice = quote.price;
     const quotaLimit = matchedPlan.quotaLimit;
 
     const { url, serviceKey } = getAdminConfig();
@@ -279,11 +283,18 @@ export async function PATCH(request: NextRequest) {
     planObj.planId = matchedPlan.id;
     planObj.name = matchedPlan.name;
     planObj.price = resolvedPrice;
+    Object.assign(planObj, quote);
+    delete planObj.paidThrough;
+    if (cycle === "annual") {
+      planObj.status = "pending";
+      planObj.dueDate = new Date().toISOString().slice(0,10);
+      planObj.autoBlock = true;
+    }
     planObj.quotaLimit = quotaLimit;
     planObj.maxOperators = matchedPlan.maxOperators;
     planObj.maxWhatsappConnections = matchedPlan.maxWhatsappConnections;
     planObj.isTrial = false;
-    planObj.status = "paid";
+    planObj.status = cycle === "annual" ? "pending" : "paid";
     planObj.trialConvertedAt = new Date().toISOString();
     planObj.contractedPlan = {
       quotaLimit,

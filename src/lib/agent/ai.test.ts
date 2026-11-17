@@ -72,7 +72,7 @@ test("Etapa 1: conversa ativa com histórico resgata tópico e instrui não rein
   assert.equal(prompt.includes("CONVERSA ATIVA EM ANDAMENTO"), true);
   assert.equal(prompt.includes("RESGATE DE TÓPICO"), true);
   assert.equal(prompt.includes("NUNCA repita apresentações"), true);
-  assert.equal(prompt.includes("A gente tava falando dos planos de delivery"), true);
+  assert.equal(prompt.includes("A gente tava falando dos planos"), true);
 });
 
 test("Etapa 2: retorno após conversa encerrada orienta saudação cordial de boas-vindas de volta", () => {

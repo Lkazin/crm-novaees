@@ -1,3 +1,4 @@
+import { COMMERCIAL_PLANS } from "./commercial-catalog";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,7 +11,7 @@ const OWNER="11111111-1111-4111-8111-111111111111";
 function fixture(failedWrite=false,unconfirmed=false){
  const values=new Map([["crm:master:plans",JSON.stringify(DEFAULT_PLANS)]]);
  const draftWrites:string[]=[];const calls:Array<{path:string;body:Record<string,unknown>}>=[];
- const dependencies:Record<string,unknown>={"server-only":{},"node:util":{isDeepStrictEqual},
+ const dependencies:Record<string,unknown>={"./commercial-catalog":{COMMERCIAL_PLANS},"server-only":{},"node:util":{isDeepStrictEqual},
   "./master-own-tenant":{resolveMasterOwnTenant:async()=>({id:OWNER})},
   "./whatsapp-slots":{},
   ioredis:class{status="ready";on(){}disconnect(){}get=async(k:string)=>values.get(k)||null;set=async(k:string,v:string)=>{values.set(k,v);};hset=async(k:string)=>{draftWrites.push(k);};hdel=async()=>1;lpush=async()=>1;ltrim=async()=>"OK";},

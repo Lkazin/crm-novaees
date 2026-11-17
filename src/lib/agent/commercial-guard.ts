@@ -78,12 +78,21 @@ export function findUnauthorizedPrices(text: string, allowedText: string): numbe
 /**
  * Detecta mistura de catálogos: a resposta fala de site/cardápio E de CRM IA
  * na mesma mensagem. É o sintoma nº 1 relatado no atendimento real.
+ *
+ * `groups` permite configurar os catálogos por tenant. Sem ele, vale o par
+ * padrão (site/cardápio x CRM), que é o do negócio NovaesWeb.
  */
-export function mixesCatalogs(text: string): boolean {
+export type CatalogGroup = { label: string; pattern: RegExp };
+
+const DEFAULT_CATALOG_GROUPS: CatalogGroup[] = [
+  { label: "site", pattern: /\b(site|sites|card[aá]pio virtual|card[aá]pio digital)\b/ },
+  { label: "crm", pattern: /\b(crm|franquia|mensagens mensais|whatsapps conectados|operadores)\b/ }
+];
+
+export function mixesCatalogs(text: string, groups: CatalogGroup[] = DEFAULT_CATALOG_GROUPS): boolean {
   const t = text.toLowerCase();
-  const site = /\b(site|sites|card[aá]pio virtual|card[aá]pio digital)\b/.test(t);
-  const crm = /\b(crm|franquia|mensagens mensais|whatsapps conectados|operadores)\b/.test(t);
-  return site && crm;
+  const ativos = groups.filter((g) => g.pattern.test(t));
+  return ativos.length >= 2;
 }
 
 /**
@@ -127,6 +136,7 @@ export function auditAiReply(params: {
   reply: string;
   allowedText: string;
   officialLinks?: OfficialLinks;
+  catalogGroups?: CatalogGroup[];
 }): CommercialViolation[] {
   const out: CommercialViolation[] = [];
   if (findUnauthorizedUrls(params.reply, params.officialLinks).length > 0) {
@@ -135,8 +145,78 @@ export function auditAiReply(params: {
   if (findUnauthorizedPrices(params.reply, params.allowedText).length > 0) {
     out.push("unauthorized_price");
   }
-  if (mixesCatalogs(params.reply)) {
+  if (mixesCatalogs(params.reply, params.catalogGroups)) {
     out.push("mixed_catalogs");
   }
   return out;
+}
+
+/** Resposta segura quando a IA inventa preço: confirma com humano, sem valor. */
+export const SAFE_HANDOFF_REPLY =
+  "Essa informação eu prefiro confirmar com a equipe para não te passar nada errado. Já chamei uma pessoa para continuar com você 😊";
+
+export type SanitizeResult = {
+  /** Texto que pode ir para o cliente. */
+  reply: string;
+  violations: CommercialViolation[];
+  /** true = a resposta original foi descartada e trocada por SAFE_HANDOFF_REPLY. */
+  blocked: boolean;
+  /** URLs inventadas que foram removidas do texto. */
+  removedUrls: string[];
+};
+
+function tidyAfterRemoval(text: string): string {
+  return text
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Prepara a resposta para envio: remove link não autorizado e troca a resposta
+ * inteira quando há preço fora da base.
+ *
+ * Antes a auditoria só gravava evento e a resposta inventada ia para o cliente
+ * do mesmo jeito. Preço errado é o erro mais caro (o cliente cobra o valor
+ * depois), então nesse caso a resposta é descartada. Link inventado é removido
+ * do texto, que continua útil no resto. Mistura de catálogo não é reescrita
+ * automaticamente: fica registrada como evento para revisão humana.
+ */
+export function sanitizeAiReply(params: {
+  reply: string;
+  allowedText: string;
+  officialLinks?: OfficialLinks;
+  catalogGroups?: CatalogGroup[];
+}): SanitizeResult {
+  const original = (params.reply ?? "").trim();
+  const violations = auditAiReply({
+    reply: original,
+    allowedText: params.allowedText,
+    officialLinks: params.officialLinks,
+    catalogGroups: params.catalogGroups
+  });
+
+  if (violations.includes("unauthorized_price")) {
+    return { reply: SAFE_HANDOFF_REPLY, violations, blocked: true, removedUrls: [] };
+  }
+
+  if (!violations.includes("unauthorized_url")) {
+    return { reply: original, violations, blocked: false, removedUrls: [] };
+  }
+
+  const removedUrls = findUnauthorizedUrls(original, params.officialLinks);
+  let limpo = original;
+  for (const url of removedUrls) {
+    limpo = limpo.split(url).join("");
+  }
+  limpo = tidyAfterRemoval(limpo);
+
+  // Se sobrou só saudação/pontuação, o texto perdeu o sentido: manda o seguro.
+  if (limpo.replace(/[^\p{L}\p{N}]/gu, "").length < 15) {
+    return { reply: SAFE_HANDOFF_REPLY, violations, blocked: true, removedUrls };
+  }
+
+  return { reply: limpo, violations, blocked: false, removedUrls };
 }

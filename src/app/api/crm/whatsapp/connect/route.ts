@@ -248,8 +248,8 @@ export async function POST(req: NextRequest) {
       if (!masterAuth.authorized) {
         // Check slot number against maxWhatsappConnections (1 for Start, 3 for Business/Trial, 5 for Premium)
         if (slotNumber > effectivePlan.maxWhatsappConnections) {
-          const requiredPlan = slotNumber <= 3 ? "CRM Business" : "CRM Premium";
-          const isMaxPlan = effectivePlan.planId === "crm-premium" || effectivePlan.maxWhatsappConnections >= 5;
+          const requiredPlan = slotNumber <= 3 ? "Profissional" : "Empresarial";
+          const isMaxPlan = effectivePlan.planId === "crm-enterprise" || effectivePlan.maxWhatsappConnections >= 5;
           const upgradeText = isMaxPlan
             ? "Este espaço excede a capacidade máxima de conexões permitidas no CRM."
             : `Solicite upgrade para o ${requiredPlan} para liberar este espaço.`;
@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
         );
 
         if (occupiedChannels.length >= effectivePlan.maxWhatsappConnections) {
-          const isMaxPlan = effectivePlan.planId === "crm-premium" || effectivePlan.maxWhatsappConnections >= 5;
+          const isMaxPlan = effectivePlan.planId === "crm-enterprise" || effectivePlan.maxWhatsappConnections >= 5;
           const upgradeText = isMaxPlan
             ? "Você atingiu a capacidade máxima de conexões simultâneas permitidas."
             : "Solicite upgrade para liberar mais números.";

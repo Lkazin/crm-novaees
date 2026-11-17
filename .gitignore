@@ -40,6 +40,7 @@ test-results/
 playwright-report/
 
 backups/
+.tmp-tsx/
 
 
 # Local CLI state

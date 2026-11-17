@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_PLANS,
+  ALL_DEFAULT_PLANS,
+  LEGACY_CONTRACT_PLANS,
   TRIAL_PLAN,
   CATALOG_SCHEMA_VERSION,
   buildFeatureGovernanceMap,
@@ -46,17 +48,17 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
     assert.equal(TRIAL_PLAN.price, "0,00");
     assert.equal(TRIAL_PLAN.quotaLimit, 50);
     assert.equal(TRIAL_PLAN.durationDays, 7);
-    assert.equal(TRIAL_PLAN.maxWhatsappConnections, 2);
-    assert.equal(TRIAL_PLAN.maxOperators, 3);
+    assert.equal(TRIAL_PLAN.maxWhatsappConnections, 1);
+    assert.equal(TRIAL_PLAN.maxOperators, 1);
     assert.ok(TRIAL_PLAN.features.includes("business_hours"));
     assert.ok(TRIAL_PLAN.features.includes("commercial_tags"));
     assert.ok(TRIAL_PLAN.features.includes("conversation_priority"));
     assert.ok(TRIAL_PLAN.features.includes("satisfaction_survey"));
-    assert.ok(TRIAL_PLAN.features.includes("advanced_reports"));
+    assert.ok(!TRIAL_PLAN.features.includes("advanced_reports"));
   });
 
   it("deve definir CRM Start (R$ 59,90, 200 atendimentos, 1 WhatsApp, 1 operador)", () => {
-    const start = DEFAULT_PLANS.find((p) => p.id === "crm-start");
+    const start = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-start");
     assert.ok(start);
     assert.equal(start.price, "59,90");
     assert.equal(start.quotaLimit, 200);
@@ -73,7 +75,7 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
   });
 
   it("deve definir CRM Business (R$ 99,90, 600 atendimentos, 3 WhatsApps, 3 operadores)", () => {
-    const business = DEFAULT_PLANS.find((p) => p.id === "crm-business");
+    const business = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-business");
     assert.ok(business);
     assert.equal(business.price, "99,90");
     assert.equal(business.quotaLimit, 600);
@@ -91,7 +93,7 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
   });
 
   it("deve definir CRM Premium (R$ 89,90, 1.200 atendimentos, 3 WhatsApps, 3 operadores)", () => {
-    const premium = DEFAULT_PLANS.find((p) => p.id === "crm-premium");
+    const premium = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-premium");
     assert.ok(premium);
     assert.equal(premium.price, "89,90");
     assert.equal(premium.quotaLimit, 1200);
@@ -107,19 +109,19 @@ describe("Etapa 2 & 3 — Estrutura Oficial dos Planos Comerciais", () => {
 
 describe("Etapa 4 — Governança dos 4 Estados das Funcionalidades", () => {
   it("deve retornar allowed para recursos do Start e locked_by_plan para Business/Premium", () => {
-    const start = DEFAULT_PLANS.find((p) => p.id === "crm-start")!;
+    const start = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-start")!;
     const gov = buildFeatureGovernanceMap(start.features, false);
 
     assert.equal(gov.ai_chat.state, "allowed");
     assert.equal(gov.quick_replies.state, "allowed");
     assert.equal(gov.commercial_tags.state, "locked_by_plan");
-    assert.equal(gov.commercial_tags.minPlanName, "CRM Business");
+    assert.equal(gov.commercial_tags.minPlanName, "Profissional");
     assert.equal(gov.advanced_reports.state, "locked_by_plan");
-    assert.equal(gov.advanced_reports.minPlanName, "CRM Premium");
+    assert.equal(gov.advanced_reports.minPlanName, "Profissional");
   });
 
   it("deve retornar suspended com motivo público quando a empresa estiver suspensa administrativamente", () => {
-    const premium = DEFAULT_PLANS.find((p) => p.id === "crm-premium")!;
+    const premium = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-premium")!;
     const gov = buildFeatureGovernanceMap(
       premium.features,
       true,
@@ -131,7 +133,7 @@ describe("Etapa 4 — Governança dos 4 Estados das Funcionalidades", () => {
   });
 
   it("deve retornar maintenance quando uma funcionalidade estiver em manutenção técnica", () => {
-    const business = DEFAULT_PLANS.find((p) => p.id === "crm-business")!;
+    const business = LEGACY_CONTRACT_PLANS.find((p) => p.id === "crm-business")!;
     const gov = buildFeatureGovernanceMap(
       business.features,
       false,
@@ -163,9 +165,9 @@ describe("Etapa 5 — Cinco Espaços de WhatsApp e Downgrade Seguro", () => {
     assert.equal(startSlots.length, 5);
     assert.equal(startSlots.filter((s) => s.unlocked).length, 1);
     assert.equal(startSlots[1].status, "locked");
-    assert.equal(startSlots[1].minPlanName, "CRM Business");
+    assert.equal(startSlots[1].minPlanName, "Profissional");
     assert.equal(startSlots[3].status, "locked");
-    assert.equal(startSlots[3].minPlanName, "CRM Premium");
+    assert.equal(startSlots[3].minPlanName, "Empresarial");
 
     const businessSlots = buildTenantWhatsappSlots("Loja B", [], {
       maxWhatsappConnections: 3,
@@ -207,12 +209,12 @@ describe("Etapa 5 — Cinco Espaços de WhatsApp e Downgrade Seguro", () => {
 describe("Catálogo publicado e nomes comerciais", () => {
   it("rejeita um ID desconhecido mesmo que o nome informado exista", () => {
     assert.equal(selectPublishedPlan(DEFAULT_PLANS, "crm-plus", "CRM Business"), undefined);
-    assert.equal(selectPublishedPlan(DEFAULT_PLANS, "crm-premium")?.name, "CRM Premium");
+    assert.equal(selectPublishedPlan(DEFAULT_PLANS, "crm-professional")?.name, "Profissional");
     assert.equal(selectPublishedPlan(DEFAULT_PLANS, "crm-business"), undefined);
     assert.equal(selectPublishedPlan(DEFAULT_PLANS.map(p => ({...p, status:"inactive" as const})), "crm-premium"), undefined);
   });
   it("corrige nome Plus e permissões de conexões excessivas sem apagar escolhas explícitas de recursos", () => {
-    const business = DEFAULT_PLANS.find(p => p.id === "crm-business")!;
+    const business = LEGACY_CONTRACT_PLANS.find(p => p.id === "crm-business")!;
     const normalized = normalizeCatalogPlan({...business, name:"Plus", maxWhatsappConnections:5, maxOperators:5, features:["ai_chat"]});
     assert.equal(normalized.name, "CRM Business");
     assert.equal(normalized.maxWhatsappConnections, 3);
@@ -226,15 +228,15 @@ describe("Catálogo publicado e nomes comerciais", () => {
     assert.equal(normalized.quotaLimit, 50);
   });
   it("identifica o plano necessário pelo catálogo publicado quando o Master move um recurso", () => {
-    const published = DEFAULT_PLANS.map(p => ({...p, features:p.id === "crm-premium" ? p.features : p.features.filter(f => f !== "quick_replies")}));
+    const published = DEFAULT_PLANS.map(p => ({...p, features:p.id === "crm-professional" ? p.features : p.features.filter(f => f !== "quick_replies")}));
     const gov = buildFeatureGovernanceMap([], false, undefined, [], published);
-    assert.equal(gov.quick_replies.minPlanName, "CRM Premium");
+    assert.equal(gov.quick_replies.minPlanName, "Profissional");
   });
 });
 
 
 it("normaliza IDs de recursos antigos sem ampliar o conjunto marcado no catálogo", () => {
- const premium=DEFAULT_PLANS.find(p=>p.id==="crm-premium")!;
+ const premium=LEGACY_CONTRACT_PLANS.find(p => p.id === "crm-premium")!;
  const normalized=normalizeCatalogPlan({...premium,features:["knowledge_base","setup_wizard","contacts_history","basic_hours","attendance_priority"] as unknown as typeof premium.features});
  assert.deepEqual(normalized.features,["ai_chat","human_handoff","business_hours_basic","conversation_priority"]);
 });
@@ -243,10 +245,15 @@ it("normaliza IDs de recursos antigos sem ampliar o conjunto marcado no catálog
 describe("Exclusão de Planos Comerciais (deleteMasterPlan)", () => {
   it("impede a exclusão dos planos oficiais base Teste Grátis e CRM Premium", async () => {
     await assert.rejects(() => deleteMasterPlan("crm-trial"), /não podem ser excluídos/);
-    await assert.rejects(() => deleteMasterPlan("crm-premium"), /não podem ser excluídos/);
+    await assert.rejects(() => deleteMasterPlan("crm-professional"), /não podem ser excluídos/);
   });
 
   it("rejeita exclusão com ID de plano inválido", async () => {
     await assert.rejects(() => deleteMasterPlan(""), /ID do plano inválido/);
   });
+});
+
+
+it("offers only the four current plans in the default catalog", () => {
+  assert.deepEqual(ALL_DEFAULT_PLANS.map(p => p.id), ["crm-trial", "crm-essential", "crm-professional", "crm-enterprise"]);
 });
