@@ -1,4 +1,4 @@
-import { annualPeriodEnd } from "@/lib/crm/billing";
+import { paidPeriodUpdate } from "@/lib/crm/billing";
 import type { StoredTenantConfig, StoredTenantPlan } from "@/lib/crm/settings-types";
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
@@ -649,10 +649,8 @@ export async function PATCH(request: NextRequest) {
         }
         planObj.lastPaidAt = new Date().toISOString();
         planObj.isOverdue = false;
-        // Advance due date if it was in the past
-        if (new Date(dueDate) < new Date()) {
-          planObj.dueDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-        }
+        // A repeated confirmation must not extend an already-paid annual period.
+        Object.assign(planObj, paidPeriodUpdate(planObj.billingCycle, dueDate, alreadyPaidForCycle));
         // Clear payment-overdue suspension if any
         if (dataObj.suspension && !dataObj.suspension.internalNote) {
           dataObj.suspension.isSuspended = false;

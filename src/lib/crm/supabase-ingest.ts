@@ -379,7 +379,7 @@ export async function handoffToHuman(instance: string, phone: string, _isUrgent 
       requested_by: "customer",
       status: "pending",
       reason: reason.slice(0, 500)
-    }).catch(() => {});
+    });
 
     return conv.id;
   } catch (err) {

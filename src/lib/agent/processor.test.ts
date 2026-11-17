@@ -2,7 +2,7 @@ import { memoryAttendanceQuota } from "../crm/attendance-quota.fixture";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentConfig } from "./config";
-import { processWebhook as processWebhookActual, getBrazilMonthKey, AI_FAILURE_REPLY } from "./processor";
+import { processWebhook as processWebhookActual, getBrazilMonthKey, AI_FAILURE_REPLY, HANDOFF_FAILURE_REPLY } from "./processor";
 import { EvolutionSendError } from "./evolution";
 
 const processWebhook: typeof processWebhookActual = (payload,cfg,deps={}) => processWebhookActual(payload,cfg,{
@@ -363,6 +363,7 @@ test("desliga 'digitando...' (stopTyping) quando maySend bloqueia apos geracao, 
       redis: db as never,
       holdTyping: async () => () => { stopped++; },
       generate: async () => { throw new Error("llm_timeout"); },
+      handoff: async () => "confirmed-conversation",
       send: async (_number, text) => { sentTexts.push(text); },
     });
     assert.equal(result.status, "sent");
@@ -379,6 +380,7 @@ test("desliga 'digitando...' (stopTyping) quando maySend bloqueia apos geracao, 
     const result = await processWebhook(payload, cfg, {
       redis: db as never,
       holdTyping: async () => () => { stopped++; },
+      handoff: async () => "confirmed-conversation",
       generate: async () => "   ",
       send: async (_number, text) => { sentTexts.push(text); },
     });
@@ -412,3 +414,22 @@ test("envia 'paused' ao finalizar multiplas bolhas para nao deixar 'digitando...
   assert.equal(presences[0], "composing");
   assert.equal(presences[presences.length - 1], "paused");
 });
+
+for (const outcome of ["success", "null", "throw"] as const) {
+ for (const scenario of ["failure", "commercial"] as const) {
+ test(`handoff confirmation: ${scenario} / ${outcome}`, async () => {
+ const sent: string[]=[]; let transfers=0;
+ await processWebhook(payload,cfg,{
+ redis:fakeRedis() as never,
+ holdTyping:async()=>()=>{},
+ sendPresence:async()=>true,
+ generate:async()=>scenario === "failure" ? "" : "O valor é R$ 999,00.",
+ handoff:async()=>{transfers++;if(outcome === "throw") throw Error("unavailable");return outcome === "success" ? "conversation-id" : null;},
+ send:async(_n,text)=>{sent.push(text);}
+ });
+ assert.equal(transfers,1);
+ if(outcome !== "success") assert.equal(sent.join(" ").replace(/\s+/g," "),HANDOFF_FAILURE_REPLY);
+ else assert.match(sent.join(""),/chamei/);
+ });
+ }
+}

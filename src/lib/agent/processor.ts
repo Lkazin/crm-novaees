@@ -33,6 +33,8 @@ export const MAX_AI_REPLIES_PER_24H_WINDOW = 25;
  * do outro lado; agora recebe uma resposta honesta e o atendimento vai para a
  * equipe.
  */
+export const HANDOFF_FAILURE_REPLY = "Não consegui encaminhar sua conversa para a equipe agora. Por favor, tente novamente em instantes.";
+
 export const AI_FAILURE_REPLY =
   "Tive um problema técnico aqui para consultar essa informação. Já chamei uma pessoa da equipe para continuar com você 😊";
 
@@ -491,7 +493,7 @@ export async function processWebhook(
           incoming.number,
           urgent,
           esc.reason || "Solicitação de atendimento humano"
-        );
+        ).catch(() => null);
 
         if (convId) {
           try {
@@ -511,7 +513,7 @@ export async function processWebhook(
           } catch {}
         }
 
-        const escalationReply = esc.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
+        const escalationReply = !convId ? HANDOFF_FAILURE_REPLY : esc.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
         await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
         await markItemsDone(escItems);
         try {
@@ -652,16 +654,17 @@ export async function processWebhook(
               await clearInflightItems();
               return { status: "disabled", reason: "tenant_or_conversation_blocked" };
             }
-            await (deps.handoff ?? handoffToHuman)(
+            const transferred = await (deps.handoff ?? handoffToHuman)(
               incoming.instance,
               incoming.number,
               false,
               "Falha ou indisponibilidade da IA ao responder — encaminhado para equipe"
             ).catch(() => null);
-            await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
+            const failureReply = transferred ? AI_FAILURE_REPLY : HANDOFF_FAILURE_REPLY;
+            await (deps.send ?? sendText)(incoming.number, failureReply, cfg, incoming.instance);
             await markItemsDone();
             try {
-              await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
+              await persistOutboundInSupabase(incoming.instance, incoming.number, failureReply);
             } catch (err) {
               console.error("[crm-ai] fallback de falha enviado mas nao persistido:", err instanceof Error ? err.message : String(err));
             }
@@ -688,12 +691,13 @@ export async function processWebhook(
             }
             if (sanitized.blocked) {
               console.warn("[crm-ai] resposta bloqueada pela guarda comercial:", sanitized.violations.join(","));
-              await (deps.handoff ?? handoffToHuman)(
+              const transferred = await (deps.handoff ?? handoffToHuman)(
                 incoming.instance,
                 incoming.number,
                 false,
                 "Informação comercial não confirmada na base — encaminhado para equipe"
               ).catch(() => null);
+              if (!transferred) answer = HANDOFF_FAILURE_REPLY;
             }
           } catch {
             // Metrica nunca derruba atendimento.
@@ -851,14 +855,16 @@ export async function processWebhook(
                   }).catch(() => {});
                 }
                 if (followUpGuard.blocked) {
-                  await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Informação comercial não confirmada no follow-up").catch(() => null);
+                  const transferred = await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Informação comercial não confirmada no follow-up").catch(() => null);
+                  if (!transferred) followUp = HANDOFF_FAILURE_REPLY;
                 }
                 followUp = followUpGuard.reply.trim();
               }
               if (!followUp) {
-                await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Falha da IA no follow-up — encaminhado para equipe").catch(() => null);
-                await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
-                await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
+                const transferred = await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Falha da IA no follow-up — encaminhado para equipe").catch(() => null);
+                const failureReply = transferred ? AI_FAILURE_REPLY : HANDOFF_FAILURE_REPLY;
+                await (deps.send ?? sendText)(incoming.number, failureReply, cfg, incoming.instance);
+                await persistOutboundInSupabase(incoming.instance, incoming.number, failureReply);
                 await markItemsDone(extraItems);
                 break;
               }

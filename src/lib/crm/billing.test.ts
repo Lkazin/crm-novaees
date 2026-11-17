@@ -13,3 +13,13 @@ test("annual expiry clamps leap days and advances by twelve calendar months",()=
   assert.equal(annualPeriodEnd("2028-02-29T12:00:00Z"),"2029-02-28");
   assert.equal(annualPeriodEnd("2026-11-16T12:00:00Z"),"2027-11-16");
 });
+
+ test("payment confirmation grants a year, preserves repeats and renews expired periods", async () => {
+ const {paidPeriodUpdate}=await import("./billing");
+ const now=new Date("2026-11-17T15:00:00Z");
+ assert.deepEqual(paidPeriodUpdate("annual","2026-11-17",false,now),{dueDate:"2027-11-17",paidThrough:"2027-11-17"});
+ assert.deepEqual(paidPeriodUpdate("annual","2027-11-17",true,now),{});
+ assert.deepEqual(paidPeriodUpdate("annual","2025-11-17",false,now),{dueDate:"2027-11-17",paidThrough:"2027-11-17"});
+ assert.deepEqual(paidPeriodUpdate("monthly","2026-11-17",false,now),{dueDate:"2026-12-17"});
+ assert.deepEqual(paidPeriodUpdate("monthly","2026-12-17",false,now),{});
+ });

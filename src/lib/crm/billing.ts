@@ -13,3 +13,14 @@ export function annualPeriodEnd(start: string): string {
   const day = Math.min(date.getUTCDate(), new Date(Date.UTC(year, month + 1, 0)).getUTCDate());
   return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
 }
+
+export function paidPeriodUpdate(cycle: unknown, dueDate: string, alreadyPaid: boolean, now = new Date()): { dueDate?: string; paidThrough?: string } {
+  if (cycle === "annual") {
+    if (alreadyPaid) return {};
+    const end = annualPeriodEnd(now.toISOString());
+    return { dueDate: end, paidThrough: end };
+  }
+  return new Date(dueDate) < now
+    ? { dueDate: new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10) }
+    : {};
+}
