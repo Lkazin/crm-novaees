@@ -21,6 +21,7 @@ import {
   TRIAL_PLAN
 } from "@/lib/crm/plans";
 import { buildTenantWhatsappSlots, syncWhatsappChannelsForPlanLimit } from "@/lib/crm/whatsapp-slots";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1014,9 +1015,7 @@ export async function DELETE(request: NextRequest) {
 
     // 2. Disconnect and delete from Evolution API
     let evoUrl = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
-    if (evoUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-      evoUrl = evoUrl.replace("host.docker.internal", "127.0.0.1");
-    }
+    evoUrl = normalizeLocalServiceUrl(evoUrl, "http://127.0.0.1:8080");
     const evoKey = process.env.EVOLUTION_API_KEY ?? "";
     if (evoKey) {
       for (const instName of Array.from(instancesToDelete)) {

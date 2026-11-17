@@ -7,6 +7,7 @@ import { AiConfig } from "@/lib/agent/config";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { buildOutOfScopeReply, isOutOfScopeRequest, sanitizeAiReply } from "@/lib/agent/commercial-guard";
 import { selectKnowledgeArticles } from "@/lib/agent/knowledge";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,9 +31,7 @@ function getServiceConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
   let omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://127.0.0.1:20128/v1";
-  if (omniUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-    omniUrl = omniUrl.replace("host.docker.internal", "127.0.0.1");
-  }
+  omniUrl = normalizeLocalServiceUrl(omniUrl, "http://127.0.0.1:20128");
   const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, omniUrl, omniKey };
 }

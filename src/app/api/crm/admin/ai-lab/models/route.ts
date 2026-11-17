@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,9 +14,7 @@ function getAdminConfig() {
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
   const redisUrl = process.env.CRM_REDIS_URL || "redis://127.0.0.1:6379";
   let omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "http://127.0.0.1:20128/v1";
-  if (omniUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-    omniUrl = omniUrl.replace("host.docker.internal", "127.0.0.1");
-  }
+  omniUrl = normalizeLocalServiceUrl(omniUrl, "http://127.0.0.1:20128");
   const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { url, serviceKey, redisUrl, omniUrl, omniKey };
 }

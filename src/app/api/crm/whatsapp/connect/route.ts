@@ -4,15 +4,13 @@ import { verifyOperator, isAllowedOrigin } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getEffectiveTenantPlan, getRedis } from "@/lib/crm/plans";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function getEvolutionConfig() {
-  let url = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
-  if (url.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-    url = url.replace("host.docker.internal", "127.0.0.1");
-  }
+  const url = normalizeLocalServiceUrl(process.env.EVOLUTION_API_URL, "http://127.0.0.1:8080");
   const key = process.env.EVOLUTION_API_KEY ?? "";
   const secret = process.env.CRM_WEBHOOK_SECRET ?? "";
   return { url, key, secret };

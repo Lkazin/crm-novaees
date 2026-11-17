@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { verifyOperator } from "@/lib/crm/supabase-server";
@@ -36,9 +37,7 @@ export async function GET(req: NextRequest) {
     }
 
     let url = (process.env.EVOLUTION_API_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
-    if (url.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-      url = url.replace("host.docker.internal", "127.0.0.1");
-    }
+    url = normalizeLocalServiceUrl(url, "http://127.0.0.1:8080");
     const key = process.env.EVOLUTION_API_KEY ?? "";
     const rawInstance = req.nextUrl.searchParams.get("instance") || req.nextUrl.searchParams.get("instanceName") || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
     const instanceName = rawInstance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);

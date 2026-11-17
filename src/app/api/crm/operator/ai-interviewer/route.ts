@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireTenantFeature } from "@/lib/crm/plans";
 import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 import {
   buildNextInterviewTurn,
   compileProfileFromInterview,
@@ -16,9 +17,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getLlmConfig() {
   let omniUrl = process.env.AI_OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "";
-  if (omniUrl.includes("host.docker.internal") && (process.platform === "win32" || !process.env.DOCKER_CONTAINER)) {
-    omniUrl = omniUrl.replace("host.docker.internal", "127.0.0.1");
-  }
+  omniUrl = normalizeLocalServiceUrl(omniUrl, "http://127.0.0.1:20128");
   const omniKey = process.env.AI_API_KEY?.trim() || "";
   return { omniUrl, omniKey };
 }
