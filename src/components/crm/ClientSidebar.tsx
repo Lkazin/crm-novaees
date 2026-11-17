@@ -81,6 +81,7 @@ interface ClientSidebarProps {
   whatsappSlots: Array<{ status: string; unlocked: boolean }>;
   teamOperators: Array<{ status: string }>;
   clientRecoveryVerified?: boolean;
+  allowedTabs?: string[] | null;
 }
 
 export const ClientSidebar: React.FC<ClientSidebarProps> = ({
@@ -97,6 +98,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   whatsappSlots,
   teamOperators,
   clientRecoveryVerified = false,
+  allowedTabs = null,
 }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -110,14 +112,17 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
     setMobileOpen(false);
   };
 
+  const allowedTabSet = Array.isArray(allowedTabs) ? new Set(allowedTabs) : null;
+  const isAllowed = (id: ClientTab) => !allowedTabSet || allowedTabSet.has(id);
+
   const normalizedQuery = searchable(query);
   const visibleIds = new Set(
-    SIDEBAR_ITEMS.filter((item) => searchable(`${item.label} ${item.keywords}`).includes(normalizedQuery)).map(
-      (item) => item.id,
-    ),
+    SIDEBAR_ITEMS.filter(
+      (item) => isAllowed(item.id) && searchable(`${item.label} ${item.keywords}`).includes(normalizedQuery),
+    ).map((item) => item.id),
   );
   const visibleList = SIDEBAR_ITEMS.filter((item) => visibleIds.has(item.id));
-  const isVisible = (id: ClientTab) => !normalizedQuery || visibleIds.has(id);
+  const isVisible = (id: ClientTab) => isAllowed(id) && (!normalizedQuery || visibleIds.has(id));
 
   // Dados reais calculados do sistema
   const maxWhatsapp = data?.plan?.maxWhatsappConnections ?? 1;
@@ -481,6 +486,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
       {/* RODAPE ancorado: Franquia + Sair */}
       <div className={styles.neonFooter}>
       {/* 6. Franquia do Mês (Visual da Imagem) */}
+      {isAllowed("plano") && (
       <div
         className={styles.neonQuotaCard}
         onClick={() => onSelectTab("plano")}
@@ -524,6 +530,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* 7. Botão Sair do Painel */}
       <button

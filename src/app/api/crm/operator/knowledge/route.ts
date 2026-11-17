@@ -8,6 +8,14 @@ export const dynamic="force-dynamic";
 type Article={id:string;title:string;body:string;status:string;updated_at:string};
 type Operator={id:string|null;token:string;isMaster:boolean};
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function hasKnowledgeArea(access: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> }, tenantId: string): boolean {
+  if (access.isMaster || !Array.isArray(access.memberships)) return true;
+  const m = access.memberships.find((row) => row.tenant_id === tenantId);
+  if (!m) return false;
+  if (m.role === "owner") return true;
+  if (Array.isArray(m.allowed_tabs)) return m.allowed_tabs.includes("artigos") || m.allowed_tabs.includes("conhecimento");
+  return m.role === "admin";
+}
 function valid(value:unknown,min:number,max:number):value is string {
   return typeof value==="string"&&value.trim().length>=min&&value.length<=max;
 }
@@ -35,6 +43,7 @@ export async function GET(request:NextRequest) {
   try {
     const access=await authorizeCrmTenant(request,tenant);
     if(!access)return privateJson({error:"tenant_forbidden"},403);
+    if(!hasKnowledgeArea(access,tenant))return privateJson({error:"area_forbidden"},403);
     const featureGuard = await requireTenantFeature(tenant, "ai_chat");
     if (!featureGuard.allowed) return privateJson({error:featureGuard.errorCode,state:featureGuard.state,message:featureGuard.message},featureGuard.statusHttp);
     const operator={id:access.operatorId,token:access.token,isMaster:access.isMaster};
@@ -59,6 +68,7 @@ export async function POST(request:NextRequest) {
   try {
     const access=await authorizeCrmTenant(request,String(payload.tenantId));
     if(!access)return privateJson({error:"tenant_forbidden"},403);
+    if(!hasKnowledgeArea(access,String(payload.tenantId)))return privateJson({error:"area_forbidden"},403);
     const featureGuard = await requireTenantFeature(String(payload.tenantId), "ai_chat");
     if (!featureGuard.allowed) return privateJson({error:featureGuard.errorCode,state:featureGuard.state,message:featureGuard.message},featureGuard.statusHttp);
     const operator={id:access.operatorId,token:access.token,isMaster:access.isMaster};
@@ -87,6 +97,7 @@ export async function PATCH(request:NextRequest) {
     const tenant=String(payload.tenantId),id=String(payload.id);
     const access=await authorizeCrmTenant(request,tenant);
     if(!access)return privateJson({error:"tenant_forbidden"},403);
+    if(!hasKnowledgeArea(access,tenant))return privateJson({error:"area_forbidden"},403);
     const featureGuard = await requireTenantFeature(String(payload.tenantId), "ai_chat");
     if (!featureGuard.allowed) return privateJson({error:featureGuard.errorCode,state:featureGuard.state,message:featureGuard.message},featureGuard.statusHttp);
     const operator={id:access.operatorId,token:access.token,isMaster:access.isMaster};

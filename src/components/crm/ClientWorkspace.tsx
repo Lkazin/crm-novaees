@@ -140,7 +140,7 @@ type Data = {
   escalations?: Record<string, EscalationItem>;
   tags?: TagItem[];
   contactTags?: ContactTagItem[];
-  viewer?: { email: string; role: string };
+  viewer?: { email: string; role: string; allowedTabs?: string[] | null };
   note?: string;
 };
 
@@ -285,6 +285,20 @@ export default function ClientWorkspace({
     setActiveTabState(nextTab);
     onTabChange?.(nextTab);
   }, [onTabChange]);
+
+  const viewerAllowedTabs = data?.viewer?.allowedTabs ?? null;
+  const canAccessTab = useCallback(
+    (tab: Tab) => !Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.includes(tab),
+    [viewerAllowedTabs],
+  );
+
+  useEffect(() => {
+    if (!Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.length === 0) return;
+    if (!viewerAllowedTabs.includes(activeTab)) {
+      const preferred = (viewerAllowedTabs.includes("atendimentos") ? "atendimentos" : viewerAllowedTabs[0]) as Tab;
+      setActiveTab(preferred);
+    }
+  }, [viewerAllowedTabs, activeTab, setActiveTab]);
   const [selected, setSelected] = useState("");
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -915,6 +929,10 @@ export default function ClientWorkspace({
 
       prevDataRef.current = json;
       setData(json);
+      if (Array.isArray(json.viewer?.allowedTabs) && json.viewer.allowedTabs.length > 0 && !json.viewer.allowedTabs.includes(activeTab)) {
+        const preferred = (json.viewer.allowedTabs.includes("atendimentos") ? "atendimentos" : json.viewer.allowedTabs[0]) as Tab;
+        setActiveTab(preferred);
+      }
       setIsSuspended(json.isSuspended === true);
       setSuspensionReason(json.suspensionReason || "");
 
@@ -1712,13 +1730,13 @@ export default function ClientWorkspace({
     }
   }
 
-  async function handleAddOperator(name: string, email: string, role: string, password?: string) {
+  async function handleAddOperator(name: string, email: string, role: string, password?: string, allowedTabs?: string[] | null) {
     try {
       const res = await fetch("/api/crm/operator/features", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenant, action: "add_operator", name, email, role, password })
+        body: JSON.stringify({ tenantId: tenant, action: "add_operator", name, email, role, password, allowedTabs })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, message: json.message || "Falha ao adicionar operador." };
@@ -1730,18 +1748,18 @@ export default function ClientWorkspace({
     }
   }
 
-  async function handleUpdateOperatorRole(operatorId: string, role: string) {
+  async function handleUpdateOperatorRole(operatorId: string, role: string, allowedTabs?: string[] | null) {
     try {
       const res = await fetch("/api/crm/operator/features", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenant, action: "update_operator", operatorId, role })
+        body: JSON.stringify({ tenantId: tenant, action: "update_operator", operatorId, role, allowedTabs })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, message: json.message || "Falha ao atualizar a função do atendente." };
       if (Array.isArray(json.teamOperators)) setTeamOperators(json.teamOperators);
-      return { ok: true, message: "Função atualizada com sucesso!" };
+      return { ok: true, message: "Função e permissões atualizadas com sucesso!" };
     } catch {
       return { ok: false, message: "Erro de conexão ao atualizar a função." };
     }
@@ -2177,7 +2195,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   const navigationIcons = {whatsapp:Smartphone,conhecimento:Bot,artigos:BookOpen,simulador:Play,horarios:Clock,atendimentos:Inbox,equipe:UserPlus,relatorios:BarChart3,contatos:Users,plano:CreditCard,seguranca:KeyRound};
   const clientLabels:Record<Tab,string> = {whatsapp:"Conectar WhatsApp",conhecimento:"Minha IA (Cérebro da Loja)",artigos:"Base de Conhecimento",simulador:"Chat de Teste (Simulador)",horarios:"Horários de Atendimento",atendimentos:"Atendimentos ao Vivo",equipe:"Equipe & Operadores",relatorios:"Indicadores & Relatórios",contatos:"Contatos da Loja",plano:"Meu Plano & Recargas",seguranca:"Recuperação de Senha"};
-  const navigationOrder:Tab[] = embedded ? workspaceSections.map(section=>section.id) : ["whatsapp","conhecimento","simulador","atendimentos","horarios","contatos","equipe","relatorios","artigos","plano","seguranca"];
+  const navigationOrder:Tab[] = (embedded ? workspaceSections.map(section=>section.id) : ["whatsapp","conhecimento","simulador","atendimentos","horarios","contatos","equipe","relatorios","artigos","plano","seguranca"] as Tab[]).filter(canAccessTab);
   const navigationItems:WorkspaceNavItem<Tab>[] = navigationOrder.map(id=>({
     id,label:embedded ? workspaceSections.find(section=>section.id===id)!.label : clientLabels[id],
     group:["whatsapp","conhecimento","simulador","atendimentos","horarios"].includes(id)?"Atendimento e IA":["plano","seguranca"].includes(id)?"Conta e segurança":"Gestão da empresa",
@@ -2185,6 +2203,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     badge:embedded?undefined:id==="whatsapp"&&qrState==="open"?{text:"Online",tone:"success"}:id==="atendimentos"&&pendingHumanList.length>0?{text:String(pendingHumanList.length),tone:"attention"}:id==="plano"?{text:data?.plan?.isTrial?"Teste":data?.plan?.name?.replace("CRM ","")||"Plano",tone:"neutral"}:undefined
   }));
   function selectWorkspaceSection(id:Tab) {
+    if (!canAccessTab(id)) return;
     if (id === "artigos" && !embedded) { window.location.assign("/cliente/knowledge"); return; }
     setActiveTab(id);
     if(id === "relatorios" && tenant) void fetchReports(tenant);
@@ -2225,6 +2244,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               whatsappSlots={whatsappSlots}
               teamOperators={teamOperators}
               clientRecoveryVerified={clientRecoveryVerified}
+              allowedTabs={viewerAllowedTabs}
             />
           )}
 
@@ -2559,42 +2579,48 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               </div>
             )}
 
-            <SetupJourney
-              steps={setupSteps}
-              featureStates={featureStates}
-              suspended={Boolean(isSuspended)}
-              onOpen={openSetupStep}
-              onUpgrade={(plan, reason) => openUpgradeRequest(plan, reason)}
-              companyName={currentTenantObj?.name || (embedded ? "NovaesWeb" : "Sua Empresa")}
-              hasUnsavedChanges={hasUnsavedSetupChanges}
-            />
+            {(canAccessTab("whatsapp") || canAccessTab("conhecimento")) && (
+              <SetupJourney
+                steps={setupSteps}
+                featureStates={featureStates}
+                suspended={Boolean(isSuspended)}
+                onOpen={openSetupStep}
+                onUpgrade={(plan, reason) => openUpgradeRequest(plan, reason)}
+                companyName={currentTenantObj?.name || (embedded ? "NovaesWeb" : "Sua Empresa")}
+                hasUnsavedChanges={hasUnsavedSetupChanges}
+              />
+            )}
 
             {activeTab !== "plano" && activeFeatureBlocked && <FeatureUnavailable feature={isSuspended && activeFeatureState ? {...activeFeatureState,state:"suspended"} : activeFeatureState} onUpgrade={openUpgradeRequest}/>}
             <fieldset disabled={activeFeatureBlocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
             {["atendimentos","plano"].includes(activeTab) && (
               <section className={styles.metrics} aria-label="Resumo da operação">
-                <button type="button" className={styles.metric} onClick={()=>setActiveTab("whatsapp")}>
+                <button type="button" className={styles.metric} onClick={()=>{ if (canAccessTab("whatsapp")) setActiveTab("whatsapp"); }}>
                   <span className={styles.metricIcon}><Smartphone size={21}/></span><span className={styles.metricLabel}>WhatsApp da empresa</span>
                   <strong>{whatsappSlots.filter(slot=>slot.status==="connected").length} de {data?.plan?.maxWhatsappConnections ?? 1} conexões</strong>
                   <span className={qrState==="open"?styles.successText:styles.mutedText}>{qrState==="open"?"Conexão confirmada":"Revisar conexão"}</span>
-                  <span className={styles.metricAction}>Gerenciar WhatsApp<ArrowRight size={14}/></span>
+                  {canAccessTab("whatsapp") && <span className={styles.metricAction}>Gerenciar WhatsApp<ArrowRight size={14}/></span>}
                 </button>
+                {canAccessTab("plano") && (
                 <button type="button" className={styles.metric} onClick={()=>setActiveTab("plano")}>
                   <span className={styles.metricIcon}><MessageSquare size={21}/></span><span className={styles.metricLabel}>Franquia de mensagens</span>
                   <strong>{quotaData.quotaUsed} / {quotaData.quotaLimit}</strong><span className={quotaPercent>90?styles.attentionText:styles.mutedText}>{quotaPercent}% utilizado</span>
                   <span className={styles.metricAction}>Ver franquia e recargas<ArrowRight size={14}/></span>
                 </button>
+                )}
                 <button type="button" className={styles.metric} onClick={()=>setActiveTab("atendimentos")}>
                   <span className={styles.metricIcon}><Inbox size={21}/></span><span className={styles.metricLabel}>Central de atendimento</span>
                   <strong>{conversations.length} conversas</strong><span className={pendingHumanList.length?styles.attentionText:styles.mutedText}>{pendingHumanList.length?`${pendingHumanList.length} aguardando atendimento humano`:"Nenhuma solicitação humana pendente"}</span>
                   <span className={styles.metricAction}>Abrir atendimentos<ArrowRight size={14}/></span>
                 </button>
+                {canAccessTab("simulador") && (
                 <button type="button" className={styles.metric} onClick={()=>setActiveTab("simulador")}>
                   <span className={styles.metricIcon}><Bot size={21}/></span><span className={styles.metricLabel}>Configuração da IA</span>
                   <strong>{isSuspended?"IA pausada":savedForTenant?savedForTenant.enabled?"Habilitada":"Pausada":"Não confirmada"}</strong><span className={styles.mutedText}>{isSuspended?"Conta suspensa":"Estado salvo nas configurações"}</span>
                   <span className={styles.metricAction}>Testar no simulador<ArrowRight size={14}/></span>
                 </button>
+                )}
               </section>
             )}
 

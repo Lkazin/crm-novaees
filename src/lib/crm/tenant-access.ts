@@ -7,6 +7,34 @@ import { expectedSlotInstanceName } from "./whatsapp-slots";
 import { resolveMasterOwnTenant } from "./master-own-tenant";
 
 export const TENANT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const OPERATOR_AREA_IDS = [
+  "atendimentos",
+  "contatos",
+  "simulador",
+  "whatsapp",
+  "conhecimento",
+  "artigos",
+  "horarios",
+  "relatorios",
+  "plano",
+  "equipe",
+  "seguranca",
+] as const;
+
+export type OperatorAreaId = (typeof OPERATOR_AREA_IDS)[number];
+
+export const DEFAULT_OPERATOR_TABS: OperatorAreaId[] = ["atendimentos"];
+
+export function normalizeAllowedTabs(raw: unknown): OperatorAreaId[] | null {
+  if (!Array.isArray(raw)) return null;
+  const valid = new Set<string>(OPERATOR_AREA_IDS);
+  const cleaned = raw.filter((item): item is OperatorAreaId => typeof item === "string" && valid.has(item));
+  if (cleaned.includes("conhecimento") && !cleaned.includes("artigos")) {
+    cleaned.push("artigos");
+  }
+  return Array.from(new Set(cleaned));
+}
+
 export type CrmTenant = { id: string; name: string; status: string };
 export type CrmAccess = {
   isMaster: boolean;
@@ -14,7 +42,7 @@ export type CrmAccess = {
   operatorEmail: string;
   token: string;
   tenants: CrmTenant[];
-  memberships: Array<{ tenant_id: string; role: string }>;
+  memberships: Array<{ tenant_id: string; role: string; allowed_tabs?: OperatorAreaId[] | null }>;
 };
 
 export function crmServiceConfig() {
@@ -52,8 +80,15 @@ export async function getCrmAccess(request: NextRequest, checks: AccessChecks = 
   const operator = await (checks.verifyOperator ?? verifyOperator)();
   if (!operator) return null;
   const query = checks.rows ?? supabaseRows;
-  const memberships = await query<Array<{ tenant_id: string; role: string }>>(
-    `crm_tenant_memberships?select=tenant_id,role&is_active=eq.true&user_id=eq.${operator.id}`, operator.token);
+  const rawMemberships = await query<Array<{ tenant_id: string; role: string; allowed_tabs?: unknown }>>(
+    `crm_tenant_memberships?select=tenant_id,role,allowed_tabs&is_active=eq.true&user_id=eq.${operator.id}`,
+    operator.token,
+  );
+  const memberships = rawMemberships.map((m) => ({
+    tenant_id: m.tenant_id,
+    role: m.role,
+    allowed_tabs: normalizeAllowedTabs(m.allowed_tabs),
+  }));
   const ids = memberships.map(m => m.tenant_id).filter(id => TENANT_UUID.test(id));
   const tenants = ids.length ? await query<CrmTenant[]>(
     `crm_tenants?select=id,name,status&id=in.(${ids.join(",")})&order=name.asc`, operator.token) : [];
@@ -74,6 +109,34 @@ export async function authorizeCrmTenant(request: NextRequest, tenantId: string,
   if (!access || !TENANT_UUID.test(tenantId) || !access.tenants.some(t => t.id === tenantId)) return null;
   if (roles && !access.memberships.some(m => m.tenant_id === tenantId && roles.includes(m.role))) return null;
   return access;
+}
+
+export function getAllowedTabsForTenant(
+  access: Pick<CrmAccess, "isMaster" | "memberships">,
+  tenantId: string,
+): OperatorAreaId[] | null {
+  if (access.isMaster) return null;
+  if (!Array.isArray(access.memberships)) return null;
+  const membership = access.memberships.find((m) => m.tenant_id === tenantId);
+  if (!membership) return [];
+  if (membership.role === "owner") return null;
+  if (Array.isArray(membership.allowed_tabs)) {
+    return normalizeAllowedTabs(membership.allowed_tabs) ?? DEFAULT_OPERATOR_TABS;
+  }
+  if (membership.role === "admin") return null;
+  return DEFAULT_OPERATOR_TABS;
+}
+
+export function isAreaAllowed(
+  access: Pick<CrmAccess, "isMaster" | "memberships">,
+  tenantId: string,
+  area: OperatorAreaId | OperatorAreaId[],
+): boolean {
+  if (!access || access.isMaster || !Array.isArray(access.memberships)) return true;
+  const allowed = getAllowedTabsForTenant(access, tenantId);
+  if (allowed === null) return true;
+  const required = Array.isArray(area) ? area : [area];
+  return required.some((item) => allowed.includes(item));
 }
 
 export async function ownsCrmResource(tenantId: string, table: "crm_conversations" | "crm_contacts" | "crm_tags", resourceId: string) {

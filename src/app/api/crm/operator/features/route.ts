@@ -20,7 +20,53 @@ function getServiceConfig() {
 
 async function authorizeTenant(request: NextRequest, tenantId: string) {
   const access = await authorizeCrmTenant(request, tenantId);
-  return { authorized: Boolean(access), operatorId: access?.operatorId ?? undefined, operatorEmail: access?.operatorEmail };
+  return { authorized: Boolean(access), operatorId: access?.operatorId ?? undefined, operatorEmail: access?.operatorEmail, access };
+}
+
+const VALID_OPERATOR_AREAS = new Set([
+  "atendimentos",
+  "contatos",
+  "simulador",
+  "whatsapp",
+  "conhecimento",
+  "artigos",
+  "horarios",
+  "relatorios",
+  "plano",
+  "equipe",
+  "seguranca",
+]);
+
+function normalizeOperatorTabs(raw: unknown, role: string): string[] | null {
+  if (role === "owner") return null;
+  if (!Array.isArray(raw)) {
+    return role === "admin" ? null : ["atendimentos"];
+  }
+  const cleaned = raw.filter((item): item is string => typeof item === "string" && VALID_OPERATOR_AREAS.has(item));
+  if (cleaned.includes("conhecimento") && !cleaned.includes("artigos")) {
+    cleaned.push("artigos");
+  }
+  return Array.from(new Set(cleaned));
+}
+
+function getAccessAllowedTabs(
+  access: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> } | null,
+  tenantId: string,
+): string[] | null {
+  if (!access || access.isMaster || !Array.isArray(access.memberships)) return null;
+  const m = access.memberships.find((row) => row.tenant_id === tenantId);
+  if (!m) return [];
+  return normalizeOperatorTabs(m.allowed_tabs, m.role);
+}
+
+function isFeatureAreaAllowed(
+  access: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> } | null,
+  tenantId: string,
+  required: string[],
+): boolean {
+  const allowed = getAccessAllowedTabs(access, tenantId);
+  if (allowed === null) return true;
+  return required.some((area) => allowed.includes(area));
 }
 
 async function loadTenantSettingsJson(url: string, serviceKey: string, tenantId: string): Promise<StoredTenantConfig> {
@@ -85,7 +131,7 @@ export async function GET(request: NextRequest) {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
-      fetch(url + `/rest/v1/crm_tenant_memberships?is_active=eq.true&tenant_id=eq.${tenantId}&select=user_id,role,created_at`, {
+      fetch(url + `/rest/v1/crm_tenant_memberships?is_active=eq.true&tenant_id=eq.${tenantId}&select=user_id,role,allowed_tabs,created_at`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }),
@@ -99,7 +145,7 @@ export async function GET(request: NextRequest) {
     const exactDbConvsCount = Number(rConvs.headers.get("content-range")?.split("/")?.[1] || 0);
     const contacts = rContacts.ok ? ((await rContacts.json()) as Array<Record<string, unknown>>) : [];
     const channels = rChannels.ok ? ((await rChannels.json()) as Array<{ id: string; instance_name: string; status: string }>) : [];
-    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<{ user_id: string; role: string; created_at?: string }>) : [];
+    const memberships = rMemberships.ok ? ((await rMemberships.json()) as Array<{ user_id: string; role: string; allowed_tabs?: string[] | null; created_at?: string }>) : [];
     const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<Record<string, unknown>>) : [];
 
     const conversationTags: Record<string, string> = dataObj.conversationTags || {};
@@ -116,11 +162,22 @@ export async function GET(request: NextRequest) {
     const upgradeRequests = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
 
     const operatorMetadata: Array<Record<string, unknown>> = Array.isArray(dataObj.teamOperators) ? dataObj.teamOperators : [];
-    const teamOperators: Array<Record<string, unknown>> = memberships.map((m, idx: number) => ({
-      id: m.user_id, name: idx === 0 ? "Operador Principal" : "Operador #" + (idx + 1),
-      email: "—", ...(operatorMetadata.find(o => o.id === m.user_id) || {}),
-      role: m.role, status: "active", createdAt: m.created_at,
-    }));
+    const teamOperators: Array<Record<string, unknown>> = memberships.map((m, idx: number) => {
+      const meta = operatorMetadata.find(o => o.id === m.user_id) || {};
+      const allowedTabs = Array.isArray(m.allowed_tabs)
+        ? normalizeOperatorTabs(m.allowed_tabs, m.role)
+        : normalizeOperatorTabs(meta.allowedTabs, m.role);
+      return {
+        id: m.user_id,
+        name: idx === 0 ? "Operador Principal" : "Operador #" + (idx + 1),
+        email: "—",
+        ...meta,
+        role: m.role,
+        allowedTabs,
+        status: "active",
+        createdAt: m.created_at,
+      };
+    });
 
     // Apply report filters
     const nowMs = Date.now();
@@ -279,10 +336,18 @@ export async function GET(request: NextRequest) {
       };
     }
 
+    const canViewTeam = isFeatureAreaAllowed(auth.access, tenantId, ["equipe", "relatorios"]);
+    const viewerAllowedTabs = getAccessAllowedTabs(auth.access, tenantId);
+    const viewerMembership = Array.isArray(auth.access?.memberships)
+      ? auth.access.memberships.find((m) => m.tenant_id === tenantId)
+      : undefined;
+
     return privateJson({
       quickReplies: crmFeatureAllowed(effectivePlan, "quick_replies") ? quickReplies : [],
-      teamOperators,
+      teamOperators: canViewTeam ? teamOperators : [],
       maxOperators: effectivePlan.maxOperators,
+      viewerRole: auth.access?.isMaster ? "master" : (viewerMembership?.role ?? ""),
+      viewerAllowedTabs,
       conversationTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? conversationTags : {},
       conversationPriorities: crmFeatureAllowed(effectivePlan, "conversation_priority") ? conversationPriorities : {},
       satisfactionSurveys: crmFeatureAllowed(effectivePlan, "satisfaction_survey") ? satisfactionSurveys : [],
@@ -351,6 +416,25 @@ export async function POST(request: NextRequest) {
     if (["add_operator", "update_operator", "revoke_operator", "set_slot_label", "buy_recharge", "request_recharge", "request_plan_upgrade"].includes(action) &&
       !await authorizeCrmTenant(request, tenantId, ["owner", "admin"])) {
       return privateJson({ error: "not_authorized" }, 403);
+    }
+
+    const actionAreaMap: Record<string, string[]> = {
+      buy_recharge: ["plano"],
+      request_recharge: ["plano"],
+      request_upgrade: ["plano"],
+      request_plan_upgrade: ["plano"],
+      add_operator: ["equipe"],
+      update_operator: ["equipe"],
+      revoke_operator: ["equipe"],
+      set_slot_label: ["whatsapp"],
+      set_priority: ["atendimentos"],
+      submit_satisfaction: ["atendimentos"],
+      save_quick_reply: ["atendimentos"],
+      delete_quick_reply: ["atendimentos"],
+    };
+    const requiredAreas = actionAreaMap[action];
+    if (requiredAreas && !isFeatureAreaAllowed(writerAuth, tenantId, requiredAreas)) {
+      return privateJson({ error: "area_forbidden", message: "Seu usuário não tem permissão para executar esta ação." }, 403);
     }
 
     const dataObj = await loadTenantSettingsJson(url, serviceKey, tenantId);
@@ -612,9 +696,56 @@ export async function POST(request: NextRequest) {
           method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
           body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { name } }),
         });
-        if (!rUser.ok) return privateJson({ error: "operator_account_creation_failed", message: "Não foi possível criar a conta do operador." }, rUser.status === 422 ? 409 : 503);
-        const uData = await rUser.json();
-        const userId = typeof uData.id === "string" ? uData.id : "";
+
+        let userId = "";
+        let reusedExistingUser = false;
+        if (rUser.ok) {
+          const uData = await rUser.json();
+          userId = typeof uData.id === "string" ? uData.id : "";
+        } else if (rUser.status === 422) {
+          let matchedUserId = "";
+          for (let page = 1; page <= 10; page += 1) {
+            const rList = await fetch(`${url}/auth/v1/admin/users?page=${page}&per_page=200`, {
+              headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+              cache: "no-store",
+            });
+            if (!rList.ok) break;
+            const listJson = (await rList.json()) as { users?: Array<{ id?: string; email?: string }> };
+            const users = Array.isArray(listJson?.users) ? listJson.users : [];
+            const found = users.find((u) => String(u.email || "").trim().toLowerCase() === email);
+            if (found?.id) {
+              matchedUserId = found.id;
+              break;
+            }
+            if (users.length < 200) break;
+          }
+          if (!UUID.test(matchedUserId)) {
+            return privateJson({ error: "operator_account_creation_failed", message: "Não foi possível criar ou localizar a conta do operador." }, 409);
+          }
+
+          const rActive = await fetch(
+            `${url}/rest/v1/crm_tenant_memberships?user_id=eq.${matchedUserId}&is_active=eq.true&select=tenant_id`,
+            { headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey }, cache: "no-store" },
+          );
+          const activeRows = rActive.ok ? ((await rActive.json()) as Array<{ tenant_id: string }>) : [];
+          if (activeRows.length > 0) {
+            return privateJson({ error: "operator_email_in_use", message: "Este e-mail já pertence a um usuário ativo no CRM." }, 409);
+          }
+
+          const rUpdateAuth = await fetch(`${url}/auth/v1/admin/users/${matchedUserId}`, {
+            method: "PUT",
+            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ password, email_confirm: true, user_metadata: { name } }),
+          });
+          if (!rUpdateAuth.ok) {
+            return privateJson({ error: "operator_account_creation_failed", message: "Não foi possível reativar a conta do operador." }, 503);
+          }
+          userId = matchedUserId;
+          reusedExistingUser = true;
+        } else {
+          return privateJson({ error: "operator_account_creation_failed", message: "Não foi possível criar a conta do operador." }, 503);
+        }
+
         if (!UUID.test(userId)) throw new Error("operator_account_creation_unconfirmed");
         let membershipConfirmed = false;
         try {
@@ -631,9 +762,23 @@ export async function POST(request: NextRequest) {
           if (result?.added !== true) throw new Error("operator_membership_creation_unconfirmed");
           membershipConfirmed = true;
         } finally {
-          if (!membershipConfirmed) await fetch(url + "/auth/v1/admin/users/" + userId, {
+          if (!membershipConfirmed && !reusedExistingUser) await fetch(url + "/auth/v1/admin/users/" + userId, {
             method: "DELETE", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
           }).catch(() => {});
+        }
+
+        const hasExplicitTabs = Array.isArray(body.allowedTabs);
+        const resolvedAllowedTabs = hasExplicitTabs
+          ? normalizeOperatorTabs(body.allowedTabs, role)
+          : normalizeOperatorTabs(undefined, role);
+
+        if (hasExplicitTabs) {
+          const rTabs = await fetch(url + "/rest/v1/rpc/crm_set_operator_allowed_tabs", {
+            method: "POST",
+            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ p_tenant: tenantId, p_user: userId, p_allowed_tabs: resolvedAllowedTabs }),
+          });
+          if (!rTabs.ok) throw new Error("operator_tabs_assignment_failed");
         }
 
         const newOp = {
@@ -641,32 +786,64 @@ export async function POST(request: NextRequest) {
           name,
           email,
           role,
+          allowedTabs: resolvedAllowedTabs,
           status: "active",
           createdAt: new Date().toISOString()
         };
-        teamOperators.push(newOp);
-        dataObj.teamOperators = teamOperators;
+        const nextTeam = teamOperators.filter((o) => o.id !== userId && String(o.email || "").toLowerCase() !== email);
+        nextTeam.push(newOp);
+        dataObj.teamOperators = nextTeam;
         await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");
 
-        return privateJson({ saved: true, operator: newOp, teamOperators });
+        return privateJson({ saved: true, operator: newOp, teamOperators: nextTeam });
       }
 
       if (action === "update_operator") {
         const operatorId = String(body.operatorId || "");
         const role = ["admin", "agent", "viewer"].includes(body.role) ? body.role : "agent";
-        const idx = teamOperators.findIndex(o => o.id === operatorId);
-        if (idx >= 0) {
-          teamOperators[idx].role = role;
-          if (typeof body.name === "string" && body.name.trim()) {
-            teamOperators[idx].name = body.name.trim();
-          }
-        }
         if (!UUID.test(operatorId)) return privateJson({ error: "invalid_operator" }, 400);
         const rMember = await fetch(url + "/rest/v1/rpc/crm_update_operator_membership", {
           method: "POST", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
           body: JSON.stringify({ p_tenant: tenantId, p_user: operatorId, p_role: role }),
         });
         if (!rMember.ok) return privateJson({ error: "operator_update_denied" }, rMember.status === 404 ? 404 : 403);
+
+        const hasAllowedTabsField = body.allowedTabs !== undefined;
+        const resolvedAllowedTabs = hasAllowedTabsField
+          ? (body.allowedTabs === null
+            ? (role === "admin" ? null : ["atendimentos"])
+            : normalizeOperatorTabs(body.allowedTabs, role))
+          : undefined;
+
+        if (hasAllowedTabsField) {
+          const rTabs = await fetch(url + "/rest/v1/rpc/crm_set_operator_allowed_tabs", {
+            method: "POST",
+            headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ p_tenant: tenantId, p_user: operatorId, p_allowed_tabs: resolvedAllowedTabs ?? null }),
+          });
+          if (!rTabs.ok) return privateJson({ error: "operator_update_denied" }, 403);
+        }
+
+        const idx = teamOperators.findIndex(o => o.id === operatorId);
+        if (idx >= 0) {
+          teamOperators[idx].role = role;
+          if (typeof body.name === "string" && body.name.trim()) {
+            teamOperators[idx].name = body.name.trim();
+          }
+          if (hasAllowedTabsField) {
+            teamOperators[idx].allowedTabs = resolvedAllowedTabs;
+          }
+        } else {
+          teamOperators.push({
+            id: operatorId,
+            name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : "Operador",
+            email: "—",
+            role,
+            allowedTabs: resolvedAllowedTabs ?? normalizeOperatorTabs(undefined, role),
+            status: "active",
+            createdAt: new Date().toISOString(),
+          });
+        }
 
         dataObj.teamOperators = teamOperators;
         await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "teamOperators");

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import Redis from "ioredis";
-import { getCrmAccess, selectCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
+import { getAllowedTabsForTenant, getCrmAccess, selectCrmTenant, crmFeatureAllowed } from "@/lib/crm/tenant-access";
 import { privateJson, supabaseRows } from "@/lib/crm/supabase-server";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { getEffectiveTenantPlan, getMasterPlans } from "@/lib/crm/plans";
@@ -312,7 +312,11 @@ export async function GET(request: NextRequest) {
       escalations,
       tags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? tags : [],
       contactTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? contactTags : [],
-      viewer: { email: access.isMaster ? "" : access.operatorEmail, role: access.isMaster ? "master" : (access.memberships.find(m => m.tenant_id === selected)?.role ?? "") }
+      viewer: {
+        email: access.isMaster ? "" : access.operatorEmail,
+        role: access.isMaster ? "master" : (access.memberships.find(m => m.tenant_id === selected)?.role ?? ""),
+        allowedTabs: getAllowedTabsForTenant(access, selected),
+      }
     });
   } catch {
     return privateJson({ error: "crm_data_unavailable" }, 503);

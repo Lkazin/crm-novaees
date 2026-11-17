@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { authorizeCrmTenant, isAreaAllowed } from "@/lib/crm/tenant-access";
 import {
   cancelDeletion,
   daysUntilPurge,
@@ -32,7 +32,9 @@ export async function GET(request: NextRequest) {
   try {
     const tenantId = await tenantIdFrom(request);
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
-    if (!(await authorizeCrmTenant(request, tenantId, ["owner", "admin"]))) return privateJson({ error: "unauthorized" }, 401);
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin"]);
+    if (!access) return privateJson({ error: "unauthorized" }, 401);
+    if (!isAreaAllowed(access, tenantId, "plano")) return privateJson({ error: "area_forbidden" }, 403);
 
     const req = await getActiveDeletionRequest(tenantId);
     if (!req) return privateJson({ scheduled: false });
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
     const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin"]);
     if (!access) return privateJson({ error: "unauthorized" }, 401);
+    if (!isAreaAllowed(access, tenantId, "plano")) return privateJson({ error: "area_forbidden" }, 403);
 
     const reason = typeof body.reason === "string" ? body.reason.slice(0, 500) : undefined;
     const req = await scheduleDeletion({
@@ -87,7 +90,9 @@ export async function DELETE(request: NextRequest) {
   try {
     const tenantId = await tenantIdFrom(request);
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
-    if (!(await authorizeCrmTenant(request, tenantId, ["owner", "admin"]))) return privateJson({ error: "unauthorized" }, 401);
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin"]);
+    if (!access) return privateJson({ error: "unauthorized" }, 401);
+    if (!isAreaAllowed(access, tenantId, "plano")) return privateJson({ error: "area_forbidden" }, 403);
 
     const ok = await cancelDeletion(tenantId);
     return privateJson({ cancelled: ok });

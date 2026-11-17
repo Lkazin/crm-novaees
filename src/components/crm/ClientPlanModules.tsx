@@ -31,11 +31,34 @@ export type QuickReplyItem = {
   category?: string;
 };
 
+export const OPERATOR_AREA_OPTIONS: Array<{ id: string; label: string; description: string }> = [
+  { id: "atendimentos", label: "WhatsApp Atendimento", description: "Conversas ao vivo, tags, fila e prioridades" },
+  { id: "contatos", label: "Contatos da Loja", description: "Lista de clientes e reengajamento" },
+  { id: "simulador", label: "Chat de Teste (Simulador)", description: "Simular e testar respostas da IA" },
+  { id: "whatsapp", label: "Conectar WhatsApp", description: "QR Code e conexões de números" },
+  { id: "conhecimento", label: "Minha IA (Cérebro)", description: "Prompt, instruções e base de conhecimento" },
+  { id: "horarios", label: "Horários de Atendimento", description: "Expediente e encerramento automático" },
+  { id: "relatorios", label: "Indicadores & Relatórios", description: "Métricas de desempenho e avaliações" },
+  { id: "plano", label: "Meu Plano & Recargas", description: "Franquia, recargas e upgrades" },
+  { id: "equipe", label: "Equipe & Operadores", description: "Convidar e gerenciar atendentes" },
+  { id: "seguranca", label: "Recuperação de Senha", description: "Segurança e recuperação da conta" },
+];
+
+function expandAllowedTabsForSubmit(mode: "whatsapp_only" | "custom", tabs: string[]): string[] {
+  if (mode === "whatsapp_only") return ["atendimentos"];
+  const unique = Array.from(new Set(tabs.length > 0 ? tabs : ["atendimentos"]));
+  if (unique.includes("conhecimento") && !unique.includes("artigos")) {
+    unique.push("artigos");
+  }
+  return unique;
+}
+
 export type TeamOperatorItem = {
   id: string;
   name: string;
   email: string;
   role: "admin" | "agent" | "viewer";
+  allowedTabs?: string[] | null;
   status: "active" | "revoked";
   createdAt: string;
 };
@@ -611,8 +634,8 @@ export function TeamOperatorsSection({
   isSuspended: boolean;
   ownerEmail?: string;
   ownerName?: string;
-  onAddOperator: (name: string, email: string, role: string, password?: string) => Promise<{ ok: boolean; message?: string }>;
-  onUpdateOperatorRole?: (operatorId: string, role: string) => Promise<{ ok: boolean; message?: string }>;
+  onAddOperator: (name: string, email: string, role: string, password?: string, allowedTabs?: string[] | null) => Promise<{ ok: boolean; message?: string }>;
+  onUpdateOperatorRole?: (operatorId: string, role: string, allowedTabs?: string[] | null) => Promise<{ ok: boolean; message?: string }>;
   onRevokeOperator: (operatorId: string) => Promise<void>;
   onRequestUpgrade: (targetPlan: string, reason: string) => void;
 }) {
@@ -622,6 +645,8 @@ export function TeamOperatorsSection({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState("agent");
+  const [accessMode, setAccessMode] = useState<"whatsapp_only" | "custom">("whatsapp_only");
+  const [customTabs, setCustomTabs] = useState<string[]>(["atendimentos"]);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
@@ -630,15 +655,25 @@ export function TeamOperatorsSection({
   const [editRoleModalOpen, setEditRoleModalOpen] = useState(false);
   const [selectedOpToEdit, setSelectedOpToEdit] = useState<TeamOperatorItem | null>(null);
   const [newRole, setNewRole] = useState("agent");
+  const [editAccessMode, setEditAccessMode] = useState<"whatsapp_only" | "custom">("whatsapp_only");
+  const [editCustomTabs, setEditCustomTabs] = useState<string[]>(["atendimentos"]);
   const [updatingRole, setUpdatingRole] = useState(false);
 
-  // Separa atendentes convidados do titular
-  const employeeOperators = operators.filter(o => (o.role as string) !== "owner");
+  // Separa atendentes convidados do titular (considera titular um usuário 'owner' explícito ou o admin principal quando não há 'owner')
+  const hasExplicitOwner = operators.some(o => (o.role as string) === "owner");
+  const fallbackPrimaryAdminId = !hasExplicitOwner
+    ? operators.find(o => o.status === "active" && o.role === "admin")?.id
+    : undefined;
+  const employeeOperators = operators.filter(o => (o.role as string) !== "owner" && o.id !== fallbackPrimaryAdminId);
   const activeEmployeeOperators = employeeOperators.filter(o => o.status === "active");
-  // Total de vagas de equipe: se maxOperators >= 3, são 2 vagas de atendentes (+ 1 titular).
+  // Total de vagas de equipe: 1 acesso para o titular + demais vagas para atendentes.
   const teamLimit = Math.max(0, maxOperators - 1);
   const totalUsed = activeEmployeeOperators.length;
   const limitReached = totalUsed >= teamLimit;
+
+  const toggleTabInList = (setter: React.Dispatch<React.SetStateAction<string[]>>, tabId: string) => {
+    setter(prev => prev.includes(tabId) ? prev.filter(id => id !== tabId) : [...prev, tabId]);
+  };
 
   const handleGeneratePassword = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -662,14 +697,21 @@ export function TeamOperatorsSection({
       setErr("Defina uma senha com no mínimo 6 caracteres para o atendente.");
       return;
     }
+    if (accessMode === "custom" && customTabs.length === 0) {
+      setErr("Selecione pelo menos uma área de acesso para o atendente.");
+      return;
+    }
+    const allowedTabsToSend = expandAllowedTabsForSubmit(accessMode, customTabs);
     setSubmitting(true);
     try {
-      const res = await onAddOperator(name.trim(), email.trim(), role, password);
+      const res = await onAddOperator(name.trim(), email.trim(), role, password, allowedTabsToSend);
       if (res.ok) {
         setName("");
         setEmail("");
         setPassword("");
         setRole("agent");
+        setAccessMode("whatsapp_only");
+        setCustomTabs(["atendimentos"]);
         setModalOpen(false);
         setNotice("Atendente convidado com sucesso! O acesso exclusivo foi criado.");
       } else {
@@ -682,13 +724,18 @@ export function TeamOperatorsSection({
 
   const handleSaveRole = async () => {
     if (!selectedOpToEdit || !onUpdateOperatorRole) return;
+    if (editAccessMode === "custom" && editCustomTabs.length === 0) {
+      setErr("Selecione pelo menos uma área de acesso para o atendente.");
+      return;
+    }
+    const allowedTabsToSend = expandAllowedTabsForSubmit(editAccessMode, editCustomTabs);
     setUpdatingRole(true);
     try {
-      const res = await onUpdateOperatorRole(selectedOpToEdit.id, newRole);
+      const res = await onUpdateOperatorRole(selectedOpToEdit.id, newRole, allowedTabsToSend);
       if (res.ok) {
         setEditRoleModalOpen(false);
         setSelectedOpToEdit(null);
-        setNotice("Função do atendente atualizada com sucesso!");
+        setNotice("Função e permissões do atendente atualizadas com sucesso!");
       } else {
         setErr(res.message || "Falha ao atualizar função do atendente.");
       }
@@ -902,6 +949,17 @@ export function TeamOperatorsSection({
               : op.role === "viewer"
               ? "Visualizador (Somente Leitura)"
               : "Atendente Comercial";
+            const effectiveTabs = op.allowedTabs === undefined
+              ? (op.role === "admin" ? null : ["atendimentos"])
+              : op.allowedTabs;
+            const visibleTabLabels = effectiveTabs === null
+              ? []
+              : OPERATOR_AREA_OPTIONS.filter(opt => effectiveTabs.includes(opt.id)).map(opt => opt.label);
+            const accessSummary = effectiveTabs === null
+              ? "Acesso completo ao painel"
+              : visibleTabLabels.length === 1 && effectiveTabs.includes("atendimentos")
+                ? "Somente WhatsApp Atendimento"
+                : `${visibleTabLabels.length} área(s): ${visibleTabLabels.join(", ")}`;
 
             return (
               <div
@@ -948,6 +1006,9 @@ export function TeamOperatorsSection({
                     <small style={{ color: "#9ca3af", fontSize: "12px", display: "block", marginTop: "2px" }}>
                       {op.email}
                     </small>
+                    <small style={{ color: "#c4b5fd", fontSize: "11px", display: "block", marginTop: "4px" }}>
+                      Áreas: {accessSummary}
+                    </small>
                   </div>
                 </div>
 
@@ -969,6 +1030,16 @@ export function TeamOperatorsSection({
                       onClick={() => {
                         setSelectedOpToEdit(op);
                         setNewRole(op.role);
+                        if (effectiveTabs === null) {
+                          setEditAccessMode("custom");
+                          setEditCustomTabs(OPERATOR_AREA_OPTIONS.map(opt => opt.id));
+                        } else if (effectiveTabs.length === 1 && effectiveTabs[0] === "atendimentos") {
+                          setEditAccessMode("whatsapp_only");
+                          setEditCustomTabs(["atendimentos"]);
+                        } else {
+                          setEditAccessMode("custom");
+                          setEditCustomTabs(effectiveTabs.filter(id => id !== "artigos"));
+                        }
                         setEditRoleModalOpen(true);
                       }}
                       className="op-refresh"
@@ -1001,7 +1072,7 @@ export function TeamOperatorsSection({
           position: "fixed", inset: 0, background: "rgba(8, 6, 18, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
           display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
         }}>
-          <div className="op-card" style={{ maxWidth: "480px", width: "100%", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "26px", display: "flex", flexDirection: "column", gap: "18px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
+          <div className="op-card" style={{ maxWidth: "540px", width: "100%", maxHeight: "90vh", overflowY: "auto", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "26px", display: "flex", flexDirection: "column", gap: "18px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "12px", borderBottom: "1px solid #372f4d", paddingBottom: "14px" }}>
               <div style={{ width: "40px", height: "40px", borderRadius: "10px", background: "var(--grad-primary)", display: "grid", placeItems: "center" }}>
                 <UserPlus size={20} color="#fff" />
@@ -1104,6 +1175,103 @@ export function TeamOperatorsSection({
                 </select>
               </div>
 
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px", borderRadius: "12px", background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: "#c2bed4" }}>
+                  Áreas que este atendente poderá acessar no painel
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAccessMode("whatsapp_only");
+                      setCustomTabs(["atendimentos"]);
+                    }}
+                    style={{
+                      padding: "9px 10px",
+                      borderRadius: "9px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      background: accessMode === "whatsapp_only" ? "rgba(139, 92, 246, 0.25)" : "#120e20",
+                      border: `1px solid ${accessMode === "whatsapp_only" ? "#a855f7" : "#443c5e"}`,
+                      color: accessMode === "whatsapp_only" ? "#f3e8ff" : "#c2bed4"
+                    }}
+                  >
+                    💬 Somente WhatsApp (Recomendado)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAccessMode("custom")}
+                    style={{
+                      padding: "9px 10px",
+                      borderRadius: "9px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      background: accessMode === "custom" ? "rgba(236, 72, 153, 0.2)" : "#120e20",
+                      border: `1px solid ${accessMode === "custom" ? "#ec4899" : "#443c5e"}`,
+                      color: accessMode === "custom" ? "#fce7f3" : "#c2bed4"
+                    }}
+                  >
+                    ⚙️ Personalizar áreas
+                  </button>
+                </div>
+
+                {accessMode === "whatsapp_only" ? (
+                  <small style={{ color: "#a5b4fc", fontSize: "11px" }}>
+                    O operador entrará direto em <strong>Atendimentos ao Vivo</strong> para responder clientes no WhatsApp, sem acesso a configurações da loja, IA ou financeiro.
+                  </small>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <small style={{ color: "#9ca3af", fontSize: "11px" }}>Marque as seções liberadas:</small>
+                      <button
+                        type="button"
+                        onClick={() => setCustomTabs(OPERATOR_AREA_OPTIONS.map(o => o.id))}
+                        style={{ background: "none", border: "none", color: "#ec4899", fontSize: "11px", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}
+                      >
+                        Selecionar todas
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", maxHeight: "170px", overflowY: "auto" }}>
+                      {OPERATOR_AREA_OPTIONS.map(opt => {
+                        const checked = customTabs.includes(opt.id);
+                        return (
+                          <label
+                            key={opt.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: "8px",
+                              padding: "7px 9px",
+                              borderRadius: "8px",
+                              background: checked ? "rgba(139, 92, 246, 0.14)" : "#120e20",
+                              border: `1px solid ${checked ? "rgba(168, 85, 247, 0.5)" : "#2f2847"}`,
+                              cursor: "pointer",
+                              fontSize: "11px",
+                              color: "#e2e8f0"
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleTabInList(setCustomTabs, opt.id)}
+                              style={{ marginTop: "2px", accentColor: "#ec4899" }}
+                            />
+                            <span>
+                              <strong style={{ display: "block", color: "#fff" }}>{opt.label}</strong>
+                              <span style={{ color: "#9ca3af", fontSize: "10px" }}>{opt.description}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
                 <button
                   type="button"
@@ -1133,12 +1301,12 @@ export function TeamOperatorsSection({
           position: "fixed", inset: 0, background: "rgba(8, 6, 18, 0.82)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
           display: "grid", placeItems: "center", zIndex: 9999, padding: "20px"
         }}>
-          <div className="op-card" style={{ maxWidth: "420px", width: "100%", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
+          <div className="op-card" style={{ maxWidth: "520px", width: "100%", maxHeight: "90vh", overflowY: "auto", background: "#161327", border: "1px solid rgba(139, 92, 246, 0.35)", borderRadius: "20px", padding: "24px", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 20px 50px rgba(0, 0, 0, 0.7)" }}>
             <h3 style={{ margin: 0, fontSize: "17px", color: "#fff" }}>
               Alterar Função — {selectedOpToEdit.name}
             </h3>
             <p style={{ margin: 0, fontSize: "13px", color: "#c2bed4" }}>
-              Selecione o nível de permissão deste atendente no painel da sua loja:
+              Selecione o nível de permissão e as áreas liberadas no painel da sua loja:
             </p>
 
             <select
@@ -1150,6 +1318,99 @@ export function TeamOperatorsSection({
               <option value="admin">Supervisor (Pode visualizar todas as conversas e relatórios)</option>
               <option value="viewer">Visualizador (Somente leitura)</option>
             </select>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px", borderRadius: "12px", background: "rgba(255,255,255,0.03)", border: "1px solid #372f4d" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#c2bed4" }}>
+                Áreas permitidas no painel
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditAccessMode("whatsapp_only");
+                    setEditCustomTabs(["atendimentos"]);
+                  }}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: "9px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    background: editAccessMode === "whatsapp_only" ? "rgba(139, 92, 246, 0.25)" : "#120e20",
+                    border: `1px solid ${editAccessMode === "whatsapp_only" ? "#a855f7" : "#443c5e"}`,
+                    color: editAccessMode === "whatsapp_only" ? "#f3e8ff" : "#c2bed4"
+                  }}
+                >
+                  💬 Somente WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditAccessMode("custom")}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: "9px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    background: editAccessMode === "custom" ? "rgba(236, 72, 153, 0.2)" : "#120e20",
+                    border: `1px solid ${editAccessMode === "custom" ? "#ec4899" : "#443c5e"}`,
+                    color: editAccessMode === "custom" ? "#fce7f3" : "#c2bed4"
+                  }}
+                >
+                  ⚙️ Personalizar áreas
+                </button>
+              </div>
+
+              {editAccessMode === "custom" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <small style={{ color: "#9ca3af", fontSize: "11px" }}>Marque as seções liberadas:</small>
+                    <button
+                      type="button"
+                      onClick={() => setEditCustomTabs(OPERATOR_AREA_OPTIONS.map(o => o.id))}
+                      style={{ background: "none", border: "none", color: "#ec4899", fontSize: "11px", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      Selecionar todas
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", maxHeight: "170px", overflowY: "auto" }}>
+                    {OPERATOR_AREA_OPTIONS.map(opt => {
+                      const checked = editCustomTabs.includes(opt.id);
+                      return (
+                        <label
+                          key={opt.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: "8px",
+                            padding: "7px 9px",
+                            borderRadius: "8px",
+                            background: checked ? "rgba(139, 92, 246, 0.14)" : "#120e20",
+                            border: `1px solid ${checked ? "rgba(168, 85, 247, 0.5)" : "#2f2847"}`,
+                            cursor: "pointer",
+                            fontSize: "11px",
+                            color: "#e2e8f0"
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleTabInList(setEditCustomTabs, opt.id)}
+                            style={{ marginTop: "2px", accentColor: "#ec4899" }}
+                          />
+                          <span>
+                            <strong style={{ display: "block", color: "#fff" }}>{opt.label}</strong>
+                            <span style={{ color: "#9ca3af", fontSize: "10px" }}>{opt.description}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
               <button

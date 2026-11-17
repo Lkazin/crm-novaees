@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireTenantFeature } from "@/lib/crm/plans";
-import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { authorizeCrmTenant, isAreaAllowed } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
 
   const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
   if (!access) return privateJson({ error: "not_authorized" }, 403);
+  if (!isAreaAllowed(access, tenantId, ["contatos", "atendimentos"])) {
+    return privateJson({ error: "area_forbidden", message: "Sem permissão para acessar campanhas de contatos." }, 403);
+  }
 
   const featureGuard = await requireTenantFeature(tenantId, "human_handoff");
   if (!featureGuard.allowed) {
@@ -115,6 +118,9 @@ export async function POST(request: NextRequest) {
 
     const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
     if (!access) return privateJson({ error: "not_authorized" }, 403);
+    if (!isAreaAllowed(access, tenantId, ["contatos", "atendimentos"])) {
+      return privateJson({ error: "area_forbidden", message: "Sem permissão para disparar reengajamento para contatos." }, 403);
+    }
 
     const featureGuard = await requireTenantFeature(tenantId, "human_handoff");
     if (!featureGuard.allowed) {

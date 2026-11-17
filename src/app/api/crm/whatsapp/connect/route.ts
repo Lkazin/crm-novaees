@@ -203,6 +203,14 @@ export async function POST(req: NextRequest) {
     const channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
     if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
     tenantId = channelAccess.tenant.id;
+    const accessObj = (channelAccess as { access?: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> } }).access;
+    if (!masterAuth.authorized && accessObj && !accessObj.isMaster && Array.isArray(accessObj.memberships)) {
+      const m = accessObj.memberships.find((row) => row.tenant_id === tenantId);
+      const allowed = m?.role === "owner" ? null : Array.isArray(m?.allowed_tabs) ? m.allowed_tabs : m?.role === "admin" ? null : ["atendimentos"];
+      if (allowed && !allowed.includes("whatsapp")) {
+        return NextResponse.json({ error: "area_forbidden", message: "Sem permissão para gerenciar conexões do WhatsApp." }, { status: 403 });
+      }
+    }
 
     // 2. FAIL-CLOSED verification of plan limits, slot permissions, and concurrent attempts
     if (tenantId) {
@@ -476,6 +484,14 @@ export async function DELETE(req: NextRequest) {
       req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined,
       instanceName);
     if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
+    const accessObj = (channelAccess as { access?: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> } }).access;
+    if (!masterAuth.authorized && accessObj && !accessObj.isMaster && Array.isArray(accessObj.memberships)) {
+      const m = accessObj.memberships.find((row) => row.tenant_id === channelAccess.tenant.id);
+      const allowed = m?.role === "owner" ? null : Array.isArray(m?.allowed_tabs) ? m.allowed_tabs : m?.role === "admin" ? null : ["atendimentos"];
+      if (allowed && !allowed.includes("whatsapp")) {
+        return NextResponse.json({ error: "area_forbidden", message: "Sem permissão para desconectar o WhatsApp." }, { status: 403 });
+      }
+    }
 
     try {
       await fetch(`${url}/instance/logout/${encodeURIComponent(instanceName)}`, {

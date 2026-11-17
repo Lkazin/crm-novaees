@@ -2,7 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { MASTER_COOKIE_NAME, signMasterToken } from "./master-auth";
-import { authorizeCrmInstance, authorizeCrmTenant, getCrmAccess, ownsCrmResource, selectCrmTenant } from "./tenant-access";
+import {
+  DEFAULT_OPERATOR_TABS,
+  type OperatorAreaId,
+  authorizeCrmInstance,
+  authorizeCrmTenant,
+  getAllowedTabsForTenant,
+  getCrmAccess,
+  isAreaAllowed,
+  ownsCrmResource,
+  selectCrmTenant,
+} from "./tenant-access";
 
 const OWN = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -89,4 +99,37 @@ test("Master CRM scope resolves the agency server-side and rejects other tenants
     globalThis.fetch = originalFetch;
     names.forEach((name, index) => previous[index] === undefined ? delete process.env[name] : process.env[name] = previous[index]);
   }
+});
+
+test("Operator allowed_tabs restricts non-admin defaults to atendimentos while preserving explicit custom areas", () => {
+  const agentDefault = {
+    isMaster: false,
+    memberships: [{ tenant_id: OTHER, role: "agent", allowed_tabs: null }],
+  };
+  assert.deepEqual(getAllowedTabsForTenant(agentDefault, OTHER), DEFAULT_OPERATOR_TABS);
+  assert.equal(isAreaAllowed(agentDefault, OTHER, "atendimentos"), true);
+  assert.equal(isAreaAllowed(agentDefault, OTHER, "whatsapp"), false);
+  assert.equal(isAreaAllowed(agentDefault, OTHER, "equipe"), false);
+
+  const agentCustom = {
+    isMaster: false,
+    memberships: [{ tenant_id: OTHER, role: "agent", allowed_tabs: ["atendimentos", "conhecimento"] as OperatorAreaId[] }],
+  };
+  assert.equal(isAreaAllowed(agentCustom, OTHER, "atendimentos"), true);
+  assert.equal(isAreaAllowed(agentCustom, OTHER, "conhecimento"), true);
+  assert.equal(isAreaAllowed(agentCustom, OTHER, "whatsapp"), false);
+
+  const adminDefault = {
+    isMaster: false,
+    memberships: [{ tenant_id: OTHER, role: "admin", allowed_tabs: null }],
+  };
+  assert.equal(getAllowedTabsForTenant(adminDefault, OTHER), null);
+  assert.equal(isAreaAllowed(adminDefault, OTHER, "equipe"), true);
+
+  const ownerAccess = {
+    isMaster: false,
+    memberships: [{ tenant_id: OTHER, role: "owner", allowed_tabs: ["atendimentos"] as OperatorAreaId[] }],
+  };
+  assert.equal(getAllowedTabsForTenant(ownerAccess, OTHER), null);
+  assert.equal(isAreaAllowed(ownerAccess, OTHER, "plano"), true);
 });

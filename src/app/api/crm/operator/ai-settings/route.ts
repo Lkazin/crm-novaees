@@ -12,6 +12,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function hasAiSettingsArea(
+  access: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> },
+  tenantId: string,
+  requiredAreas: string[],
+): boolean {
+  if (access.isMaster || !Array.isArray(access.memberships)) return true;
+  const m = access.memberships.find((row) => row.tenant_id === tenantId);
+  if (!m) return false;
+  if (m.role === "owner") return true;
+  const allowed = Array.isArray(m.allowed_tabs) ? m.allowed_tabs : m.role === "admin" ? null : ["atendimentos"];
+  if (!allowed) return true;
+  return requiredAreas.some((area) => allowed.includes(area));
+}
 const ALL_DAYS = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"] as const;
 
 function getServiceConfig() {
@@ -319,6 +332,16 @@ export async function POST(request: NextRequest) {
 
     const hasAgentFields = body.agentLabel !== undefined || body.instructions !== undefined || body.enabled !== undefined;
     const incomingOperatingHours = body.operatingHours;
+
+    if ((hasAgentFields || body.storeInfo !== undefined) && !hasAiSettingsArea(access, tenantId, ["conhecimento", "artigos"])) {
+      return privateJson({ error: "area_forbidden", message: "Sem permissão para alterar configurações da IA ou base de conhecimento." }, 403);
+    }
+    if (incomingOperatingHours && typeof incomingOperatingHours === "object" && !hasAiSettingsArea(access, tenantId, ["horarios"])) {
+      return privateJson({ error: "area_forbidden", message: "Sem permissão para alterar horários de atendimento." }, 403);
+    }
+    if (body.autoCloseSettings && typeof body.autoCloseSettings === "object" && !hasAiSettingsArea(access, tenantId, ["atendimentos", "horarios"])) {
+      return privateJson({ error: "area_forbidden", message: "Sem permissão para alterar encerramento automático." }, 403);
+    }
 
     // Validate operating hours permissions on backend
     const allowAdvancedHours = crmFeatureAllowed(effectivePlan, "business_hours");

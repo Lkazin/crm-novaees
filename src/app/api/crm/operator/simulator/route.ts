@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireTenantFeature } from "@/lib/crm/plans";
-import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { authorizeCrmTenant, isAreaAllowed } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { generateAnswer, StoreAiContext } from "@/lib/agent/ai";
 import { AiConfig } from "@/lib/agent/config";
@@ -57,6 +57,9 @@ export async function POST(request: NextRequest) {
     // Verify operator belongs to this tenant
     const access = await authorizeCrmTenant(request, tenantId);
     if (!access) return privateJson({ error: "not_authorized", message: "Acesso não autorizado para esta empresa." }, 403);
+    if (!isAreaAllowed(access, tenantId, "simulador")) {
+      return privateJson({ error: "area_forbidden", message: "Seu usuário não possui permissão para acessar o Simulador de IA." }, 403);
+    }
     if (!checkSimulatorRateLimit(`${tenantId}:${access.operatorId || "master"}`)) {
       return privateJson({ error: "rate_limited", message: "Muitas simulações em sequência. Aguarde alguns segundos." }, 429);
     }
