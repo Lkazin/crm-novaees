@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: verification.error || "invalid_code", message: "Código incorreto ou expirado." }, 400);
     }
 
-    if (verification.actorId !== user.id) {
+    if (verification.scope !== "client" || verification.actorId !== user.id) {
       return privateJson({ error: "forbidden", message: "Este desafio pertence a outra conta." }, 403);
     }
 

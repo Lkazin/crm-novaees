@@ -107,6 +107,42 @@ const inMemoryOtps = new Map<string, OtpRecord>();
 const inMemoryActiveOtpsByIp = new Map<string, string>();
 let inMemoryDynamicPassword: string | null = null;
 
+/** Extract client IP prioritizing trusted reverse-proxy headers over spoofable X-Forwarded-For left-most values. */
+export function extractClientIp(request: NextRequest): string {
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+  const vercelIp = request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim();
+  if (vercelIp) return vercelIp;
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || "local_client";
+}
+
+/** Connect lazy Redis client when CRM_REDIS_URL is configured and connection is idle ("wait"). */
+async function getConnectedRedis() {
+  try {
+    const redis = getRedis();
+    if (!redis) return null;
+    const status = String(redis.status);
+    if (status === "ready") return redis;
+    if (status === "end") return null;
+    if (process.env.CRM_REDIS_URL) {
+      if (status !== "connecting") {
+        await redis.connect().catch(() => {});
+      }
+      if (String(redis.status) === "ready") return redis;
+    }
+  } catch {}
+  return null;
+}
+
+function normalizeCookieToken(token: string): string | null {
+  try {
+    return token.includes("%") ? decodeURIComponent(token) : token;
+  } catch {
+    return null;
+  }
+}
+
 export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promise<{ blocked: boolean; attempts: number; remainingSeconds: number }> {
   const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
   const now = Date.now();
@@ -123,8 +159,8 @@ export async function isLoginBlocked(ip: string, isMasterScope: boolean): Promis
   }
 
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       const count = await redis.get(redisKey);
       const attempts = count ? parseInt(count, 10) : 0;
@@ -152,11 +188,12 @@ export async function recordFailedLoginAttempt(ip: string, isMasterScope: boolea
   entry.lastAttempt = now;
 
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
-      await redis.incr(redisKey);
+      const redisAttempts = await redis.incr(redisKey);
       await redis.expire(redisKey, 15 * 60);
+      if (redisAttempts > entry.attempts) entry.attempts = redisAttempts;
     }
   } catch {}
 
@@ -179,8 +216,8 @@ export async function resetLoginAttempts(ip: string, isMasterScope: boolean): Pr
   const key = isMasterScope ? `master:${ip}` : `client:${ip}`;
   inMemoryRateLimits.delete(key);
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const redisKey = isMasterScope ? `crm:ratelimit:master_login:${ip}` : `crm:ratelimit:login:${ip}`;
       await redis.del(redisKey);
     }
@@ -194,8 +231,8 @@ export async function getActiveMasterOtpForIp(ip: string): Promise<string | null
     if (record && record.expiresAt > Date.now()) return code;
   }
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const active = await redis.get(`crm:master_active_otp:${ip}`);
       if (active) return active;
     }
@@ -212,8 +249,8 @@ export async function getDynamicMasterPassword(): Promise<string> {
     return inMemoryDynamicPassword;
   }
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const custom = await redis.get("crm:master_custom_password");
       if (custom && custom.trim().length >= 8) {
         // Formato novo (hash): nao ha como recuperar a senha, e nao ha por que.
@@ -239,8 +276,8 @@ export function getMasterPassword(): string {
  */
 export async function getStoredMasterSecret(): Promise<string> {
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       const custom = await redis.get("crm:master_custom_password");
       if (custom && custom.trim().length >= 8) return custom.trim();
     }
@@ -254,8 +291,8 @@ export async function getStoredMasterSecret(): Promise<string> {
  */
 export async function migrateMasterPasswordToHash(): Promise<boolean> {
   try {
-    const redis = getRedis();
-    if (!redis || redis.status === "end") return false;
+    const redis = await getConnectedRedis();
+    if (!redis) return false;
     const custom = await redis.get("crm:master_custom_password");
     if (!custom) return false;
     const valor = custom.trim();
@@ -270,8 +307,8 @@ export async function migrateMasterPasswordToHash(): Promise<boolean> {
 export async function resetMasterDynamicPasswordForTesting(): Promise<void> {
   inMemoryDynamicPassword = null;
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       await redis.del("crm:master_custom_password");
     }
   } catch {}
@@ -285,8 +322,8 @@ export async function saveMasterPassword(newPassword: string): Promise<boolean> 
   inMemoryDynamicPassword = newPassword.trim();
   const hashed = hashMasterPassword(newPassword.trim());
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       await redis.set("crm:master_custom_password", hashed);
       return true;
     }
@@ -310,9 +347,9 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   });
   inMemoryActiveOtpsByIp.set(ip, otpCode);
 
-  const redis = getRedis();
   try {
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       await redis.set(`crm:master_otp:${otpCode}`, JSON.stringify({ ip, createdAt: now }), "EX", 900);
       await redis.set(`crm:master_active_otp:${ip}`, otpCode, "EX", 900);
     }
@@ -365,6 +402,47 @@ export async function dispatchMasterRecoveryOtp(ip: string): Promise<string> {
   return otpCode;
 }
 
+const inMemoryOtpAttempts = new Map<string, RateLimitRecord>();
+
+export async function isMasterOtpBlocked(ip: string): Promise<boolean> {
+  const now = Date.now();
+  const entry = inMemoryOtpAttempts.get(ip);
+  if (entry && entry.blockedUntil && entry.blockedUntil > now) return true;
+  if (entry && entry.blockedUntil && entry.blockedUntil <= now) inMemoryOtpAttempts.delete(ip);
+  try {
+    const redis = await getConnectedRedis();
+    if (redis) {
+      const count = await redis.get(`crm:ratelimit:master_otp_verify:${ip}`);
+      if (count && parseInt(count, 10) >= 5) return true;
+    }
+  } catch {}
+  return false;
+}
+
+export async function recordFailedMasterOtpAttempt(ip: string): Promise<boolean> {
+  const now = Date.now();
+  const ttlMs = 15 * 60 * 1000;
+  let entry = inMemoryOtpAttempts.get(ip);
+  if (!entry || now - entry.lastAttempt > ttlMs) entry = { attempts: 0, lastAttempt: now };
+  entry.attempts += 1;
+  entry.lastAttempt = now;
+  try {
+    const redis = await getConnectedRedis();
+    if (redis) {
+      const n = await redis.incr(`crm:ratelimit:master_otp_verify:${ip}`);
+      await redis.expire(`crm:ratelimit:master_otp_verify:${ip}`, 15 * 60);
+      if (n > entry.attempts) entry.attempts = n;
+    }
+  } catch {}
+  if (entry.attempts >= 5) {
+    entry.blockedUntil = now + ttlMs;
+    inMemoryOtpAttempts.set(ip, entry);
+    return true;
+  }
+  inMemoryOtpAttempts.set(ip, entry);
+  return false;
+}
+
 export async function validateAndConsumeMasterOtp(code: string, ip: string): Promise<boolean> {
   const cleanCode = code.trim();
   const now = Date.now();
@@ -372,15 +450,26 @@ export async function validateAndConsumeMasterOtp(code: string, ip: string): Pro
   let valid = false;
   const memoryRecord = inMemoryOtps.get(cleanCode);
   if (memoryRecord && memoryRecord.expiresAt > now) {
-    valid = true;
+    if (!memoryRecord.ip || timingSafeMatch(memoryRecord.ip, ip)) {
+      valid = true;
+    }
   }
 
   if (!valid) {
     try {
-      const redis = getRedis();
-      if (redis && redis.status !== "end") {
+      const redis = await getConnectedRedis();
+      if (redis) {
         const raw = await redis.get(`crm:master_otp:${cleanCode}`);
-        if (raw) valid = true;
+        if (raw) {
+          let storedIp = "";
+          try {
+            const parsed = JSON.parse(raw) as { ip?: string };
+            storedIp = typeof parsed?.ip === "string" ? parsed.ip : "";
+          } catch {}
+          if (!storedIp || timingSafeMatch(storedIp, ip)) {
+            valid = true;
+          }
+        }
       }
     } catch {}
   }
@@ -390,13 +479,15 @@ export async function validateAndConsumeMasterOtp(code: string, ip: string): Pro
   inMemoryOtps.delete(cleanCode);
   inMemoryActiveOtpsByIp.delete(ip);
   inMemoryRateLimits.delete(`master:${ip}`);
+  inMemoryOtpAttempts.delete(ip);
 
   try {
-    const redis = getRedis();
-    if (redis && redis.status !== "end") {
+    const redis = await getConnectedRedis();
+    if (redis) {
       await redis.del(`crm:master_otp:${cleanCode}`);
       await redis.del(`crm:master_active_otp:${ip}`);
       await redis.del(`crm:ratelimit:master_login:${ip}`);
+      await redis.del(`crm:ratelimit:master_otp_verify:${ip}`);
     }
   } catch {}
 
@@ -519,20 +610,16 @@ const inMemoryRevokedTokens = new Set<string>();
 export async function revokeMasterToken(token: string | undefined): Promise<void> {
   if (!token) return;
   try {
-    const parts = token.split(":");
+    const cleanToken = normalizeCookieToken(token);
+    if (!cleanToken) return;
+    const parts = cleanToken.split(":");
     const signature = parts[parts.length - 1];
     if (signature) {
       inMemoryRevokedTokens.add(signature);
       try {
-        const redis = getRedis();
-        const curStatus = String(redis.status);
-        if (curStatus === "ready") {
+        const redis = await getConnectedRedis();
+        if (redis) {
           await redis.set(`crm:revoked_master:${signature}`, "1", "EX", 30 * 24 * 60 * 60);
-        } else if (process.env.CRM_REDIS_URL && curStatus !== "end") {
-          if (curStatus !== "connecting") await redis.connect().catch(() => {});
-          if (String(redis.status) === "ready") {
-            await redis.set(`crm:revoked_master:${signature}`, "1", "EX", 30 * 24 * 60 * 60);
-          }
         }
       } catch {}
     }
@@ -547,14 +634,16 @@ export async function revokeMasterToken(token: string | undefined): Promise<void
 export async function isMasterTokenRevoked(token: string | undefined): Promise<boolean> {
   if (!token) return true;
   try {
-    const parts = token.split(":");
+    const cleanToken = normalizeCookieToken(token);
+    if (!cleanToken) return true;
+    const parts = cleanToken.split(":");
     const signature = parts[parts.length - 1];
     if (!signature) return true;
     if (inMemoryRevokedTokens.has(signature)) return true;
 
     try {
-      const redis = getRedis();
-      if (redis.status === "ready") {
+      const redis = await getConnectedRedis();
+      if (redis) {
         const revoked = await redis.get(`crm:revoked_master:${signature}`);
         if (revoked === "1") return true;
       }

@@ -97,12 +97,20 @@ export async function POST(request: NextRequest) {
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     const messageTemplate = typeof body.messageTemplate === "string" ? body.messageTemplate.trim() : "";
     const couponCode = typeof body.couponCode === "string" ? body.couponCode.trim() : "";
-    const days = Math.max(0, parseInt(body.days || "30", 10));
-    const targetContactIds: string[] = Array.isArray(body.targetContactIds) ? body.targetContactIds : [];
+    const parsedDays = parseInt(String(body.days ?? "30"), 10);
+    const days = Number.isFinite(parsedDays) ? Math.max(0, Math.min(3650, parsedDays)) : 30;
+    const rawTargetIds: unknown[] = Array.isArray(body.targetContactIds) ? body.targetContactIds : [];
+    const targetContactIds = rawTargetIds
+      .filter((id): id is string => typeof id === "string" && UUID.test(id.trim()))
+      .map(id => id.trim())
+      .slice(0, 50);
 
     if (!UUID.test(tenantId)) return privateJson({ error: "invalid_tenant" }, 400);
-    if (!messageTemplate || messageTemplate.length < 5) {
-      return privateJson({ error: "template_too_short", message: "A mensagem deve ter pelo menos 5 caracteres." }, 400);
+    if (rawTargetIds.length > 0 && targetContactIds.length === 0) {
+      return privateJson({ error: "invalid_contact_ids" }, 400);
+    }
+    if (!messageTemplate || messageTemplate.length < 5 || messageTemplate.length > 2000) {
+      return privateJson({ error: "template_too_short", message: "A mensagem deve ter entre 5 e 2000 caracteres." }, 400);
     }
 
     const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);

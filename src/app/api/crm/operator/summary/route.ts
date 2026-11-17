@@ -1,11 +1,24 @@
 import { NextRequest } from "next/server";
-import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
+import { authorizeCrmTenant, ownsCrmResource } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const summaryRateMap = new Map<string, { count: number; resetAt: number }>();
+
+function allowSummaryRequest(key: string): boolean {
+  const now = Date.now();
+  const entry = summaryRateMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    summaryRateMap.set(key, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (entry.count >= 25) return false;
+  entry.count += 1;
+  return true;
+}
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
@@ -20,16 +33,23 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "invalid_request" }, 400);
     }
 
-    const access = await authorizeCrmTenant(request, tenantId);
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
     if (!access) return privateJson({ error: "unauthorized" }, 401);
+
+    if (!allowSummaryRequest(`${tenantId}:${access.operatorId || "master"}`)) {
+      return privateJson({ error: "rate_limited" }, 429);
+    }
+
+    const isOwner = await ownsCrmResource(tenantId, "crm_conversations", conversationId);
+    if (!isOwner) return privateJson({ error: "conversation_not_found" }, 404);
 
     const { url, key } = supabaseSettings();
     const secret = (process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)?.trim() || key;
     if (!secret) return privateJson({ error: "supabase_unconfigured" }, 503);
 
-    // Fetch conversation messages
+    // Fetch conversation messages scoped to both tenant_id and conversation_id
     const rMsgs = await fetch(
-      `${url}/rest/v1/crm_messages?conversation_id=eq.${conversationId}&select=direction,sender_type,body,created_at&order=created_at.desc&limit=25`,
+      `${url}/rest/v1/crm_messages?tenant_id=eq.${tenantId}&conversation_id=eq.${conversationId}&select=direction,sender_type,body,created_at&order=created_at.desc&limit=25`,
       {
         headers: { apikey: secret, Authorization: `Bearer ${secret}` },
         cache: "no-store",
@@ -105,6 +125,7 @@ export async function POST(request: NextRequest) {
 
     return privateJson({ ok: true, summary: summaryText, messageCount: msgs.length });
   } catch (e) {
-    return privateJson({ error: e instanceof Error ? e.message : "summary_error" }, 500);
+    console.error("[operator-summary-error]", e instanceof Error ? e.message : String(e));
+    return privateJson({ error: "summary_error" }, 500);
   }
 }

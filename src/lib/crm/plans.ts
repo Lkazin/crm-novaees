@@ -499,7 +499,22 @@ export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
   }
 
   if (ALL_DEFAULT_PLANS.some(p => p.id === defaultMatch.id)) {
-    return { ...raw, ...defaultMatch, version: raw.version || defaultMatch.version };
+    const isPreV4 = !raw.catalogSchemaVersion || raw.catalogSchemaVersion < CATALOG_SCHEMA_VERSION;
+    if (isPreV4) {
+      return {
+        ...raw,
+        ...defaultMatch,
+        version: raw.version || defaultMatch.version,
+        catalogSchemaVersion: CATALOG_SCHEMA_VERSION
+      };
+    }
+    return {
+      ...raw,
+      maxOperators: Math.min(raw.maxOperators ?? defaultMatch.maxOperators, defaultMatch.maxOperators),
+      maxWhatsappConnections: Math.min(raw.maxWhatsappConnections ?? defaultMatch.maxWhatsappConnections, defaultMatch.maxWhatsappConnections),
+      ...(defaultMatch.id === "crm-trial" ? { name: defaultMatch.name, price: "0,00", quotaLimit: defaultMatch.quotaLimit } : {}),
+      catalogSchemaVersion: CATALOG_SCHEMA_VERSION
+    };
   }
 
   const isLegacySchema = !raw.catalogSchemaVersion || raw.catalogSchemaVersion < 3;
@@ -510,7 +525,7 @@ export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
       status: defaultMatch.status,
       maxOperators: Math.min(raw.maxOperators, defaultMatch.maxOperators),
       maxWhatsappConnections: Math.min(raw.maxWhatsappConnections, defaultMatch.maxWhatsappConnections),
-      ...(defaultMatch.id === "crm-trial" ? { price: "0,00", quotaLimit: defaultMatch.quotaLimit } : {}),
+      ...(defaultMatch.id === "crm-trial" ? { name: defaultMatch.name, price: "0,00", quotaLimit: defaultMatch.quotaLimit } : {}),
       ...(defaultMatch.id === "crm-premium" ? { price: "89,90", quotaLimit: 1200 } : {})
     };
   }
@@ -1687,7 +1702,7 @@ export async function getEffectiveTenantPlan(
   baseFeatures = normalizeFeatureIds(baseFeatures).filter(feature => allowance.features.includes(feature));
   baseMaxOperators = Math.min(baseMaxOperators, allowance.maxOperators, tierCeiling.maxOperators);
   if (matchedPlan.id === "crm-premium" || isTrial) {
-    baseMaxOperators = Math.max(baseMaxOperators, matchedPlan.maxOperators || 3);
+    baseMaxOperators = Math.max(baseMaxOperators, matchedPlan.maxOperators || (isTrial ? 1 : 3));
   }
   baseMaxWhatsapp = Math.min(baseMaxWhatsapp, allowance.maxWhatsappConnections, tierCeiling.maxWhatsappConnections);
   validateCommercialPlan({ id: matchedPlan.id, name: matchedPlan.name, quotaLimit: baseQuota, maxOperators: baseMaxOperators, maxWhatsappConnections: baseMaxWhatsapp, features: baseFeatures });
@@ -1770,9 +1785,9 @@ export async function getEffectiveTenantPlan(
     billingCycle: rawTenantPlan.billingCycle === "annual" ? "annual" : "monthly",
     billingAmountCents: typeof rawTenantPlan.billingAmountCents === "number" ? rawTenantPlan.billingAmountCents : undefined,
     paidThrough: typeof rawTenantPlan.paidThrough === "string" ? rawTenantPlan.paidThrough : undefined,
-    quotaLimit: isTrial ? (matchedPlan.quotaLimit || 100) : finalQuota,
-    maxOperators: isTrial ? (matchedPlan.maxOperators || 2) : baseMaxOperators,
-    maxWhatsappConnections: isTrial ? (matchedPlan.maxWhatsappConnections || 2) : baseMaxWhatsapp,
+    quotaLimit: isTrial ? (matchedPlan.quotaLimit || 50) : finalQuota,
+    maxOperators: isTrial ? (matchedPlan.maxOperators || 1) : baseMaxOperators,
+    maxWhatsappConnections: isTrial ? (matchedPlan.maxWhatsappConnections || 1) : baseMaxWhatsapp,
     rechargeCreditsBalance,
     rechargesHistory: rawRecharges as unknown as MessageRechargeItem[],
     allowedFeatures: finalFeatures.filter(feature => featureStates[feature]?.state === "allowed"),
@@ -1872,7 +1887,7 @@ export async function requireTenantFeature(
       state: "locked_by_plan",
       statusHttp: 403,
       errorCode: "PLAN_FEATURE_LOCKED",
-      message: `O recurso "${featMeta?.name || featureId}" não está incluído no seu plano atual (${effectivePlan.planName}). Solicite upgrade para o plano ${gov?.minPlanName || featMeta?.minPlanName || "CRM Business"}.`,
+      message: `O recurso "${featMeta?.name || featureId}" não está incluído no seu plano atual (${effectivePlan.planName}). Solicite upgrade para o plano ${gov?.minPlanName || featMeta?.minPlanName || "Profissional"}.`,
       effectivePlan
     };
   }

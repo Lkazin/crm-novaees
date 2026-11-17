@@ -186,7 +186,7 @@ const INDUSTRY_PRESETS = [
     instructions: "Você é a consultora de vendas virtual da Loja Elegance no WhatsApp. Seja alegre, atenciosa e estilosa. Ajude as clientes a encontrar peças do seu tamanho, tire dúvidas sobre tecidos, caimento e prazo de envio. Incentive o envio de fotos do catálogo e feche a venda com carinho.",
     storeInfo: `✨ COLEÇÃO ATUAL:
 - Vestido Midi Floral: R$ 149,90 (Tamanhos P, M, G)
-- Calça Jeans Wide Leg: R$ 1139,90 (Tamanhos 36 ao 44)
+- Calça Jeans Wide Leg: R$ 139,90 (Tamanhos 36 ao 44)
 - Cropped Canelado Básico: R$ 49,90 (Cores: Preto, Branco, Fúcsia)
 - Blazer Alfaiataria: R$ 229,90 (Tamanhos P, M, G)
 
@@ -835,12 +835,16 @@ export default function ClientWorkspace({
     } catch {}
   }, [fetchReports]);
 
-  // Audio high-intensity alert notification via Web Audio API (Multi-tone loud siren ~85dB)
+  // Audio high-intensity alert notification via Web Audio API (reuses single AudioContext)
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const playNotificationSound = useCallback(() => {
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
-      const ctx = new AudioCtx();
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
       if (ctx.state === "suspended") {
         void ctx.resume();
       }
@@ -941,14 +945,19 @@ export default function ClientWorkspace({
     }
   }, [fetchAiSettings, soundEnabled, playNotificationSound, isSuspended]);
 
-  // Ultra-fast pulse polling every 1.5s for real-time live chat and handoff alerts (runs even in background tabs)
+  // Pulse polling every 1.5s when tab is visible, with AbortController cleanup
   useEffect(() => {
     if (!authenticated || !tenant) return;
-    const pulseInterval = setInterval(async () => {
+    let controller: AbortController | null = null;
+    const pollPulse = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (controller) controller.abort();
+      controller = new AbortController();
       try {
         const res = await fetch(`/api/crm/operator/pulse?tenantId=${encodeURIComponent(tenant)}`, {
           cache: "no-store",
-          credentials: "same-origin"
+          credentials: "same-origin",
+          signal: controller.signal
         });
         if (res.ok) {
           const pulse = await res.json();
@@ -973,8 +982,17 @@ export default function ClientWorkspace({
           prevHandoffCountRef.current = count;
         }
       } catch {}
-    }, 1500);
-    return () => clearInterval(pulseInterval);
+    };
+    const pulseInterval = setInterval(() => void pollPulse(), 1500);
+    const onVisChange = () => {
+      if (document.visibilityState === "visible") void pollPulse();
+    };
+    document.addEventListener("visibilitychange", onVisChange);
+    return () => {
+      clearInterval(pulseInterval);
+      document.removeEventListener("visibilitychange", onVisChange);
+      if (controller) controller.abort();
+    };
   }, [authenticated, tenant, playNotificationSound, fetchData, soundEnabled]);
 
   // Request browser desktop notification permission on user interaction
@@ -989,7 +1007,12 @@ export default function ClientWorkspace({
     if (!authenticated || !tenant || !autoClose.enabled) return;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        void fetch(`/api/crm/operator/auto-close?tenant=${tenant}`).catch(() => {});
+        void fetch("/api/crm/operator/auto-close", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenantId: tenant })
+        }).catch(() => {});
       }
     }, 45000);
     return () => clearInterval(interval);
@@ -1197,15 +1220,20 @@ export default function ClientWorkspace({
     return () => clearInterval(timer);
   }, [qrState, qrCode, qrExpiresIn]);
 
-  // Poll status while connecting or on WhatsApp tab (without fetchData in deps so interval is never reset)
+  // Poll status while connecting or on WhatsApp tab (only when visible, with AbortController)
   useEffect(() => {
     if (!authenticated || !instanceName) return;
     const pollMs = qrState === "connecting" ? 2000 : 8000;
-    const interval = setInterval(async () => {
+    let controller: AbortController | null = null;
+    const pollStatus = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (qrState !== "connecting" && activeTab !== "whatsapp") return;
+      if (controller) controller.abort();
+      controller = new AbortController();
       try {
         const res = await fetch(
           `/api/crm/whatsapp/status?instance=${encodeURIComponent(instanceName)}&tenantId=${encodeURIComponent(tenant)}&slot=${selectedWhatsappSlot}`,
-          { cache: "no-store" }
+          { cache: "no-store", signal: controller.signal }
         );
         if (res.ok) {
           const s = await res.json();
@@ -1239,10 +1267,14 @@ export default function ClientWorkspace({
           }
         }
       } catch {}
-    }, pollMs);
-    return () => clearInterval(interval);
+    };
+    const interval = setInterval(() => void pollStatus(), pollMs);
+    return () => {
+      clearInterval(interval);
+      if (controller) controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, qrState, instanceName, tenant]);
+  }, [authenticated, qrState, activeTab, instanceName, tenant, selectedWhatsappSlot]);
 
   const handleSaveAiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1341,7 +1373,12 @@ export default function ClientWorkspace({
       isAutoCloseDirtyRef.current = false;
       setAutoCloseNotice("Configuração de encerramento por inatividade salva com sucesso!");
       setTimeout(() => setAutoCloseNotice(""), 6000);
-      void fetch(`/api/crm/operator/auto-close?tenant=${tenant}`).catch(() => {});
+      void fetch("/api/crm/operator/auto-close", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant })
+      }).catch(() => {});
     } catch (err) {
       setAutoCloseNotice("⚠️ " + (err instanceof Error ? err.message : "Erro ao salvar automação."));
     } finally {
@@ -1354,7 +1391,12 @@ export default function ClientWorkspace({
     setRunningAutoCloseNow(true);
     setAutoCloseNotice("Verificando conversas inativas...");
     try {
-      const res = await fetch(`/api/crm/operator/auto-close?tenant=${tenant}`);
+      const res = await fetch("/api/crm/operator/auto-close", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant })
+      });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.result) {
         const count = data.result.closedCount ?? 0;
@@ -2060,8 +2102,28 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     return conversations.filter(c => c.status === "urgent" || c.status === "waiting_human");
   }, [conversations]);
 
+  const messagesByConversation = useMemo(() => {
+    const map = new Map<string, Message[]>();
+    for (const m of messages) {
+      let arr = map.get(m.conversation_id);
+      if (!arr) {
+        arr = [];
+        map.set(m.conversation_id, arr);
+      }
+      arr.push(m);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    }
+    return map;
+  }, [messages]);
+
   const current = filtered.find(c => c.id === selected) ?? filtered[0] ?? null;
-  const thread = current ? messages.filter(m => m.conversation_id === current.id).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) : [];
+  const thread = useMemo(() => {
+    if (!current) return [];
+    const list = messagesByConversation.get(current.id) ?? [];
+    return [...list].reverse();
+  }, [current, messagesByConversation]);
 
   // Quota percentage
   const quotaPercent = quotaData.quotaLimit > 0 ? Math.min(100, Math.round((quotaData.quotaUsed / quotaData.quotaLimit) * 100)) : 0;
@@ -2321,6 +2383,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       right: 0,
                       top: "42px",
                       width: "350px",
+                      maxWidth: "calc(100vw - 24px)",
                       background: "#181427",
                       border: "1px solid #443c5e",
                       borderRadius: "14px",
@@ -4667,9 +4730,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 const contact = byContact.get(c.contact_id);
                                 const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
                                 const contactTag = contactTagId ? tagMap.get(contactTagId) : undefined;
-                                const convMsgs = messages
-                                  .filter(m => m.conversation_id === c.id)
-                                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                                const convMsgs = messagesByConversation.get(c.id) ?? [];
                                 const lastMsg = convMsgs[0];
 
                                 return (
@@ -5099,9 +5160,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         const contactTag = contactTagId ? tagMap.get(contactTagId) : undefined;
 
                         // Last message preview and unread calculation
-                        const convMsgs = messages
-                          .filter(m => m.conversation_id === c.id)
-                          .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                        const convMsgs = messagesByConversation.get(c.id) ?? [];
                         const lastMsg = convMsgs[0];
                         const lastReadTs = readTimestamps[c.id] || 0;
                         const unreadCount = convMsgs.filter(
@@ -5894,7 +5953,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                   maxOperators={data?.plan?.maxOperators ?? 3}
                   planName={data?.plan?.name || (data?.plan?.isTrial ? "Teste Grátis" : "Profissional")}
                   isSuspended={isSuspended}
-                  ownerEmail={data?.viewer?.role === "owner" ? data.viewer.email : undefined}
+                  ownerEmail={(data?.viewer?.role === "owner" || data?.viewer?.role === "admin") ? data.viewer.email : undefined}
                   ownerName={currentTenantObj?.name ? `${currentTenantObj.name} (Administrador)` : "Proprietário / Titular"}
                   onAddOperator={handleAddOperator}
                   onUpdateOperatorRole={handleUpdateOperatorRole}
@@ -6387,7 +6446,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       <div>
                         <span style={{ fontSize: "11px", color: "#f472b6", fontWeight: 800, textTransform: "uppercase" }}>Proteção da Conta</span>
                         <strong style={{ display: "block", fontSize: "18px", color: "#fff", marginTop: "2px" }}>
-                          Código OTP em 5 tentativas
+                          Código OTP em 3 tentativas
                         </strong>
                       </div>
                     </div>

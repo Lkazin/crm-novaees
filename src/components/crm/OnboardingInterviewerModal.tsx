@@ -32,7 +32,7 @@ const QUICK_SUGGESTIONS: Record<number, string[]> = {
     "Bia, atendimento rápido, direto ao ponto e objetivo",
   ],
   2: [
-    "Consultoria: R$ 250 | Planos mensais a partir de R$ 89,90 | Orçamento personalizado sob medida",
+    "Consultoria: R$ 250 | Planos mensais a partir de R$ 79,80 | Orçamento personalizado sob medida",
     "Pizzas Grandes R$ 49,90 (Calabresa, Muçarela, Portuguesa) | Bebidas 2L R$ 12,00",
   ],
   3: [

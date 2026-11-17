@@ -9,7 +9,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function escapeCsvField(val: unknown): string {
   if (val === null || val === undefined) return '""';
-  const str = String(val).replace(/"/g, '""');
+  let text = String(val);
+  // Neutraliza formulas em planilhas (CSV Formula Injection - CWE-1236)
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`;
+  }
+  const str = text.replace(/"/g, '""');
   return `"${str}"`;
 }
 
@@ -35,7 +40,7 @@ export async function GET(request: NextRequest) {
   try {
     if (type === "conversations") {
       const res = await fetch(
-        `${url}/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,status,mode,last_message_at,created_at,crm_contacts(name,phone)&order=last_message_at.desc.nullslast&limit=2000`,
+        `${url}/rest/v1/crm_conversations?tenant_id=eq.${tenantId}&select=id,status,mode,last_message_at,created_at,crm_contacts(display_name,phone)&order=last_message_at.desc.nullslast&limit=2000`,
         {
           headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
           cache: "no-store",
@@ -52,7 +57,7 @@ export async function GET(request: NextRequest) {
         mode: string;
         last_message_at: string | null;
         created_at: string;
-        crm_contacts?: { name: string | null; phone: string } | null;
+        crm_contacts?: { display_name: string | null; phone: string } | null;
       };
 
       const rows = (await res.json()) as ConvRow[];
@@ -63,7 +68,7 @@ export async function GET(request: NextRequest) {
         lines.push(
           [
             escapeCsvField(r.id),
-            escapeCsvField(r.crm_contacts?.name ?? "Cliente"),
+            escapeCsvField(r.crm_contacts?.display_name ?? "Cliente"),
             escapeCsvField(r.crm_contacts?.phone ?? ""),
             escapeCsvField(r.status),
             escapeCsvField(r.mode),
@@ -88,7 +93,7 @@ export async function GET(request: NextRequest) {
 
     // Default: contacts
     const res = await fetch(
-      `${url}/rest/v1/crm_contacts?tenant_id=eq.${tenantId}&select=id,name,phone,created_at,updated_at&order=created_at.desc&limit=5000`,
+      `${url}/rest/v1/crm_contacts?tenant_id=eq.${tenantId}&select=id,display_name,phone,created_at,updated_at&order=created_at.desc&limit=5000`,
       {
         headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
         cache: "no-store",
@@ -101,7 +106,7 @@ export async function GET(request: NextRequest) {
 
     type ContactRow = {
       id: string;
-      name: string | null;
+      display_name: string | null;
       phone: string;
       created_at: string;
       updated_at: string | null;
@@ -115,7 +120,7 @@ export async function GET(request: NextRequest) {
       lines.push(
         [
           escapeCsvField(r.id),
-          escapeCsvField(r.name ?? ""),
+          escapeCsvField(r.display_name ?? ""),
           escapeCsvField(r.phone),
           escapeCsvField(r.created_at),
           escapeCsvField(r.updated_at ?? ""),

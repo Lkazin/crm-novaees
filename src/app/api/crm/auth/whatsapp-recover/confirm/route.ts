@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { applyDefinitivePasswordReset } from "@/lib/crm/recovery-store";
-import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, signMasterToken } from "@/lib/crm/master-auth";
+import { MASTER_COOKIE_NAME, MASTER_SESSION_TTL_SEC, signMasterToken, extractClientIp } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
-  return req.headers.get("x-real-ip") || "127.0.0.1";
-}
 
 export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(request.headers.get("origin"), request.url)) {
@@ -36,7 +30,7 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "password_too_long", message: "A nova senha não pode exceder 256 caracteres." }, 400);
     }
 
-    const ip = getClientIp(request);
+    const ip = extractClientIp(request);
     const resetResult = await applyDefinitivePasswordReset(ticket, newPassword, ip);
 
     if (!resetResult.success) {

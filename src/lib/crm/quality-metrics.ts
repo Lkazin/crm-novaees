@@ -92,13 +92,16 @@ type TenantRow = {
  * Monta o resumo do periodo. `tenantId` opcional restringe a uma empresa —
  * o isolamento multiempresa e feito na consulta, nao no cliente.
  */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function computeQualitySummary(params?: {
   tenantId?: string;
   periodKey?: string;
   now?: Date;
 }): Promise<QualitySummary> {
+  const safeTenantId = params?.tenantId && UUID.test(params.tenantId) ? params.tenantId : undefined;
   const periodKey = params?.periodKey ?? periodKeyFor(params?.now ?? new Date());
-  const tenantFilter = params?.tenantId ? `&tenant_id=eq.${params.tenantId}` : "";
+  const tenantFilter = safeTenantId ? `&tenant_id=eq.${safeTenantId}` : "";
   const since = `${periodKey}-01`;
 
   const [events, usage, attendance, tenants] = await Promise.all([
@@ -111,7 +114,7 @@ export async function computeQualitySummary(params?: {
     select<AttendanceRow>(
       `crm_attendance_usage?period_key=eq.${periodKey}&select=tenant_id,used${tenantFilter}`
     ),
-    select<TenantRow>(`crm_tenants?select=id,plan_quota${params?.tenantId ? `&id=eq.${params.tenantId}` : ""}`),
+    select<TenantRow>(`crm_tenants?select=id,plan_quota${safeTenantId ? `&id=eq.${safeTenantId}` : ""}`),
   ]);
 
   const byKind: Record<string, number> = {};

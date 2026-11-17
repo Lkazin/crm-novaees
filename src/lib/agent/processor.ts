@@ -7,7 +7,7 @@ import { resolveIncomingMediaMessage } from "./media";
 import { generateAnswer, StoreAiContext, DaySchedule } from "./ai";
 import { sendText, EvolutionSendError, sendPresence, typingDurationFor, holdTypingPresence } from "./evolution";
 import { splitIntoBubbles, bubbleDelayMs } from "./bubbles";
-import { sanitizeAiReply } from "./commercial-guard";
+import { buildOutOfScopeReply, isOutOfScopeRequest, sanitizeAiReply } from "./commercial-guard";
 import { selectKnowledgeArticles } from "./knowledge";
 import { recordQualityEvent } from "@/lib/crm/quality-events";
 import {
@@ -18,7 +18,7 @@ import {
 } from "@/lib/crm/supabase-ingest";
 import { detectCustomerEscalation } from "./escalation";
 import { getEffectiveTenantPlan, invalidateEffectivePlanCache } from "@/lib/crm/plans";
-import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
+import { resolveChannelSlot } from "@/lib/crm/whatsapp-slots";
 
 export type ProcessResult = {
   status: "ignored" | "duplicate" | "disabled" | "sent" | "buffered";
@@ -246,12 +246,13 @@ async function getStoreAiContext(instanceName: string, query?: string): Promise<
     }
 
     // Verify WhatsApp slot limit on incoming instance
-    const slotNumber = extractSlotFromInstanceName(instanceName);
+    const slotNumber = resolveChannelSlot(instanceName, tenants?.[0]?.name);
     if (slotNumber > effectivePlan.maxWhatsappConnections) {
       return { isBlocked: true, blockedReason: "channel_paused_by_plan", channelFound: true, tenantId };
     }
 
-    quotaLimit = effectivePlan.quotaLimit + (effectivePlan.rechargeCreditsBalance || 0);
+    const usedOverBase = Math.max(0, (effectivePlan.quotaUsed || 0) - effectivePlan.quotaLimit);
+    quotaLimit = effectivePlan.quotaLimit + usedOverBase + (effectivePlan.rechargeCreditsBalance || 0);
 
     if (effectivePlan.featureStates?.ai_chat?.state !== "allowed") {
       return { isBlocked: true, blockedReason: "feature_locked", channelFound: true, tenantId };
@@ -420,6 +421,7 @@ export async function processWebhook(
     // buffer e e consumida pelo follow-up do turno que ja esta rodando.
     const turnFree = await redis.set(turnKey, "1", "EX", 120, "NX");
     if (turnFree !== "OK") {
+      await redis.del(debounceKey).catch(() => {});
       return { status: "buffered" };
     }
 
@@ -430,24 +432,24 @@ export async function processWebhook(
 
     try {
       // 5. Collect all buffered messages for this user atomically via Lua script
-      let rawList: string[] = [];
-      try {
-        const clientWithEval = redis as unknown as { eval?: (script: string, numKeys: number, ...args: (string | number)[]) => Promise<unknown> };
-        if (typeof clientWithEval.eval === "function") {
-          const evalResult = await clientWithEval.eval(
-            "local msgs = redis.call('LRANGE', KEYS[1], 0, -1); redis.call('DEL', KEYS[1]); return msgs;",
-            1,
-            bufferKey
-          );
-          if (Array.isArray(evalResult)) rawList = evalResult as string[];
-        } else {
-          rawList = await redis.lrange(bufferKey, 0, -1);
-          await redis.del(bufferKey);
-        }
-      } catch {
-        rawList = await redis.lrange(bufferKey, 0, -1);
-        await redis.del(bufferKey);
-      }
+      const popBufferedRaw = async (): Promise<string[]> => {
+        try {
+          const clientWithEval = redis as unknown as { eval?: (script: string, numKeys: number, ...args: (string | number)[]) => Promise<unknown> };
+          if (typeof clientWithEval.eval === "function") {
+            const evalResult = await clientWithEval.eval(
+              "local msgs = redis.call('LRANGE', KEYS[1], 0, -1); redis.call('DEL', KEYS[1]); return msgs;",
+              1,
+              bufferKey
+            );
+            if (Array.isArray(evalResult)) return evalResult as string[];
+          }
+        } catch {}
+        const list = await redis.lrange(bufferKey, 0, -1);
+        if (list.length > 0) await redis.del(bufferKey);
+        return list;
+      };
+
+      const rawList = await popBufferedRaw();
 
       const items: Array<{ id: string; text: string }> = [];
       for (const item of rawList) {
@@ -457,6 +459,17 @@ export async function processWebhook(
           items.push({ id: incoming.id, text: item });
         }
       }
+      if (items.length === 0 && incoming.id) {
+        items.push({ id: incoming.id, text: incoming.text });
+      }
+
+      const clearInflightItems = async (list: Array<{ id: string; text: string }> = items) => {
+        for (const it of list) {
+          if (it.id) {
+            await redis.del(`crm:lab:inflight:${incoming.instance}:${it.id}`).catch(() => {});
+          }
+        }
+      };
 
       const markItemsDone = async (list: Array<{ id: string; text: string }> = items) => {
         for (const it of list) {
@@ -586,77 +599,110 @@ export async function processWebhook(
       context.conversationId = convContext.conversationId;
 
       if (deps.maySend && !(await deps.maySend(incoming))) {
+        await clearInflightItems();
         return { status: "disabled", reason: "tenant_or_conversation_blocked" };
       }
 
-      if (!Number.isInteger(quotaLimit) || quotaLimit! < 0) return { status: "disabled", reason: "invalid_quota_limit" };
+      if (!Number.isInteger(quotaLimit) || quotaLimit! < 0) {
+        await clearInflightItems();
+        return { status: "disabled", reason: "invalid_quota_limit" };
+      }
       const input: AttendanceInput = { tenantId, phone: incoming.number, instance: incoming.instance, messageIds: [...new Set([...items.map(item => item.id), incoming.id].filter(Boolean))], limit: quotaLimit!, floor: quotaUsed, floorPeriod: quotaPeriod, isTrial: Boolean(isTrial), now };
       const reservation = await quotaStore.reserve(input);
       if (reservation.reason === "message_already_processed") {
         await markItemsDone();
         return { status: "duplicate" };
       }
-      if (!reservation.allowed || !reservation.token) return { status: "disabled", reason: reservation.reason || "quota_exceeded" };
+      if (!reservation.allowed || !reservation.token) {
+        await clearInflightItems();
+        return { status: "disabled", reason: reservation.reason || "quota_exceeded" };
+      }
       let accepted = false;
       let sendStarted = false;
       let rejected = false;
+      let sentBubbleCount = 0;
       // Declarado aqui para o finally abaixo conseguir desligar o "digitando"
       // em QUALQUER saida (erro, bloqueio, sem franquia), nao so no caminho feliz.
       let stopTyping: (() => void) | null = null;
       try {
         const genStartMs = Date.now();
-        // "digitando..." enquanto a IA pensa. Sem isso o cliente fica 3-8s no
-        // silêncio e acha que ninguém está do outro lado.
-        try {
-          stopTyping = await (deps.holdTyping ?? holdTypingPresence)(incoming.number, cfg, incoming.instance);
-        } catch {
-          // Falha transitória de presença visual não deve impedir o atendimento
-        }
-        const rawAnswer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context).catch((err: unknown) => {
-          // Provedor fora, timeout ou resposta vazia: o cliente nao pode ficar
-          // no silencio. Loga o motivo e cai na mensagem de fallback abaixo.
-          console.error("[crm-ai] falha ao gerar resposta:", err instanceof Error ? err.message : String(err));
-          return "";
-        });
-        const generated = (rawAnswer ?? "").trim();
-        if (!generated) {
-          try { stopTyping?.(); } catch { /* ignore */ }
-          stopTyping = null;
-          await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
-          await markItemsDone();
+        let answer = "";
+
+        if (isOutOfScopeRequest(combinedText, context)) {
+          answer = buildOutOfScopeReply(context.storeName);
+        } else {
+          // "digitando..." enquanto a IA pensa. Sem isso o cliente fica 3-8s no
+          // silêncio e acha que ninguém está do outro lado.
           try {
-            await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
-          } catch (err) {
-            console.error("[crm-ai] fallback de falha enviado mas nao persistido:", err instanceof Error ? err.message : String(err));
+            stopTyping = await (deps.holdTyping ?? holdTypingPresence)(incoming.number, cfg, incoming.instance);
+          } catch {
+            // Falha transitória de presença visual não deve impedir o atendimento
           }
-          return { status: "sent", reason: "ai_failure_fallback" };
-        }
-        // Guarda comercial: avalia a resposta ANTES do envio. Preco fora da base
-        // troca a resposta inteira por uma confirmacao humana; link inventado e
-        // removido do texto. Toda violacao vira evento de qualidade.
-        let answer = generated;
-        try {
-          const sanitized = sanitizeAiReply({
-            reply: generated,
-            allowedText: context?.storeInfo ?? "",
-            officialLinks: context?.officialLinks
+          const rawAnswer = await (deps.generate ?? generateAnswer)(combinedText, cfg, context).catch((err: unknown) => {
+            // Provedor fora, timeout ou resposta vazia: o cliente nao pode ficar
+            // no silencio. Loga o motivo e cai na mensagem de fallback abaixo.
+            console.error("[crm-ai] falha ao gerar resposta:", err instanceof Error ? err.message : String(err));
+            return "";
           });
-          answer = sanitized.reply;
-          for (const kind of sanitized.violations) {
-            await recordQualityEvent({
-              tenantId,
-              conversationId: convContext.conversationId,
-              kind,
-              detail: { replyChars: generated.length, blocked: sanitized.blocked, removedUrls: sanitized.removedUrls.length }
+          const generated = (rawAnswer ?? "").trim();
+          if (!generated) {
+            try { stopTyping?.(); } catch { /* ignore */ }
+            stopTyping = null;
+            if (deps.maySend && !(await deps.maySend(incoming))) {
+              await clearInflightItems();
+              return { status: "disabled", reason: "tenant_or_conversation_blocked" };
+            }
+            await (deps.handoff ?? handoffToHuman)(
+              incoming.instance,
+              incoming.number,
+              false,
+              "Falha ou indisponibilidade da IA ao responder — encaminhado para equipe"
+            ).catch(() => null);
+            await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
+            await markItemsDone();
+            try {
+              await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
+            } catch (err) {
+              console.error("[crm-ai] fallback de falha enviado mas nao persistido:", err instanceof Error ? err.message : String(err));
+            }
+            return { status: "sent", reason: "ai_failure_fallback" };
+          }
+          // Guarda comercial: avalia a resposta ANTES do envio. Preco fora da base
+          // troca a resposta inteira por uma confirmacao humana; link inventado e
+          // removido do texto. Toda violacao vira evento de qualidade.
+          answer = generated;
+          try {
+            const sanitized = sanitizeAiReply({
+              reply: generated,
+              allowedText: context?.storeInfo ?? "",
+              officialLinks: context?.officialLinks
             });
+            answer = sanitized.reply;
+            for (const kind of sanitized.violations) {
+              await recordQualityEvent({
+                tenantId,
+                conversationId: convContext.conversationId,
+                kind,
+                detail: { replyChars: generated.length, blocked: sanitized.blocked, removedUrls: sanitized.removedUrls.length }
+              });
+            }
+            if (sanitized.blocked) {
+              console.warn("[crm-ai] resposta bloqueada pela guarda comercial:", sanitized.violations.join(","));
+              await (deps.handoff ?? handoffToHuman)(
+                incoming.instance,
+                incoming.number,
+                false,
+                "Informação comercial não confirmada na base — encaminhado para equipe"
+              ).catch(() => null);
+            }
+          } catch {
+            // Metrica nunca derruba atendimento.
           }
-          if (sanitized.blocked) {
-            console.warn("[crm-ai] resposta bloqueada pela guarda comercial:", sanitized.violations.join(","));
-          }
-        } catch {
-          // Metrica nunca derruba atendimento.
         }
-        if (deps.maySend && !(await deps.maySend(incoming))) return { status: "disabled", reason: "tenant_or_conversation_blocked" };
+        if (deps.maySend && !(await deps.maySend(incoming))) {
+          await clearInflightItems();
+          return { status: "disabled", reason: "tenant_or_conversation_blocked" };
+        }
         await quotaStore.dispatch(input, reservation.token);
         sendStarted = true;
         // Desconta o tempo que a LLM ja passou digitando para evitar espera dupla,
@@ -668,6 +714,7 @@ export async function processWebhook(
         const bubbles = splitIntoBubbles(answer);
         let sendOutcome: { messageId?: string } | void = undefined;
         let bubblePresenceInflight: Promise<unknown> | null = null;
+        const sentBubbles: string[] = [];
         try {
           for (let i = 0; i < bubbles.length; i++) {
             const bubble = bubbles[i];
@@ -690,10 +737,18 @@ export async function processWebhook(
               stopTyping = null; // o finally nao precisa desligar de novo
             }
             const outcome = await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
+            sentBubbles.push(bubble);
+            sentBubbleCount = sentBubbles.length;
             if (i === 0) sendOutcome = outcome;
           }
         } catch (error) {
           rejected = error instanceof EvolutionSendError && error.outcome === "rejected";
+          if (sentBubbles.length > 0) {
+            try {
+              await persistOutboundInSupabase(incoming.instance, incoming.number, sentBubbles.join("\n\n"));
+              await markItemsDone();
+            } catch {}
+          }
           throw error;
         } finally {
           if (bubblePresenceInflight) {
@@ -728,29 +783,60 @@ export async function processWebhook(
         } catch {}
 
         // 12. Queue drain: check if consecutive messages arrived while AI was generating/sending
+        let followUpContextHistory = [...(context.history ?? []), { role: "user" as const, content: combinedText }, { role: "assistant" as const, content: answer }];
         try {
-          const remainingCount = await redis.llen(bufferKey);
-          if (remainingCount > 0) {
-            const extraRaw = await redis.lrange(bufferKey, 0, -1);
-            await redis.del(bufferKey);
+          const hasLlen = typeof (redis as unknown as { llen?: unknown }).llen === "function";
+          for (let drainPass = 0; hasLlen && drainPass < 3; drainPass++) {
+            const remainingCount = await redis.llen(bufferKey);
+            if (remainingCount <= 0) break;
+            const extraRaw = await popBufferedRaw();
+            if (extraRaw.length === 0) break;
             const extraItems: Array<{ id: string; text: string }> = [];
             for (const it of extraRaw) {
               try { extraItems.push(JSON.parse(it)); } catch { extraItems.push({ id: "", text: it }); }
             }
             const extraText = extraItems.map(it => it.text.trim()).filter(Boolean).join("\n");
-            if (extraText && (!deps.maySend || (await deps.maySend(incoming)))) {
-              const extraEscalation = detectCustomerEscalation(extraText);
-              if (extraEscalation.isEscalation) {
-                await performEscalation(extraEscalation, extraText, extraItems);
+            if (!extraText) {
+              await clearInflightItems(extraItems);
+              continue;
+            }
+            if (deps.maySend && !(await deps.maySend(incoming))) {
+              await clearInflightItems(extraItems);
+              break;
+            }
+            const extraEscalation = detectCustomerEscalation(extraText);
+            if (extraEscalation.isEscalation) {
+              await performEscalation(extraEscalation, extraText, extraItems);
+              break;
+            }
+            if (Number(await redis.get(sessionMsgsKey) || 0) >= MAX_AI_REPLIES_PER_24H_WINDOW) {
+              await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Limite de segurança de respostas automáticas na janela de 24h atingido").catch(() => null);
+              await clearInflightItems(extraItems);
+              break;
+            }
+            const followUpInput: AttendanceInput = {
+              ...input,
+              messageIds: [...new Set(extraItems.map(it => it.id).filter(Boolean))],
+            };
+            if (followUpInput.messageIds.length === 0) {
+              followUpInput.messageIds = [`drain:${Date.now()}:${drainPass}`];
+            }
+            const followRes = await quotaStore.reserve(followUpInput);
+            if (!followRes.allowed || !followRes.token) {
+              await clearInflightItems(extraItems);
+              break;
+            }
+            let followSent = false;
+            try {
+              const turnCtx: StoreAiContext = { ...context, history: followUpContextHistory };
+              let followUp = "";
+              if (isOutOfScopeRequest(extraText, turnCtx)) {
+                followUp = buildOutOfScopeReply(turnCtx.storeName);
               } else {
-                await markItemsDone(extraItems);
-                const rawFollowUp = await (deps.generate ?? generateAnswer)(extraText, cfg, context).catch((err: unknown) => {
+                const rawFollowUp = await (deps.generate ?? generateAnswer)(extraText, cfg, turnCtx).catch((err: unknown) => {
                   console.error("[crm-ai] falha no follow-up:", err instanceof Error ? err.message : String(err));
                   return "";
                 });
-                // O follow-up passa pelos mesmos controles da resposta principal:
-                // guarda comercial e divisao em bolhas. Antes ele saia cru, sem
-                // auditoria e num bloco unico.
                 const followUpGuard = sanitizeAiReply({
                   reply: (rawFollowUp ?? "").trim(),
                   allowedText: context?.storeInfo ?? "",
@@ -762,20 +848,48 @@ export async function processWebhook(
                     conversationId: convContext.conversationId,
                     kind,
                     detail: { replyChars: (rawFollowUp ?? "").length, blocked: followUpGuard.blocked, followUp: true }
-                  });
+                  }).catch(() => {});
                 }
-                const followUp = followUpGuard.reply.trim();
-                if (followUp) {
-                  const followUpBubbles = splitIntoBubbles(followUp);
-                  for (const bubble of followUpBubbles) {
-                    await (deps.send ?? sendText)(incoming.number, bubble, cfg, incoming.instance);
-                  }
-                  await persistOutboundInSupabase(incoming.instance, incoming.number, followUpBubbles.join("\n\n"));
+                if (followUpGuard.blocked) {
+                  await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Informação comercial não confirmada no follow-up").catch(() => null);
                 }
+                followUp = followUpGuard.reply.trim();
+              }
+              if (!followUp) {
+                await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Falha da IA no follow-up — encaminhado para equipe").catch(() => null);
+                await (deps.send ?? sendText)(incoming.number, AI_FAILURE_REPLY, cfg, incoming.instance);
+                await persistOutboundInSupabase(incoming.instance, incoming.number, AI_FAILURE_REPLY);
+                await markItemsDone(extraItems);
+                break;
+              }
+              await quotaStore.dispatch(followUpInput, followRes.token);
+              const followUpBubbles = splitIntoBubbles(followUp);
+              let firstOutcome: { messageId?: string } | void = undefined;
+              for (let bi = 0; bi < followUpBubbles.length; bi++) {
+                const out = await (deps.send ?? sendText)(incoming.number, followUpBubbles[bi], cfg, incoming.instance);
+                if (bi === 0) firstOutcome = out;
+              }
+              followSent = true;
+              const followCommitted = await quotaStore.commit(followUpInput, followRes.token);
+              try {
+                const fQuotaKey = followCommitted.period === "trial" ? `crm:quota:trial:${tenantId}` : `crm:quota:${tenantId}:${followCommitted.period}`;
+                await redis.set(fQuotaKey, String(followCommitted.used));
+                await redis.set(sessionMsgsKey, String(Number(await redis.get(sessionMsgsKey) || 0) + 1), "EX", 86400);
+              } catch {}
+              await markItemsDone(extraItems);
+              const extId = firstOutcome && typeof firstOutcome === "object" && "messageId" in firstOutcome ? firstOutcome.messageId : undefined;
+              await persistOutboundInSupabase(incoming.instance, incoming.number, followUpBubbles.join("\n\n"), extId);
+              followUpContextHistory = [...followUpContextHistory, { role: "user", content: extraText }, { role: "assistant", content: followUp }];
+            } finally {
+              if (!followSent) {
+                await quotaStore.release(followUpInput, followRes.token).catch(() => {});
+                await clearInflightItems(extraItems);
               }
             }
           }
-        } catch {}
+        } catch (drainErr) {
+          console.error("[crm-ai] erro no queue drain:", drainErr instanceof Error ? drainErr.message : String(drainErr));
+        }
 
         return { status: "sent" };
       } finally {
@@ -784,7 +898,7 @@ export async function processWebhook(
         try { stopTyping?.(); } catch { /* presenca visual nunca bloqueia */ }
         // Unknown provider outcome stays reserved for reconciliation. Confirmed rejection or
         // failure before starting provider I/O can safely release without charging.
-        if (!accepted && (!sendStarted || rejected)) await quotaStore.release(input, reservation.token);
+        if (!accepted && sentBubbleCount === 0 && (!sendStarted || rejected)) await quotaStore.release(input, reservation.token);
       }
     } finally {
       try {

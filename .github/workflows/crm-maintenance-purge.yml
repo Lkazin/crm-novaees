@@ -28,18 +28,18 @@ jobs:
             echo "Segredos de ambiente não definidos. Ignorando execução automática com segurança."
             exit 0
           fi
-          echo "Disparando limpeza periódica de contas e dados pendentes no Supabase..."
-          url="${SUPABASE_URL}/rest/v1/rpc/exec_sql"
-          
-          query="DELETE FROM public.crm_ai_message_reservations WHERE created_at < NOW() - INTERVAL '7 days';"
-          
+          echo "Disparando limpeza periódica de reservas antigas via PostgREST..."
+          cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          url="${SUPABASE_URL%/}/rest/v1/crm_ai_message_reservations?created_at=lt.${cutoff}"
+
           status="$(curl --silent --show-error --write-out '%{http_code}' --output /dev/null --max-time 20 \
-            --request POST \
+            --request DELETE \
             --header "apikey: ${SUPABASE_SERVICE_KEY}" \
             --header "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            --header "Content-Type: application/json" \
-            --data "{\"query\": \"${query}\"}" \
             "$url")" || status="000"
-            
-          echo "Resultado da limpeza: HTTP $status"
-          exit 0
+
+          echo "Resultado da limpeza de reservas: HTTP $status"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Falha na limpeza de reservas expiradas (HTTP $status)."
+            exit 1
+          fi

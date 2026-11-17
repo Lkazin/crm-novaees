@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { extractClientIp } from "@/lib/crm/master-auth";
+import { getRedis } from "@/lib/crm/plans";
 import {
   getMasterRecoveryPhoneConfig,
   findUserRecoveryPhoneByEmail,
@@ -8,6 +11,32 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const recoveryReqLimiter = new Map<string, { count: number; resetAt: number }>();
+
+async function isRecoveryRequestRateLimited(ip: string): Promise<boolean> {
+  const now = Date.now();
+  const entry = recoveryReqLimiter.get(ip);
+  if (entry && entry.resetAt > now) {
+    if (entry.count >= 5) return true;
+    entry.count += 1;
+  } else {
+    recoveryReqLimiter.set(ip, { count: 1, resetAt: now + 15 * 60 * 1000 });
+  }
+  try {
+    const redis = getRedis();
+    if (process.env.CRM_REDIS_URL && redis.status !== "ready" && redis.status !== "connecting" && redis.status !== "end") {
+      await redis.connect().catch(() => {});
+    }
+    if (redis.status === "ready") {
+      const key = `crm:ratelimit:wa_recover_req:${ip}`;
+      const n = await redis.incr(key);
+      if (n === 1) await redis.expire(key, 15 * 60);
+      if (n > 5) return true;
+    }
+  } catch {}
+  return false;
+}
 
 export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(request.headers.get("origin"), request.url)) {
@@ -18,6 +47,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const ip = extractClientIp(request);
+    if (await isRecoveryRequestRateLimited(ip)) {
+      return privateJson({
+        error: "too_many_requests",
+        message: "Muitas solicitações de código em sequência. Aguarde alguns minutos."
+      }, 429);
+    }
+
     const body = await request.json();
     const scope = body.scope === "master" ? "master" : "client";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -44,7 +81,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Client Scope
+    // Client Scope (generic response prevents email/phone enumeration)
     if (!email || !email.includes("@")) {
       return privateJson({ error: "invalid_email", message: "Informe um e-mail válido para localizar sua conta." }, 400);
     }
@@ -52,9 +89,11 @@ export async function POST(request: NextRequest) {
     const userInfo = await findUserRecoveryPhoneByEmail(email);
     if (!userInfo || !userInfo.phone || !userInfo.verified) {
       return privateJson({
-        error: "phone_not_configured_or_unverified",
-        message: "Não encontramos um WhatsApp de recuperação previamente verificado para este e-mail. Utilize a recuperação padrão por e-mail ou solicite auxílio ao administrador da sua loja."
-      }, 404);
+        ok: true,
+        challengeId: crypto.randomUUID(),
+        maskedPhone: "seu WhatsApp cadastrado",
+        message: "Se este e-mail possuir um WhatsApp de recuperação verificado, enviaremos um código de 6 dígitos."
+      });
     }
 
     const challenge = await createRecoveryChallenge("client", email, userInfo.phone, userInfo.userId);
@@ -68,8 +107,7 @@ export async function POST(request: NextRequest) {
       maskedPhone: challenge.maskedPhone,
       message: `Código de verificação de 6 dígitos enviado para ${challenge.maskedPhone}.`
     });
-  } catch (err) {
-    console.error("[whatsapp-recover-request-err]", err);
+  } catch {
     return privateJson({ error: "internal_error", message: "Falha ao processar solicitação de recuperação." }, 500);
   }
 }

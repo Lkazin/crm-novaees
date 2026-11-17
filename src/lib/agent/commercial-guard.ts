@@ -56,9 +56,20 @@ export function extractBrlValues(text: string): number[] {
   const re = /R\$\s*([\d.]+)(?:,(\d{2}))?/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const inteiro = m[1].replace(/\./g, "");
-    const centavos = m[2] ?? "00";
-    const n = Number(`${inteiro}.${centavos}`);
+    let rawInt = m[1];
+    let centavos = m[2];
+    // Se vier no formato "R$ 100.00" (ponto decimal em vez de virgula)
+    if (!centavos && /\.\d{2}$/.test(rawInt)) {
+      centavos = rawInt.slice(-2);
+      rawInt = rawInt.slice(0, -3);
+    }
+    const inteiro = rawInt.replace(/\./g, "");
+    const n = Number(`${inteiro}.${centavos ?? "00"}`);
+    if (Number.isFinite(n)) out.push(n);
+  }
+  const reReais = /\b(\d+(?:[.,]\d{2})?)\s*reais\b/gi;
+  while ((m = reReais.exec(text)) !== null) {
+    const n = Number(m[1].replace(",", "."));
     if (Number.isFinite(n)) out.push(n);
   }
   return out;
@@ -219,4 +230,58 @@ export function sanitizeAiReply(params: {
   }
 
   return { reply: limpo, violations, blocked: false, removedUrls };
+}
+
+/**
+ * Resposta padrao quando o cliente pede algo fora do escopo do negocio conectado
+ * (ex.: "pesquisa no Google", curiosidades gerais, codigo, receitas, clima).
+ */
+export function buildOutOfScopeReply(storeName?: string): string {
+  const loja = storeName?.trim();
+  return loja
+    ? `Desculpe, sou o assistente virtual de atendimento da ${loja} e respondo apenas sobre nossos serviços, produtos, horários e atendimento. Como posso te ajudar com isso?`
+    : "Desculpe, sou um assistente focado exclusivamente no atendimento desta empresa e respondo apenas sobre nossos serviços, produtos, horários e informações da loja. Como posso te ajudar?";
+}
+
+const OUT_OF_SCOPE_PATTERNS: Array<{ re: RegExp; allowedIfInContext?: RegExp }> = [
+  {
+    re: /\b(pesquis(a|ar|e)|busca(r)?|procur(a|ar|e)|consulta(r)?|olh(a|ar|e)|jog(a|ar|ue))\s+(no|na|pelo|pela)\s+(google|internet|web|bing|youtube|wikipedia|chat\s*gpt|chatgpt|gemini)\b/i
+  },
+  {
+    re: /\b(escrev(a|er)|cri(a|ar|e)|fa[cz](a|er)|ger(a|ar|e)|mont(a|ar|e))\s+(um|uma)\s+(c[oó]digo|script|programa|fun[çc][aã]o|reda[çc][aã]o|poema|m[uú]sica|letra|hist[oó]ria|receita|resumo de livro)\b/i,
+    allowedIfInContext: /\b(c[oó]digo|script|programa|reda[çc][aã]o|poema|m[uú]sica|receita)\b/i
+  },
+  {
+    re: /\b(qual (?:[eé] )?a capital d[eao]|quem ganhou|quem descobriu|quem inventou|previs[aã]o do tempo|cota[çc][aã]o do d[oó]lar|me cont(a|e) uma piada|traduz(a|ir)\s+(?:isso\s+)?(?:para|pro)\s+(?:ingl[eê]s|espanhol|franc[eê]s|alem[aã]o))\b/i,
+    allowedIfInContext: /\b(capital|previs[aã]o|d[oó]lar|tradu[çc][aã]o)\b/i
+  }
+];
+
+/**
+ * Detecta se a mensagem pede explicitamente pesquisa externa no Google/internet
+ * ou tarefas gerais alheias as instrucoes/base de conhecimento do lojista.
+ */
+export function isOutOfScopeRequest(
+  message: string,
+  storeContext?: { storeName?: string; instructions?: string; storeInfo?: string }
+): boolean {
+  const norm = (message ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+  if (!norm) return false;
+
+  const contextText = `${storeContext?.storeName ?? ""}\n${storeContext?.instructions ?? ""}\n${storeContext?.storeInfo ?? ""}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  for (const rule of OUT_OF_SCOPE_PATTERNS) {
+    if (rule.re.test(norm)) {
+      if (rule.allowedIfInContext && rule.allowedIfInContext.test(contextText)) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
 }

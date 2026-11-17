@@ -43,6 +43,7 @@ export type DaySchedule = {
   hasBreak?: boolean;
   breakStart?: string;
   breakEnd?: string;
+  intervals?: Array<{ start: string; end: string }>;
 };
 
 export type StoreAiContext = {
@@ -140,7 +141,8 @@ export function formatOperatingHoursForPrompt(
     formattedTime = "horário local";
   }
 
-  if (!hours) {
+  const hasCustomSchedule = Boolean(hours?.schedule && Object.keys(hours.schedule).length > 0);
+  if (!hours || (hours.enabled === false && !hasCustomSchedule)) {
     return `- Momento atual (${tz}): ${currentDayLabel}, ${formattedDate} às ${formattedTime}.\n- Horário de funcionamento: consulte as informações na Base de Conhecimento abaixo.`;
   }
 
@@ -155,34 +157,48 @@ export function formatOperatingHoursForPrompt(
   for (const d of DAY_LABELS) {
     const dayCfg = hours.schedule?.[d.key];
     const isEnabled = dayCfg ? Boolean(dayCfg.enabled) : activeDays.includes(d.key);
+    const validIntervals = Array.isArray(dayCfg?.intervals)
+      ? dayCfg!.intervals.filter(it => it && typeof it.start === "string" && typeof it.end === "string" && /^\d{1,2}:\d{2}$/.test(it.start.trim()) && /^\d{1,2}:\d{2}$/.test(it.end.trim()))
+      : [];
     const openT = dayCfg?.openTime || defaultOpen;
     const closeT = dayCfg?.closeTime || defaultClose;
     const hasBreak = Boolean(dayCfg?.hasBreak && dayCfg?.breakStart && dayCfg?.breakEnd);
     const breakText = hasBreak ? ` (Intervalo/pausa das ${dayCfg!.breakStart} às ${dayCfg!.breakEnd})` : "";
 
-    const lineText = isEnabled
-      ? `das ${openT} às ${closeT}${breakText}`
-      : "Fechado";
+    const lineText = !isEnabled
+      ? "Fechado"
+      : validIntervals.length > 0
+        ? validIntervals.map(it => `das ${it.start.trim()} às ${it.end.trim()}`).join(" e ")
+        : `das ${openT} às ${closeT}${breakText}`;
 
     lines.push(`  • ${d.label}: ${lineText}`);
 
     if (d.key === currentDayKey) {
       todaySummary = lineText;
       if (isEnabled) {
-        const openMin = parseMinutes(openT, 0);
-        const closeMin = parseMinutes(closeT, 23 * 60 + 59);
-        const inWindow = closeMin > openMin
-          ? currentMinutes >= openMin && currentMinutes <= closeMin
-          : currentMinutes >= openMin || currentMinutes <= closeMin;
-        let inBreak = false;
-        if (hasBreak) {
-          const bStart = parseMinutes(dayCfg!.breakStart, -1);
-          const bEnd = parseMinutes(dayCfg!.breakEnd, -1);
-          if (bStart >= 0 && bEnd > bStart && currentMinutes >= bStart && currentMinutes < bEnd) {
-            inBreak = true;
+        if (validIntervals.length > 0) {
+          isOpenRightNow = validIntervals.some(it => {
+            const sMin = parseMinutes(it.start, -1);
+            const eMin = parseMinutes(it.end, -1);
+            if (sMin < 0 || eMin < 0) return false;
+            return eMin > sMin ? currentMinutes >= sMin && currentMinutes <= eMin : currentMinutes >= sMin || currentMinutes <= eMin;
+          });
+        } else {
+          const openMin = parseMinutes(openT, 0);
+          const closeMin = parseMinutes(closeT, 23 * 60 + 59);
+          const inWindow = closeMin > openMin
+            ? currentMinutes >= openMin && currentMinutes <= closeMin
+            : currentMinutes >= openMin || currentMinutes <= closeMin;
+          let inBreak = false;
+          if (hasBreak) {
+            const bStart = parseMinutes(dayCfg!.breakStart, -1);
+            const bEnd = parseMinutes(dayCfg!.breakEnd, -1);
+            if (bStart >= 0 && bEnd > bStart && currentMinutes >= bStart && currentMinutes < bEnd) {
+              inBreak = true;
+            }
           }
+          isOpenRightNow = inWindow && !inBreak;
         }
-        isOpenRightNow = inWindow && !inBreak;
       }
     }
   }
@@ -219,6 +235,11 @@ export function buildSystemPrompt(storeContext?: StoreAiContext, fallbackPrompt?
 
   return `Você é "${agentLabel}", do atendimento no WhatsApp do estabelecimento "${storeName}".
 Converse como uma pessoa da equipe: português brasileiro natural, acolhedor, direto e resolutivo.
+
+# 0. ESCOPO FECHADO DE ATENDIMENTO (REGRA ABSOLUTA)
+- Você atende EXCLUSIVAMENTE assuntos, produtos, serviços, horários e atendimento de "${storeName}", usando APENAS o conteúdo de <instrucoes_do_lojista>, <base_de_conhecimento> e os horários cadastrados.
+- PROIBIDO pesquisar no Google ou na internet, responder perguntas de conhecimento geral (notícias, história, geografia, esportes, política, clima, receitas, código/programação, redações, traduções ou piadas) ou atuar como assistente genérico fora do negócio conectado neste canal.
+- Se o cliente pedir algo que não pertence ao atendimento de "${storeName}" (por exemplo, "pesquisa no Google", curiosidades ou tarefas pessoais), recuse com educação em UMA frase curta explicando que você atende apenas informações e atendimento de "${storeName}".
 
 # 1. ESTILO NO WHATSAPP
 - Responda só o que foi perguntado, em UMA mensagem curta: se a resposta cabe em 2 ou 3 linhas, escreva 2 ou 3 linhas. Não liste tudo o que o plano inclui se ele perguntou o preço, e não repita o que você já disse nesta conversa.
@@ -313,20 +334,36 @@ export async function generateAnswer(
   if (!models.length) throw new Error("Modelo de IA nao autorizado");
 
   const deadline = Date.now() + 25_000;
-  const systemContent = buildSystemPrompt(storeContext, cfg.systemPrompt);
+
+  // Se o webhook ja gravou a mensagem atual no Supabase antes de buscar o
+  // historico, removemos a copia duplicada do final para (a) reativar a saudacao
+  // de PRIMEIRA MENSAGEM e (b) evitar enviar a fala do cliente duas vezes.
+  const normPrompt = (prompt ?? "").trim().replace(/\s+/g, " ");
+  let effectiveHistory = Array.isArray(storeContext?.history) ? [...storeContext!.history] : [];
+  if (effectiveHistory.length > 0) {
+    const last = effectiveHistory[effectiveHistory.length - 1];
+    if (last.role === "user" && last.content.trim().replace(/\s+/g, " ") === normPrompt) {
+      effectiveHistory = effectiveHistory.slice(0, -1);
+    }
+  }
+  const effectiveContext: StoreAiContext | undefined = storeContext
+    ? { ...storeContext, history: effectiveHistory }
+    : storeContext;
+
+  const systemContent = buildSystemPrompt(effectiveContext, cfg.systemPrompt);
 
   // Construct message thread with real conversation history
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemContent }
   ];
 
-  if (storeContext?.history && storeContext.history.length > 0) {
+  if (effectiveHistory.length > 0) {
     // Janela de 6 turnos: o suficiente para manter o fio da conversa. O que fica
     // de fora vira uma linha de resumo, para nao perder o assunto nem pagar
     // tokens por mensagem antiga que a IA nao vai usar.
     const HISTORY_WINDOW = 6;
-    const recentHistory = storeContext.history.slice(-HISTORY_WINDOW);
-    const olderHistory = storeContext.history.slice(0, -HISTORY_WINDOW);
+    const recentHistory = effectiveHistory.slice(-HISTORY_WINDOW);
+    const olderHistory = effectiveHistory.slice(0, -HISTORY_WINDOW);
     if (olderHistory.length > 0) {
       // Resumo curto do que ficou fora da janela: 4 falas de ate 120 chars, com
       // autor. Antes eram 2 trechos de 80 chars sem autor, o que nao permitia
@@ -376,6 +413,13 @@ export async function generateAnswer(
         cache: "no-store",
       });
       if (!response.ok) {
+        void recordAiUsage({
+          tenantId: storeContext?.tenantId,
+          conversationId: storeContext?.conversationId,
+          provider: "omniroute",
+          model: currentModel,
+          status: response.status === 429 ? "rate_limited" : "error",
+        });
         const retryable = [429, 500, 502, 503, 504].includes(response.status);
         if (retryable && index + 1 < models.length && Date.now() < deadline) {
           console.warn(`[ai-fallback] Model ${currentModel} returned ${response.status}. Switching to fallback: ${models[index + 1]}`);
@@ -389,31 +433,39 @@ export async function generateAnswer(
       const answer = (data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
       const usage = (data as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
       const servedModel = (data as { model?: string }).model || currentModel;
+      const hasContent = typeof answer === "string" && answer.trim().length > 0;
       void recordAiUsage({
         tenantId: storeContext?.tenantId,
         conversationId: storeContext?.conversationId,
         provider: "omniroute",
         model: servedModel,
-        status: typeof answer === "string" && answer.trim() ? "success" : "empty",
+        status: hasContent ? "success" : "error",
         promptTokens: usage?.prompt_tokens ?? null,
         completionTokens: usage?.completion_tokens ?? null,
       });
-      if (typeof answer !== "string" || !answer.trim()) {
+      if (!hasContent) {
         if (index + 1 < models.length && Date.now() < deadline) {
           console.warn(`[ai-fallback] Model ${currentModel} returned empty content. Switching to fallback: ${models[index + 1]}`);
           continue;
         }
         throw new Error("IA retornou resposta vazia");
       }
-      return answer.trim().slice(0, 1400);
+      return (answer as string).trim().slice(0, 1400);
     } catch (error) {
       if ((error as { nonRetryable?: boolean })?.nonRetryable) throw error;
+      const isTimeout = error instanceof DOMException && error.name === "AbortError";
+      void recordAiUsage({
+        tenantId: storeContext?.tenantId,
+        conversationId: storeContext?.conversationId,
+        provider: "omniroute",
+        model: currentModel,
+        status: isTimeout ? "timeout" : "error",
+      });
       if (index + 1 < models.length && Date.now() < deadline) {
         console.warn(`[ai-fallback] Error on model ${currentModel}. Switching to fallback: ${models[index + 1]}`);
         continue;
       }
-      if (index + 1 >= models.length || Date.now() >= deadline) throw error;
-      if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === "AbortError")) throw error;
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

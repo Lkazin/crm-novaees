@@ -4,9 +4,9 @@ import type Redis from "ioredis";
 import {
   ALL_DEFAULT_PLANS, LEGACY_CONTRACT_PLANS, getMasterPlans,
   getEffectiveTenantPlan, selectPublishedPlan, buildFeatureGovernanceMap,
-  saveMasterPlan
+  saveMasterPlan, normalizeCatalogPlan
 } from "./plans";
-import { buildTenantWhatsappSlots } from "./whatsapp-slots";
+import { buildTenantWhatsappSlots, resolveChannelSlot } from "./whatsapp-slots";
 
 function cache(plans = [...ALL_DEFAULT_PLANS, ...LEGACY_CONTRACT_PLANS]) {
   const values = new Map([["crm:master:plans", JSON.stringify(plans)]]);
@@ -61,4 +61,14 @@ test("free trial uses a single access, one WhatsApp and a total quota of 50", as
 
 test("operator cap validation supports 20 and rejects 21", async () => {
   await assert.rejects(()=>saveMasterPlan({id:"custom",name:"Custom",maxOperators:21},"draft","new_clients","test",cache()),/invalid_plan_limits/);
+});
+
+test("normalizeCatalogPlan preserves Master v4 edits and resolveChannelSlot handles numeric store names", () => {
+  const base = ALL_DEFAULT_PLANS.find(p => p.id === "crm-essential")!;
+  const edited = normalizeCatalogPlan({ ...base, price: "99,90", quotaLimit: 450, description: "Editado" });
+  assert.equal(edited.price, "99,90");
+  assert.equal(edited.quotaLimit, 450);
+  assert.equal(edited.description, "Editado");
+  assert.equal(resolveChannelSlot("loja_loja_2", "Loja 2"), 1);
+  assert.equal(resolveChannelSlot("loja_loja_2_2", "Loja 2"), 2);
 });

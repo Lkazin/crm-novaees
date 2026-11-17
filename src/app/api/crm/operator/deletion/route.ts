@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { privateJson } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
 import {
   cancelDeletion,
@@ -17,9 +17,7 @@ export const dynamic = "force-dynamic";
 // POST   -> agenda o cancelamento; o painel continua ativo ate o fim do ciclo
 // DELETE -> cliente volta atras, enquanto o purge nao rodou
 //
-// O tenant e sempre validado por authorizeCrmTenant, que confere a sessao do
-// operador e o vinculo dele com a empresa: um cliente nao consegue agendar nem
-// cancelar a exclusao de outra empresa.
+// O tenant e sempre validado por authorizeCrmTenant (owner/admin apenas).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,7 +32,7 @@ export async function GET(request: NextRequest) {
   try {
     const tenantId = await tenantIdFrom(request);
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
-    if (!(await authorizeCrmTenant(request, tenantId))) return privateJson({ error: "unauthorized" }, 401);
+    if (!(await authorizeCrmTenant(request, tenantId, ["owner", "admin"]))) return privateJson({ error: "unauthorized" }, 401);
 
     const req = await getActiveDeletionRequest(tenantId);
     if (!req) return privateJson({ scheduled: false });
@@ -44,12 +42,13 @@ export async function GET(request: NextRequest) {
       purgeAfter: req.purgeAfter,
       daysLeft: daysUntilPurge(req.purgeAfter),
     });
-  } catch (err) {
-    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  } catch {
+    return privateJson({ error: "internal_error" }, 500);
   }
 }
 
 export async function POST(request: NextRequest) {
+  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) return privateJson({ error: "origin_forbidden" }, 403);
   try {
     let body: Record<string, unknown> = {};
     try {
@@ -61,7 +60,7 @@ export async function POST(request: NextRequest) {
 
     const tenantId = await tenantIdFrom(request, body);
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
-    const access = await authorizeCrmTenant(request, tenantId);
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin"]);
     if (!access) return privateJson({ error: "unauthorized" }, 401);
 
     const reason = typeof body.reason === "string" ? body.reason.slice(0, 500) : undefined;
@@ -78,20 +77,21 @@ export async function POST(request: NextRequest) {
       purgeAfter: req.purgeAfter,
       daysLeft: daysUntilPurge(req.purgeAfter),
     });
-  } catch (err) {
-    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  } catch {
+    return privateJson({ error: "internal_error" }, 500);
   }
 }
 
 export async function DELETE(request: NextRequest) {
+  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) return privateJson({ error: "origin_forbidden" }, 403);
   try {
     const tenantId = await tenantIdFrom(request);
     if (!tenantId) return privateJson({ error: "invalid_tenant" }, 400);
-    if (!(await authorizeCrmTenant(request, tenantId))) return privateJson({ error: "unauthorized" }, 401);
+    if (!(await authorizeCrmTenant(request, tenantId, ["owner", "admin"]))) return privateJson({ error: "unauthorized" }, 401);
 
     const ok = await cancelDeletion(tenantId);
     return privateJson({ cancelled: ok });
-  } catch (err) {
-    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  } catch {
+    return privateJson({ error: "internal_error" }, 500);
   }
 }

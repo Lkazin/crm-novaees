@@ -33,6 +33,18 @@ export function extractSlotFromInstanceName(instanceName: string): 1 | 2 | 3 | 4
 }
 
 /**
+ * Resolve o slot considerando o nome da empresa: empresas cujo nome termina
+ * com numero (ex.: "Loja 2" -> slug "loja_loja_2") usam esse slug para o Slot 1.
+ */
+export function resolveChannelSlot(instanceName: string, tenantName?: string | null): 1 | 2 | 3 | 4 | 5 {
+  const norm = instanceName.trim().toLowerCase();
+  if (tenantName && norm === tenantInstanceSlug(tenantName)) {
+    return 1;
+  }
+  return extractSlotFromInstanceName(norm);
+}
+
+/**
  * Build the 5 WhatsApp slots for a tenant based on their EffectiveTenantPlan and existing crm_channels rows.
  */
 export function buildTenantWhatsappSlots(
@@ -46,7 +58,7 @@ export function buildTenantWhatsappSlots(
   const bySlot = new Map<number, { id?: string; instance_name: string; status: string }>();
   for (const ch of channels) {
     if (!ch.instance_name) continue;
-    const slotNum = extractSlotFromInstanceName(ch.instance_name);
+    const slotNum = resolveChannelSlot(ch.instance_name, tenantName);
     if (!bySlot.has(slotNum)) {
       bySlot.set(slotNum, ch);
     }
@@ -116,7 +128,8 @@ export async function syncWhatsappChannelsForPlanLimit(
   tenantId: string,
   newMaxConnections: number,
   supaUrl: string,
-  serviceKey: string
+  serviceKey: string,
+  tenantName?: string
 ): Promise<{ pausedInstances: string[]; restoredInstances: string[] }> {
   const pausedInstances: string[] = [];
   const restoredInstances: string[] = [];
@@ -130,7 +143,7 @@ export async function syncWhatsappChannelsForPlanLimit(
   if (!rChannels.ok) throw new Error(`channel_sync_lookup_failed:${rChannels.status}`);
   const channels = await rChannels.json() as Array<{ id: string; instance_name: string; status: string }>;
   for (const ch of channels) {
-    const slot = extractSlotFromInstanceName(ch.instance_name);
+    const slot = resolveChannelSlot(ch.instance_name, tenantName);
     const nextStatus = slot > newMaxConnections ? "paused" : ch.status === "paused" ? "disconnected" : null;
     if (!nextStatus || nextStatus === ch.status) continue;
     const response = await fetch(`${supaUrl}/rest/v1/crm_channels?id=eq.${ch.id}&tenant_id=eq.${tenantId}`, {

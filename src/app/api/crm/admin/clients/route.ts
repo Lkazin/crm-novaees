@@ -58,13 +58,19 @@ export async function GET(request: NextRequest) {
     });
     const memberships = (await rMemb.json()) as Array<{ tenant_id: string; user_id: string; role: string; created_at?: string }>;
 
-    // 3. Fetch all auth users
-    const rUsers = await fetch(url + "/auth/v1/admin/users?per_page=200", {
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-      cache: "no-store"
-    });
-    const usersData = await rUsers.json();
-    const users = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, unknown> }>;
+    // 3. Fetch all auth users (paginated across all pages)
+    const users: Array<{ id: string; email: string; user_metadata?: Record<string, unknown> }> = [];
+    for (let page = 1; page <= 50; page++) {
+      const rUsers = await fetch(url + `/auth/v1/admin/users?page=${page}&per_page=200`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+        cache: "no-store"
+      });
+      if (!rUsers.ok) break;
+      const usersData = await rUsers.json();
+      const batch = (usersData?.users || []) as Array<{ id: string; email: string; user_metadata?: Record<string, unknown> }>;
+      users.push(...batch);
+      if (batch.length < 200) break;
+    }
     const userMap = new Map(users.map(u => [u.id, u]));
 
     // 4. Fetch tenant settings
@@ -393,7 +399,7 @@ export async function POST(request: NextRequest) {
         businessDetails: commonBusinessDetails,
         teamOperators: initialTeamOperators.map(op => ({ ...op, createdAt: trialStartedAt }))
       };
-      effectiveLimit = 100;
+      effectiveLimit = TRIAL_PLAN.quotaLimit;
       await recordTrialRegistration(tenantId, storeName, email || suppliedCustomerId);
     } else {
       const matchedPlan = selectedPlan;
@@ -695,7 +701,7 @@ export async function PATCH(request: NextRequest) {
     if (action === "reset_password") {
       const userId = typeof body.userId === "string" ? body.userId : "";
       const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
-      if (!userId || newPassword.length < 6) return privateJson({ error: "invalid_password_data" }, 400);
+      if (!TENANT_UUID.test(userId.trim()) || newPassword.length < 6) return privateJson({ error: "invalid_password_data" }, 400);
 
       const rPwd = await fetch(url + `/auth/v1/admin/users/${userId}`, {
         method: "PUT",

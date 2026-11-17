@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Redis from "ioredis";
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson, verifyOperator } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { authorizeAiLab, freeModelIds } from "@/lib/crm/ai-lab";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -27,10 +27,8 @@ export async function POST(req:NextRequest){
  if(!req.headers.get("content-type")?.includes("application/json"))return privateJson({error:"json_required"},415);
  if(Number(req.headers.get("content-length")??0)>1500)return privateJson({error:"too_large"},413);
  try{
-  const user=await verifyOperator();
-  if(!user)return privateJson({error:"unauthorized"},401);
-  const admin=await authorizeAiLab();
-  if(!admin)return privateJson({error:"forbidden"},403);
+  const admin=await authorizeAiLab(req);
+  if(!admin)return privateJson({error:"unauthorized"},401);
   if(process.env.CRM_AI_LAB_TEST_ENABLED!=="true")return privateJson({error:"test_disabled"},403);
   let input:unknown;
   try{input=await req.json();}catch{return privateJson({error:"invalid_json"},400);}

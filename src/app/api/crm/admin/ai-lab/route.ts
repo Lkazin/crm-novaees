@@ -1,13 +1,12 @@
-import { privateJson, verifyOperator } from "@/lib/crm/supabase-server";
+import { NextRequest } from "next/server";
+import { privateJson } from "@/lib/crm/supabase-server";
 import { authorizeAiLab, freeModelIds } from "@/lib/crm/ai-lab";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
-export async function GET(){
+export async function GET(request: NextRequest){
  try{
-  const user=await verifyOperator();
-  if(!user)return privateJson({error:"unauthorized"},401);
-  const authorized=await authorizeAiLab();
-  if(!authorized)return privateJson({error:"forbidden"},403);
+  const authorized=await authorizeAiLab(request);
+  if(!authorized)return privateJson({error:"unauthorized"},401);
   const approvedModels=freeModelIds();
   return privateJson({
     approvedModels,

@@ -246,7 +246,9 @@ export async function GET(request: NextRequest) {
         derivedStatus = "ai";
       }
 
-      const rawPrio = redisConvPriorities[c.id] || persistedConvPriorities[c.id]?.priority;
+      const rawEntry = persistedConvPriorities[c.id] as string | { priority?: string } | undefined;
+      const persistedPrio = typeof rawEntry === "string" ? rawEntry : rawEntry?.priority;
+      const rawPrio = redisConvPriorities[c.id] || persistedPrio;
       const priority: "low" | "normal" | "high" | "urgent" =
         rawPrio === "urgent" || rawPrio === "high" || rawPrio === "normal" || rawPrio === "low"
           ? rawPrio

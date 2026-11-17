@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { getRedis } from "./plans";
 import { supabaseSettings } from "./supabase-server";
 import { resolveMasterOwnTenant } from "./master-own-tenant";
-import { saveMasterPassword, resetLoginAttempts } from "./master-auth";
+import { saveMasterPassword, resetLoginAttempts, timingSafeMatch } from "./master-auth";
 
 // Types
 export interface RecoveryChallenge {
@@ -258,7 +258,7 @@ export async function verifyRecoveryChallenge(
 
   // Check code timing-safe
   const cleanInput = inputCode.trim();
-  const isMatch = cleanInput.length === 6 && cleanInput === challenge.code;
+  const isMatch = cleanInput.length === 6 && timingSafeMatch(cleanInput, challenge.code);
 
   if (!isMatch) {
     challenge.attemptsRemaining -= 1;
@@ -415,7 +415,8 @@ export async function verifyPhoneVerificationChallenge(
     return { success: false, error: "code_expired" };
   }
 
-  const isMatch = inputCode.trim() === challenge.code;
+  const cleanInput = inputCode.trim();
+  const isMatch = cleanInput.length === 6 && timingSafeMatch(cleanInput, challenge.code);
   if (!isMatch) {
     challenge.attemptsRemaining -= 1;
     if (challenge.attemptsRemaining <= 0) {
@@ -427,6 +428,13 @@ export async function verifyPhoneVerificationChallenge(
       return { success: false, error: "max_attempts_exceeded" };
     }
     inMemoryPhoneVerifications.set(challengeId, challenge);
+    try {
+      const redis = getRedis();
+      if (redis && redis.status !== "end") {
+        const remainingTtlSec = Math.max(60, Math.ceil((challenge.expiresAt - Date.now()) / 1000));
+        await redis.set(`crm:phone_verif:${challengeId}`, JSON.stringify(challenge), "EX", remainingTtlSec);
+      }
+    } catch {}
     return { success: false, error: "invalid_code" };
   }
 
@@ -607,26 +615,55 @@ export async function saveClientRecoveryPhoneConfig(userId: string, phone: strin
   return false;
 }
 
+export type SupabaseAuthUserRecord = {
+  id: string;
+  email?: string;
+  created_at?: string;
+  last_sign_in_at?: string | null;
+  banned_until?: string | null;
+  user_metadata?: Record<string, unknown>;
+};
+
 /**
- * Finds user ID and recovery phone by email from Supabase Auth
+ * Paginated fetch of all Supabase Auth users (avoids 200/500 truncation on large workspaces).
+ */
+export async function listAllSupabaseAuthUsers(
+  url: string,
+  serviceKey: string,
+  perPage = 200,
+  maxPages = 50
+): Promise<SupabaseAuthUserRecord[]> {
+  const allUsers: SupabaseAuthUserRecord[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await fetch(`${url}/auth/v1/admin/users?page=${page}&per_page=${perPage}`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(9000)
+    });
+    if (!res.ok) break;
+    const data = (await res.json()) as { users?: SupabaseAuthUserRecord[]; nextPage?: number | null };
+    const batch = Array.isArray(data?.users) ? data.users : [];
+    allUsers.push(...batch);
+    if (batch.length < perPage || data?.nextPage === null) break;
+  }
+  return allUsers;
+}
+
+/**
+ * Finds user ID and recovery phone by email from Supabase Auth (paginated across all pages).
  */
 export async function findUserRecoveryPhoneByEmail(email: string): Promise<{ userId: string; phone: string; verified: boolean } | null> {
   try {
     const { url } = supabaseSettings();
     const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY || "";
     if (url && serviceKey.length >= 30) {
-      const res = await fetch(`${url}/auth/v1/admin/users?per_page=200`, {
-        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
-        cache: "no-store"
-      });
-      if (res.ok) {
-        const data = await res.json() as { users?: Array<{ id: string; email?: string; user_metadata?: Record<string, unknown> }> };
-        const found = data.users?.find(u => u.email?.toLowerCase().trim() === email.toLowerCase().trim());
-        if (found) {
-          const phone = typeof found.user_metadata?.recovery_whatsapp === "string" ? found.user_metadata.recovery_whatsapp : "";
-          const verified = found.user_metadata?.recovery_whatsapp_verified === true;
-          return { userId: found.id, phone, verified };
-        }
+      const targetEmail = email.toLowerCase().trim();
+      const users = await listAllSupabaseAuthUsers(url, serviceKey);
+      const found = users.find(u => u.email?.toLowerCase().trim() === targetEmail);
+      if (found) {
+        const phone = typeof found.user_metadata?.recovery_whatsapp === "string" ? found.user_metadata.recovery_whatsapp : "";
+        const verified = found.user_metadata?.recovery_whatsapp_verified === true;
+        return { userId: found.id, phone, verified };
       }
     }
   } catch {}

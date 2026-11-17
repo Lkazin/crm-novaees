@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson, verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getRedis } from "@/lib/crm/plans";
 
@@ -47,6 +47,12 @@ async function loadBroadcastFromStorage(): Promise<GlobalBroadcast> {
 export async function GET(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
+
+  const master = await verifyMasterRequest(request);
+  if (!master.authorized) {
+    const op = await verifyOperator();
+    if (!op) return privateJson({ error: "unauthorized" }, 401);
+  }
 
   const broadcast = await loadBroadcastFromStorage();
   return privateJson({ ok: true, broadcast });

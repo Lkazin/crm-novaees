@@ -49,8 +49,8 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
   // Sync to Redis for real-time step-by-step UI tracking
   const redisUrl = process.env.CRM_REDIS_URL;
   if (redisUrl) {
+    const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 });
     try {
-      const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 });
       await redis.connect();
       const key = `crm:wa:state:${instanceName}`;
       const prevRaw = await redis.get(key);
@@ -58,6 +58,7 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
 
       if (event === "CONNECTION_UPDATE") {
         const isConnected = state === "open";
+        const isClosed = state === "close";
         const qrScanned = isConnected || (state === "connecting" && statusReason === 200);
         await redis.set(
           key,
@@ -66,7 +67,7 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
             state,
             statusReason,
             connected: isConnected,
-            qrScanned: qrScanned || prev.qrScanned || false,
+            qrScanned: isClosed ? false : (qrScanned || prev.qrScanned || false),
             qrcode: isConnected ? null : prev.qrcode,
             updatedAt: new Date().toISOString()
           }),
@@ -92,8 +93,11 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
           300
         );
       }
-      redis.disconnect();
-    } catch {}
+    } catch {
+      // Redis sync failure must not block webhook acknowledgement
+    } finally {
+      try { redis.disconnect(); } catch {}
+    }
   }
 
   // Sync connection state to Supabase crm_channels
@@ -101,8 +105,10 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
     try {
       const channel = await resolveChannelForInstance(instanceName);
       if (!channel || channel.status === "paused") return;
-      const plan = await getEffectiveTenantPlan(channel.tenant_id);
-      if (plan.isSuspended || extractSlotFromInstanceName(instanceName) > plan.maxWhatsappConnections) return;
+      if (state === "open") {
+        const plan = await getEffectiveTenantPlan(channel.tenant_id);
+        if (plan.isSuspended || extractSlotFromInstanceName(instanceName) > plan.maxWhatsappConnections) return;
+      }
       const supaUrl = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
       const supaKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
       if (supaUrl && supaKey) {
@@ -150,7 +156,7 @@ export async function POST(request: NextRequest) {
     // 2. Always persist incoming customer message in Supabase first so Live Chat works even if AI is disabled
     const cfg = getAgentConfig();
     let incoming = parseIncoming(payload);
-    if (!incoming) {
+    if (!incoming && payload && typeof payload === "object" && ["messages.upsert", "MESSAGES_UPSERT"].includes(String((payload as { event?: unknown }).event ?? ""))) {
       incoming = await resolveIncomingMediaMessage(payload, {
         evolutionUrl: cfg.evolutionUrl,
         evolutionKey: cfg.evolutionKey,
@@ -164,11 +170,12 @@ export async function POST(request: NextRequest) {
         persistIncomingInSupabase(incoming),
         captureIncoming(incoming),
       ]);
+      // 3. Process AI response if configured
+      const result = await processWebhook(payload, cfg, { maySend: outboundAllowed, resolvedIncoming: incoming });
+      return json(result);
     }
 
-    // 3. Process AI response if configured
-    const result = await processWebhook(payload, cfg, { maySend: outboundAllowed, resolvedIncoming: incoming || undefined });
-    return json(result);
+    return json({ status: "ignored", reason: "unsupported_event" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";
     console.error("[crm-ai-webhook]", message);

@@ -99,6 +99,10 @@ test("Master Rate Limiting bloqueia na 5ª tentativa, dispara OTP e desbloqueia 
   assert.equal(wrongValid, false);
   assert.equal((await isLoginBlocked(testIp, true)).blocked, true);
 
+  // OTP emitido para testIp nao pode ser consumido por outro IP
+  const hijackValid = await validateAndConsumeMasterOtp(res5.otpCode, "10.0.0.99");
+  assert.equal(hijackValid, false);
+
   // Código correto consome OTP e desbloqueia o IP
   const rightValid = await validateAndConsumeMasterOtp(res5.otpCode, testIp);
   assert.equal(rightValid, true);
@@ -106,4 +110,19 @@ test("Master Rate Limiting bloqueia na 5ª tentativa, dispara OTP e desbloqueia 
   // Após consumo do código, o IP não está mais bloqueado
   const checkUnblocked = await isLoginBlocked(testIp, true);
   assert.equal(checkUnblocked.blocked, false);
+});
+
+test("revokeMasterToken com URL-encoding (%3A) revoga token bruto e decodificado", async () => {
+  const prevSecret = process.env.CRM_MASTER_SESSION_SECRET;
+  process.env.CRM_MASTER_SESSION_SECRET = "s".repeat(32);
+  try {
+    const token = signMasterToken("master_admin", false);
+    const encoded = encodeURIComponent(token);
+    await revokeMasterToken(encoded);
+    assert.equal(await isMasterTokenRevoked(token), true);
+    assert.equal(await isMasterTokenRevoked(encoded), true);
+  } finally {
+    if (prevSecret === undefined) delete process.env.CRM_MASTER_SESSION_SECRET;
+    else process.env.CRM_MASTER_SESSION_SECRET = prevSecret;
+  }
 });

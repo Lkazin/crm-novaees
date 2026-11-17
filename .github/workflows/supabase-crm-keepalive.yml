@@ -19,15 +19,20 @@ jobs:
     steps:
       - name: Consultar RPC de leitura no Supabase
         env:
-          SUPABASE_PUBLISHABLE_KEY: "sb_publishable_gIWHZVByFBV26ubp02UxkQ_gE3y1uLd"
+          SUPABASE_URL: ${{ secrets.CRM_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.CRM_SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
-          url="https://mpteambmrlflllfqtkmq.supabase.co/rest/v1/rpc/nw_crm_keepalive"
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "Segredos CRM_SUPABASE_URL / CRM_SUPABASE_ANON_KEY não definidos. Encerrando sem executar."
+            exit 0
+          fi
+          url="${SUPABASE_URL%/}/rest/v1/rpc/nw_crm_keepalive"
           for attempt in 1 2 3; do
             response_file="$(mktemp)"
             status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' --max-time 15 \
               --request POST \
-              --header "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              --header "apikey: $SUPABASE_ANON_KEY" \
               --header 'Content-Type: application/json' \
               --data '{}' \
               "$url")" || status="000"

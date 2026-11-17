@@ -28,6 +28,9 @@ export async function POST(request: NextRequest) {
     if (!verification.success || !verification.phone) {
       return privateJson({ error: verification.error || "invalid_code", message: "Código incorreto ou expirado." }, 400);
     }
+    if (verification.scope !== "master") {
+      return privateJson({ error: "forbidden", message: "Este desafio pertence a outro escopo." }, 403);
+    }
 
     await saveMasterRecoveryPhoneConfig(verification.phone, true);
 

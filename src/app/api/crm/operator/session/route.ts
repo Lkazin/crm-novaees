@@ -1,15 +1,6 @@
-function isAllowedOrigin(origin: string | null, requestUrl: string): boolean {
-  if (!origin) return true;
-  try {
-    const o = new URL(origin);
-    const u = new URL(requestUrl);
-    if (o.hostname === u.hostname) return true;
-    if (['localhost', '127.0.0.1'].includes(o.hostname) && ['localhost', '127.0.0.1'].includes(u.hostname)) return true;
-    return o.origin === u.origin;
-  } catch { return false; }
-}
 import { NextRequest, NextResponse } from "next/server";
-import { privateJson, sessionCookieName, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson, sessionCookieName, supabaseSettings, verifyOperator } from "@/lib/crm/supabase-server";
+import { extractClientIp, isLoginBlocked, recordFailedLoginAttempt, resetLoginAttempts } from "@/lib/crm/master-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -18,6 +9,13 @@ export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(origin, request.url)) return privateJson({error:"forbidden"},403);
   if (!request.headers.get("content-type")?.includes("application/json")) return privateJson({error:"json_required"},415);
   if (Number(request.headers.get("content-length") ?? "0") > 4096) return privateJson({error:"request_too_large"},413);
+
+  const ip = extractClientIp(request);
+  const blockCheck = await isLoginBlocked(ip, false);
+  if (blockCheck.blocked) {
+    return privateJson({ error: "too_many_attempts", message: "Muitas tentativas incorretas. Aguarde antes de tentar novamente." }, 429);
+  }
+
   let body: unknown;
   try { body = await request.json(); } catch { return privateJson({error:"invalid_json"},400); }
   const value = body && typeof body === "object" ? body as Record<string,unknown> : {};
@@ -31,10 +29,17 @@ export async function POST(request: NextRequest) {
       method:"POST",headers:{apikey:key,"Content-Type":"application/json"},
       body:JSON.stringify({email,password}), cache:"no-store", signal:AbortSignal.timeout(9000)
     });
-    if (!auth.ok) return privateJson({error:"invalid_credentials"},401);
+    if (!auth.ok) {
+      const fail = await recordFailedLoginAttempt(ip, false);
+      if (fail.blocked) {
+        return privateJson({ error: "too_many_attempts", message: "Muitas tentativas incorretas. Acesso temporariamente bloqueado." }, 429);
+      }
+      return privateJson({error:"invalid_credentials"},401);
+    }
     const data = await auth.json() as {access_token?: string; expires_in?: number; user?:{id?:string}};
     if (!data.access_token || !data.user?.id || data.access_token.length>4096)
       return privateJson({error:"login_failed"},503);
+    await resetLoginAttempts(ip, false);
     const maxAge = Math.max(60,Math.min(3300,Number(data.expires_in ?? 3600)-60));
     const response=NextResponse.json({authenticated:true},{headers:{"Cache-Control":"no-store"}});
     const isSecure = process.env.NODE_ENV === "production" && !request.nextUrl.hostname.includes("localhost") && !request.nextUrl.hostname.includes("127.0.0.1");

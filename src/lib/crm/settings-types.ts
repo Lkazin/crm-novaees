@@ -36,7 +36,7 @@ export type StoredTenantConfig = Record<string, unknown> & {
   suspension?: { isSuspended?: boolean; publicReason?: string; internalNote?: string; updatedAt?: string; actor?: string };
   usageCounters?: { trialUsed?: number; monthly?: Record<string, number> };
   conversationTags?: Record<string, string>;
-  conversationPriorities?: Record<string, "low" | "normal" | "high" | "urgent">;
+  conversationPriorities?: Record<string, "low" | "normal" | "high" | "urgent" | { priority: "low" | "normal" | "high" | "urgent"; updatedAt?: string }>;
   ai_settings?: Record<string, unknown>;
   autoCloseSettings?: AutoCloseSettings;
   tagHistory?: Array<Record<string, unknown>>;

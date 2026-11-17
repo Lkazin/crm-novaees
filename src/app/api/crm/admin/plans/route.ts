@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
               if (s.business_description?.startsWith("{")) {
                 const parsed = JSON.parse(s.business_description);
                 const pId = parsed?.plan?.planId;
-                const pName = parsed?.plan?.name || "CRM Start";
+                const pName = parsed?.plan?.name || "Essencial";
                 const hasOverride = parsed?.plan?.customQuotaOverride !== undefined && parsed?.plan?.customQuotaOverride !== null;
                 const tObj = tenantMap.get(s.tenant_id);
 
@@ -135,15 +135,20 @@ export async function POST(request: NextRequest) {
 
     if (action === "duplicate") {
       const sourcePlanId = typeof body.sourcePlanId === "string" ? body.sourcePlanId : "";
+      const requestedNewId = typeof body.newPlanId === "string" ? body.newPlanId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") : "";
       const currentPlans = await getMasterPlans();
       const source = currentPlans.find(p => p.id === sourcePlanId);
       if (!source) return privateJson({ error: "source_plan_not_found" }, 404);
 
-      const newId = `crm-custom-${Date.now().toString(36)}`;
+      if (requestedNewId && currentPlans.some(p => p.id === requestedNewId)) {
+        return privateJson({ error: "plan_id_already_exists", message: "Já existe um plano com esse identificador." }, 409);
+      }
+
+      const newId = requestedNewId || `crm-custom-${Date.now().toString(36)}`;
       const duplicatedPlan: CrmPlan = {
         ...source,
         id: newId,
-        name: body.newName || `${source.name} (Cópia)`,
+        name: (typeof body.newName === "string" && body.newName.trim()) ? body.newName.trim() : `${source.name} (Cópia)`,
         isPopular: false,
         version: 1,
         status: "active",

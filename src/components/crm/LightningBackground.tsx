@@ -66,9 +66,18 @@ export default function LightningBackground() {
     }
 
     let time = 0;
+    let paused = typeof document !== "undefined" && document.hidden;
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     function render() {
       if (!ctx) return;
+      if (paused) {
+        animationFrameId = 0;
+        return;
+      }
       time += 0.008;
 
       ctx.clearRect(0, 0, width, height);
@@ -193,16 +202,29 @@ export default function LightningBackground() {
       }
       ctx.restore();
 
-      animationFrameId = requestAnimationFrame(render);
+      if (!paused && !prefersReducedMotion) {
+        animationFrameId = requestAnimationFrame(render);
+      } else {
+        animationFrameId = 0;
+      }
     }
 
-    animationFrameId = requestAnimationFrame(render);
+    function onVisibilityChange() {
+      paused = document.hidden;
+      if (!paused && !prefersReducedMotion && !animationFrameId) {
+        animationFrameId = requestAnimationFrame(render);
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    render();
 
     return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseleave", onMouseLeave);
-      cancelAnimationFrame(animationFrameId);
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
     };
   }, []);
 

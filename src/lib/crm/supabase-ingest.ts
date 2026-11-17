@@ -35,8 +35,9 @@ async function db<T>(table: string, query: string, method: RequestMethod, payloa
       apikey: key, Authorization: "Bearer " + key,
       Accept: "application/json",
       "Content-Type": "application/json",
-      ...(method === "POST" ? { Prefer: "return=representation" } :
-        method === "PATCH" ? { Prefer: "return=minimal" } : {})
+      ...(method === "POST"
+        ? { Prefer: query.includes("on_conflict=") ? "return=representation,resolution=merge-duplicates" : "return=representation" }
+        : method === "PATCH" ? { Prefer: "return=minimal" } : {})
     },
     ...(payload !== undefined ? { body: JSON.stringify(payload) } : {})
   });
@@ -74,12 +75,15 @@ export async function resolveChannelForInstance(instanceName: string): Promise<C
   let matchedTenant = allTenants.find(
     t => tenantInstanceSlug(t.name) === normalizedInstance || tenantInstanceSlug(t.name) === baseInstance
   );
-  if (!matchedTenant && baseInstance.startsWith("loja_")) {
+  if (!matchedTenant && baseInstance.startsWith("loja_") && baseInstance.length >= 18) {
     const prefix = baseInstance.slice(0, 18);
-    matchedTenant = allTenants.find(t => tenantInstanceSlug(t.name).startsWith(prefix));
+    const prefixMatches = allTenants.filter(t => tenantInstanceSlug(t.name).startsWith(prefix));
+    if (prefixMatches.length === 1) matchedTenant = prefixMatches[0];
   }
   if (!matchedTenant && (baseInstance === "novaesweb-ia-teste" || allTenants.length === 1)) {
-    matchedTenant = allTenants.find(t => t.name.toLowerCase().includes("novaesweb")) || allTenants.find(t => t.status === "active") || allTenants[0];
+    matchedTenant = baseInstance === "novaesweb-ia-teste"
+      ? allTenants.find(t => t.name.toLowerCase().includes("novaesweb"))
+      : allTenants[0];
   }
 
   if (!matchedTenant) return null;
@@ -175,9 +179,12 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
         if (redisUrl) {
           const { default: Redis } = await import("ioredis");
           const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
-          await r.connect();
-          await r.set(`crm:reopened_after_closed:${t}:${incoming.number}`, "1", "EX", 180);
-          r.disconnect();
+          try {
+            await r.connect();
+            await r.set(`crm:reopened_after_closed:${t}:${incoming.number}`, "1", "EX", 180);
+          } finally {
+            r.disconnect();
+          }
         }
       } catch {}
     } else if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
@@ -281,13 +288,16 @@ export async function fetchConversationContext(instance: string, phone: string, 
       if (redisUrl) {
         const { default: Redis } = await import("ioredis");
         const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
-        await r.connect();
-        const flagged = await r.get(`crm:reopened_after_closed:${t}:${phone}`);
-        if (flagged) {
-          isReturningAfterClosed = true;
-          await r.del(`crm:reopened_after_closed:${t}:${phone}`);
+        try {
+          await r.connect();
+          const flagged = await r.get(`crm:reopened_after_closed:${t}:${phone}`);
+          if (flagged) {
+            isReturningAfterClosed = true;
+            await r.del(`crm:reopened_after_closed:${t}:${phone}`);
+          }
+        } finally {
+          r.disconnect();
         }
-        r.disconnect();
       }
     } catch {}
 
@@ -296,9 +306,11 @@ export async function fetchConversationContext(instance: string, phone: string, 
     }
 
     if (!isReturningAfterClosed && rawMsgs && rawMsgs.length >= 2) {
-      const prevOutbound = rawMsgs.slice(1).find(m => m.direction === "outbound" || m.sender_type === "agent");
-      if (prevOutbound && prevOutbound.body) {
-        const bodyLower = prevOutbound.body.toLowerCase();
+      // Verifica apenas a ultima resposta da loja/IA: mensagens antigas de
+      // encerramento nao devem manter o modo "retorno" preso para o resto do chat.
+      const lastOutbound = rawMsgs.slice(1).find(m => m.direction === "outbound" || m.sender_type === "agent" || m.sender_type === "human");
+      if (lastOutbound && lastOutbound.body) {
+        const bodyLower = lastOutbound.body.toLowerCase();
         if (
           bodyLower.includes("finalizando este atendimento") ||
           bodyLower.includes("como não tivemos mais retorno") ||

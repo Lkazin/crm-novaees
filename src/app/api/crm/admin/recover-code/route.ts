@@ -5,7 +5,10 @@ import {
   MASTER_SESSION_TTL_SEC,
   signMasterToken,
   saveMasterPassword,
-  validateAndConsumeMasterOtp
+  validateAndConsumeMasterOtp,
+  extractClientIp,
+  isMasterOtpBlocked,
+  recordFailedMasterOtpAttempt
 } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
@@ -16,9 +19,14 @@ export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
 
   try {
-    const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-      request.headers.get("x-real-ip") ||
-      "local_client";
+    const ip = extractClientIp(request);
+
+    if (await isMasterOtpBlocked(ip)) {
+      return privateJson({
+        error: "too_many_attempts",
+        message: "Muitas tentativas de código incorretas. Aguarde 15 minutos antes de tentar novamente."
+      }, 429);
+    }
 
     const body = await request.json().catch(() => ({}));
     const code = typeof body.code === "string" ? body.code.trim() : "";
@@ -46,9 +54,16 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
 
-    // Validate OTP and consume it atomically (memory + Redis)
+    // Validate OTP and consume it atomically (memory + Redis, bound to IP)
     const isValid = await validateAndConsumeMasterOtp(code, ip);
     if (!isValid) {
+      const blocked = await recordFailedMasterOtpAttempt(ip);
+      if (blocked) {
+        return privateJson({
+          error: "too_many_attempts",
+          message: "Código incorreto repetido muitas vezes. Validação bloqueada temporariamente por 15 minutos."
+        }, 429);
+      }
       return privateJson({
         error: "invalid_or_expired_code",
         message: "Código de segurança incorreto ou expirado. Verifique a mensagem mais recente no seu WhatsApp."
@@ -113,8 +128,8 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
-  } catch (err) {
-    return privateJson({ error: err instanceof Error ? err.message : "recovery_failed" }, 500);
+  } catch {
+    return privateJson({ error: "recovery_failed" }, 500);
   }
 }
 

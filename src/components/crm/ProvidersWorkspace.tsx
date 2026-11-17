@@ -21,7 +21,7 @@ type TestResult = {
 };
 
 const PROVIDERS = [
-  { name: "OmniRoute Gateway", ability: "Roteador inteligente integrado com Groq, Gemini e OpenRouter", cost: "Ativo e Conectado", link: "http://localhost:20128", tag: "Conectado" },
+  { name: "OmniRoute Gateway", ability: "Roteador inteligente integrado com Groq, Gemini e OpenRouter", cost: "Ativo e Conectado", link: process.env.NEXT_PUBLIC_OMNIROUTE_URL || "", tag: "Conectado" },
   { name: "Groq Cloud (LLaMA 3.3)", ability: "Texto ultra veloz com inferência de 300+ tokens/segundo", cost: "Plano gratuito / Baixa latência", link: "https://console.groq.com/docs/rate-limits", tag: "Primeira opção" },
   { name: "Google Gemini 2.0 Flash", ability: "Texto, fotos, áudio e vídeo com janela de 1 milhão de tokens", cost: "Cota gratuita disponível", link: "https://ai.google.dev/gemini-api/docs/rate-limits", tag: "Multimodal" },
   { name: "OpenRouter Free Pool", ability: "Mais de 25 modelos gratuitos disponíveis sem cobrança", cost: "50 chamadas/dia em variantes :free", link: "https://openrouter.ai/collections/free-models", tag: "Reserva" },
@@ -468,9 +468,15 @@ export default function ProvidersWorkspace() {
             <h2 style={{ fontSize: "16px", fontWeight: 800, margin: "0 0 6px", color: "white" }}>{p.name}</h2>
             <p style={{ fontSize: "12px", color: "#c2bed4", margin: "0 0 8px", lineHeight: "1.4" }}>{p.ability}</p>
             <small style={{ display: "block", color: "#9ca3af", fontSize: "11px", marginBottom: "10px" }}>{p.cost}</small>
-            <a href={p.link} target="_blank" rel="noopener noreferrer" style={{ color: "#a78bfa", fontSize: "12px", textDecoration: "none", fontWeight: 600 }}>
-              Documentação Oficial →
-            </a>
+            {p.link ? (
+              <a href={p.link} target="_blank" rel="noopener noreferrer" style={{ color: "#a78bfa", fontSize: "12px", textDecoration: "none", fontWeight: 600 }}>
+                Documentação Oficial →
+              </a>
+            ) : (
+              <span style={{ color: "#6b7280", fontSize: "12px", fontWeight: 600 }}>
+                Roteamento ativo no servidor
+              </span>
+            )}
           </article>
         ))}
       </section>

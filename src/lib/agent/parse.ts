@@ -13,7 +13,8 @@ export function parseIncoming(payload: unknown): Incoming | null {
 
   const id = key.id;
   const rawRemoteJid = typeof key.remoteJid === "string" ? key.remoteJid : "";
-  const altJid = typeof key.remoteJidAlt === "string" ? key.remoteJidAlt : (typeof key.senderPn === "string" ? key.senderPn : (typeof data.senderPn === "string" ? data.senderPn : ""));
+  const rawAltJid = typeof key.remoteJidAlt === "string" ? key.remoteJidAlt : (typeof key.senderPn === "string" ? key.senderPn : (typeof data.senderPn === "string" ? data.senderPn : ""));
+  const altJid = /^\d{10,15}$/.test(rawAltJid.trim()) ? `${rawAltJid.trim()}@s.whatsapp.net` : rawAltJid;
   const remoteJid = /^\d{10,15}@s\.whatsapp\.net$/.test(rawRemoteJid)
     ? rawRemoteJid
     : /^\d{10,15}@s\.whatsapp\.net$/.test(altJid)

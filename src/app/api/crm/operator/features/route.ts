@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { authorizeCrmTenant, ownsCrmResource, crmFeatureAllowed, patchCrmConfig } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
-import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans, getMasterPixConfig, RECHARGE_PACKAGES, DEFAULT_QUICK_REPLIES, type MessageRechargeItem } from "@/lib/crm/plans";
+import { getEffectiveTenantPlan, requireTenantFeature, getMasterPlans, getMasterPixConfig, getRedis, RECHARGE_PACKAGES, DEFAULT_QUICK_REPLIES, type MessageRechargeItem } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 
 export const runtime = "nodejs";
@@ -103,7 +103,14 @@ export async function GET(request: NextRequest) {
     const handoffs = rHandoffs.ok ? ((await rHandoffs.json()) as Array<Record<string, unknown>>) : [];
 
     const conversationTags: Record<string, string> = dataObj.conversationTags || {};
-    const conversationPriorities: Record<string, "low" | "normal" | "high" | "urgent"> = dataObj.conversationPriorities || {};
+    const rawPriorities = dataObj.conversationPriorities || {};
+    const conversationPriorities: Record<string, "low" | "normal" | "high" | "urgent"> = {};
+    for (const [k, v] of Object.entries(rawPriorities)) {
+      const p = typeof v === "string" ? v : v?.priority;
+      if (p === "low" || p === "normal" || p === "high" || p === "urgent") {
+        conversationPriorities[k] = p;
+      }
+    }
     const satisfactionSurveys: Array<Record<string, unknown>> = Array.isArray(dataObj.satisfactionSurveys) ? dataObj.satisfactionSurveys : [];
     const quickReplies = Array.isArray(dataObj.quickReplies) && dataObj.quickReplies.length > 0 ? dataObj.quickReplies : DEFAULT_QUICK_REPLIES;
     const upgradeRequests = Array.isArray(dataObj.upgradeRequests) ? dataObj.upgradeRequests : [];
@@ -329,17 +336,19 @@ export async function POST(request: NextRequest) {
 
     const auth = await authorizeTenant(request, tenantId);
     if (!auth.authorized) return privateJson({ error: "unauthorized" }, 401);
+    const writerAuth = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
+    if (!writerAuth) return privateJson({ error: "not_authorized" }, 403);
 
     const { url, serviceKey, redisUrl } = getServiceConfig();
     if (!url || !serviceKey) return privateJson({ error: "backend_not_configured" }, 503);
 
     if (["set_priority", "submit_satisfaction"].includes(action)) {
       const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
-      if (conversationId && !await ownsCrmResource(tenantId, "crm_conversations", conversationId)) {
+      if (conversationId && (!UUID.test(conversationId) || !(await ownsCrmResource(tenantId, "crm_conversations", conversationId)))) {
         return privateJson({ error: "conversation_not_found" }, 404);
       }
     }
-    if (["add_operator", "update_operator", "revoke_operator", "set_slot_label"].includes(action) &&
+    if (["add_operator", "update_operator", "revoke_operator", "set_slot_label", "buy_recharge", "request_recharge", "request_plan_upgrade"].includes(action) &&
       !await authorizeCrmTenant(request, tenantId, ["owner", "admin"])) {
       return privateJson({ error: "not_authorized" }, 403);
     }
@@ -488,16 +497,21 @@ export async function POST(request: NextRequest) {
       const priorities = dataObj.conversationPriorities && typeof dataObj.conversationPriorities === "object"
         ? dataObj.conversationPriorities
         : {};
-      priorities[conversationId] = priority;
+      priorities[conversationId] = { priority, updatedAt: new Date().toISOString() };
       dataObj.conversationPriorities = priorities;
       await saveTenantSettingsJson(url, serviceKey, tenantId, dataObj, "conversationPriorities");
 
-      // Sync to Redis for real-time queue sorting
+      // Sync to Redis for real-time queue sorting (shared singleton & canonical key)
       try {
-        const redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 1200, maxRetriesPerRequest: 1 });
-        await redis.connect();
-        await redis.set(`crm:priority:${tenantId}:${conversationId}`, priority, "EX", 86400 * 30);
-        redis.disconnect();
+        if (redisUrl) {
+          const redis = getRedis();
+          if (process.env.CRM_REDIS_URL && redis.status !== "ready" && redis.status !== "connecting" && redis.status !== "end") {
+            await redis.connect().catch(() => {});
+          }
+          if (redis.status === "ready") {
+            await redis.set(`crm:conv_priority:${conversationId}`, priority, "EX", 86400 * 30);
+          }
+        }
       } catch {}
 
       return privateJson({ saved: true, conversationId, priority });

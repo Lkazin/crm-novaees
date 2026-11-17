@@ -124,10 +124,10 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "invalid_params" }, 400);
     }
 
-    const authorized = await verifyTenantAccess(request, tenantId);
+    const authorized = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
     if (!authorized) return privateJson({ error: "not_authorized" }, 403);
     for (const [table, id] of [["crm_contacts", contactId], ["crm_conversations", conversationId], ["crm_tags", tagId]] as const) {
-      if (id && !await ownsCrmResource(tenantId, table, id)) return privateJson({ error: "resource_not_found" }, 404);
+      if (id && (!UUID.test(id) || !(await ownsCrmResource(tenantId, table, id)))) return privateJson({ error: "resource_not_found" }, 404);
     }
 
 
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       return privateJson({
         error: guard.errorCode || "feature_not_included_in_plan",
         state: guard.state,
-        message: guard.message || "Etiquetas comerciais requerem o plano CRM Business ou CRM Premium."
+        message: guard.message || "Etiquetas comerciais requerem o plano Profissional ou Empresarial."
       }, guard.statusHttp);
     }
 

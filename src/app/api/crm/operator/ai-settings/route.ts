@@ -302,8 +302,8 @@ export async function POST(request: NextRequest) {
       return privateJson({ error: "knowledge_too_long", message: `As informações da empresa podem ter até ${KNOWLEDGE_BODY_MAX_LENGTH.toLocaleString("pt-BR")} caracteres.` }, 400);
     }
 
-    const access = await authorizeTenantAccess(request, tenantId);
-    if (!access.authorized) return privateJson({ error: "unauthorized" }, 401);
+    const access = await authorizeCrmTenant(request, tenantId, ["owner", "admin", "agent"]);
+    if (!access) return privateJson({ error: "unauthorized" }, 401);
 
     const { url, serviceKey } = getServiceConfig();
     const aiGuard = await requireTenantFeature(tenantId, "ai_chat");
@@ -345,8 +345,8 @@ export async function POST(request: NextRequest) {
         if (!hoursGuard.allowed) return privateJson({ error: hoursGuard.errorCode, state: hoursGuard.state, message: hoursGuard.message }, hoursGuard.statusHttp);
         return privateJson({
           error: "PLAN_FEATURE_LOCKED",
-          requiredPlan: "CRM Business",
-          message: "Horários avançados com intervalos e múltiplos turnos estão disponíveis a partir do plano CRM Business."
+          requiredPlan: "Profissional",
+          message: "Horários avançados com intervalos e múltiplos turnos estão disponíveis a partir do plano Profissional."
         }, 403);
       }
     }
@@ -449,8 +449,13 @@ export async function POST(request: NextRequest) {
       if (!rGet.ok) throw new Error("settings_unavailable");
       const current = await rGet.json() as Array<{business_description: string}>;
       if (current.length !== 1) throw new Error("settings_unavailable");
-      const currentSettings = JSON.parse(current[0].business_description);
-      await patchCrmConfig(tenantId, { ai_settings: { ...(currentSettings.ai_settings || {}), operatingHours: normalizedHours } });
+      let currentSettings: Record<string, unknown> = {};
+      try {
+        if (current[0].business_description?.startsWith("{")) {
+          currentSettings = JSON.parse(current[0].business_description);
+        }
+      } catch {}
+      await patchCrmConfig(tenantId, { ai_settings: { ...(currentSettings.ai_settings as Record<string, unknown> || {}), operatingHours: normalizedHours } });
       const rTimezone = await fetch(url + "/rest/v1/crm_tenant_settings?tenant_id=eq." + tenantId, {
         method: "PATCH", headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
         body: JSON.stringify({ timezone: normalizedHours.timezone }),

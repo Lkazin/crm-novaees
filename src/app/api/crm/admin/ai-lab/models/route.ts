@@ -6,6 +6,8 @@ import { verifyMasterRequest } from "@/lib/crm/master-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function getAdminConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
   const serviceKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
@@ -102,7 +104,10 @@ export async function POST(request: NextRequest) {
     const primaryModel = typeof body.primaryModel === "string" && body.primaryModel ? body.primaryModel : "auto/best-chat";
     const fallbackModel = typeof body.fallbackModel === "string" && body.fallbackModel ? body.fallbackModel : "auto/best-fast";
     const applyToAll = body.applyToAll === true;
-    const targetTenantId = typeof body.tenantId === "string" ? body.tenantId : "";
+    const targetTenantId = typeof body.tenantId === "string" ? body.tenantId.trim() : "";
+    if (targetTenantId && !UUID.test(targetTenantId)) {
+      return privateJson({ error: "invalid_tenant" }, 400);
+    }
 
     const { url, serviceKey, redisUrl } = getAdminConfig();
 

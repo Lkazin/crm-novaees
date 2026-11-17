@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { privateJson } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getSupabaseConfig, catalogOwnerId, getMasterPixConfig, saveMasterPixConfig, type MasterPixConfig } from "@/lib/crm/plans";
 import { patchCrmConfig } from "@/lib/crm/tenant-access";
@@ -109,8 +109,8 @@ export async function GET(request: NextRequest) {
 
     const financeConfig = await getMasterFinanceConfig();
     return privateJson(financeConfig);
-  } catch (err) {
-    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  } catch {
+    return privateJson({ error: "internal_error" }, 500);
   }
 }
 
@@ -123,6 +123,9 @@ export async function GET(request: NextRequest) {
  *  - "delete_expense": remove an expense
  */
 export async function POST(request: NextRequest) {
+  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) {
+    return privateJson({ error: "origin_forbidden" }, 403);
+  }
   try {
     const auth = await verifyMasterRequest(request);
     if (!auth.authorized) return privateJson({ error: "unauthorized" }, 401);
@@ -217,7 +220,7 @@ export async function POST(request: NextRequest) {
     }
 
     return privateJson({ error: "invalid_action" }, 400);
-  } catch (err) {
-    return privateJson({ error: "internal_error", message: err instanceof Error ? err.message : String(err) }, 500);
+  } catch {
+    return privateJson({ error: "internal_error" }, 500);
   }
 }

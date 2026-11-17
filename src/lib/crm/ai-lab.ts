@@ -1,8 +1,16 @@
 import "server-only";
+import { NextRequest } from "next/server";
 import { supabaseRows, verifyOperator } from "@/lib/crm/supabase-server";
+import { verifyMasterRequest } from "@/lib/crm/master-auth";
 
 export type AuthorizedAdmin={id:string;role:"MASTER"|"ADMINISTRADOR"|"FINANCEIRO"};
-export async function authorizeAiLab():Promise<AuthorizedAdmin|null>{
+export async function authorizeAiLab(request?: NextRequest):Promise<AuthorizedAdmin|null>{
+  if (request) {
+    const master = await verifyMasterRequest(request);
+    if (master.authorized) {
+      return { id: master.actor || "master", role: "MASTER" };
+    }
+  }
   const user=await verifyOperator();
   if(!user)return null;
   const members=await supabaseRows<{enabled:boolean;role:string}[]>(

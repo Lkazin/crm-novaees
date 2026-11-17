@@ -9,12 +9,14 @@ import "server-only";
 //
 // Nada aqui pode quebrar o atendimento: todo erro e silencioso por desenho.
 
+export type AiUsageStatus = "success" | "rate_limited" | "error" | "timeout" | "fallback";
+
 export type AiUsageSample = {
   tenantId?: string | null;
   conversationId?: string | null;
   provider: string;
   model: string;
-  status: "success" | "empty" | "error";
+  status: AiUsageStatus | "empty";
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCostUsd?: number | null;
@@ -53,12 +55,13 @@ export async function recordAiUsage(sample: AiUsageSample): Promise<void> {
   const key = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key || !sample.tenantId) return;
 
+  const safeStatus: AiUsageStatus = sample.status === "empty" ? "error" : sample.status;
   const body = {
     tenant_id: sample.tenantId,
     conversation_id: sample.conversationId ?? null,
     provider: sample.provider,
     model: sample.model,
-    status: sample.status,
+    status: safeStatus,
     prompt_tokens: sample.promptTokens ?? null,
     completion_tokens: sample.completionTokens ?? null,
     estimated_cost_usd:
@@ -67,13 +70,16 @@ export async function recordAiUsage(sample: AiUsageSample): Promise<void> {
   };
 
   try {
-    await fetch(`${url}/rest/v1/crm_ai_usage_events`, {
+    const res = await fetch(`${url}/rest/v1/crm_ai_usage_events`, {
       method: "POST",
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
+    if (!res.ok) {
+      console.warn(`[crm-ai-usage] recordAiUsage failed HTTP ${res.status}`);
+    }
   } catch {
     // Metrica nunca derruba atendimento.
   }

@@ -1629,7 +1629,7 @@ export function UpgradeRequestModal({
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "13px", fontWeight: 700, color: "#fff" }}>
-                  Valor do Pagamento PIX: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {wantsVipOnboarding ? (parseFloat((chosenPlan?.price || "139,90").replace(",", ".")) + 197).toFixed(2).replace(".", ",") : (chosenPlan?.price || "139,90")}</strong>{wantsVipOnboarding ? " (Plano + Implantação VIP)" : "/mês"}
+                  Valor do Pagamento PIX: <strong style={{ color: "#ec4899", fontSize: "16px" }}>R$ {wantsVipOnboarding ? ((Number(String(chosenPlan?.price || "139,90").replace(/\./g, "").replace(",", ".")) || 139.9) + 197).toFixed(2).replace(".", ",") : (chosenPlan?.price || "139,90")}</strong>{wantsVipOnboarding ? " (Plano + Implantação VIP)" : "/mês"}
                 </span>
                 <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "6px", background: "rgba(236,72,153,0.2)", color: "#f472b6", fontWeight: 700 }}>
                   Aprovação pelo Master
@@ -1707,11 +1707,9 @@ export type RechargePackage = {
 };
 
 export const DEFAULT_RECHARGE_PACKAGES: RechargePackage[] = [
-  { packagesCount: 1, messages: 100, price: "20,00", priceValue: 20, label: "100 mensagens (1 recarga)" },
-  { packagesCount: 2, messages: 200, price: "40,00", priceValue: 40, label: "200 mensagens (2 recargas)" },
-  { packagesCount: 3, messages: 300, price: "60,00", priceValue: 60, label: "300 mensagens (3 recargas)" },
-  { packagesCount: 5, messages: 500, price: "100,00", priceValue: 100, label: "500 mensagens (5 recargas)" },
-  { packagesCount: 10, messages: 1000, price: "200,00", priceValue: 200, label: "1.000 mensagens (10 recargas)" },
+  { packagesCount: 1, messages: 100, price: "20,00", priceValue: 20, label: "100 mensagens adicionais" },
+  { packagesCount: 2, messages: 200, price: "40,00", priceValue: 40, label: "200 mensagens adicionais" },
+  { packagesCount: 5, messages: 500, price: "90,00", priceValue: 90, label: "500 mensagens (Combo especial)" },
 ];
 
 export function ConsumptionAlertBanner({

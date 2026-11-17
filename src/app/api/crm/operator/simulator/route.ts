@@ -5,11 +5,26 @@ import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { generateAnswer, StoreAiContext } from "@/lib/agent/ai";
 import { AiConfig } from "@/lib/agent/config";
 import { detectCustomerEscalation } from "@/lib/agent/escalation";
+import { buildOutOfScopeReply, isOutOfScopeRequest, sanitizeAiReply } from "@/lib/agent/commercial-guard";
+import { selectKnowledgeArticles } from "@/lib/agent/knowledge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const simulatorRateMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkSimulatorRateLimit(key: string, maxPerMin = 20): boolean {
+  const now = Date.now();
+  const entry = simulatorRateMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    simulatorRateMap.set(key, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (entry.count >= maxPerMin) return false;
+  entry.count += 1;
+  return true;
+}
 
 function getServiceConfig() {
   const url = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "") ?? "";
@@ -37,11 +52,14 @@ export async function POST(request: NextRequest) {
       : (Array.isArray(body.context?.history) ? body.context.history : []);
 
     if (!UUID.test(tenantId)) return privateJson({ error: "invalid_tenant", message: "ID de empresa inválido." }, 400);
-    if (!message || message.length < 1) return privateJson({ error: "empty_message", message: "Mensagem não pode ser vazia." }, 400);
+    if (!message || message.length < 1 || message.length > 4000) return privateJson({ error: "invalid_message", message: "Mensagem deve ter entre 1 e 4.000 caracteres." }, 400);
 
     // Verify operator belongs to this tenant
     const access = await authorizeCrmTenant(request, tenantId);
     if (!access) return privateJson({ error: "not_authorized", message: "Acesso não autorizado para esta empresa." }, 403);
+    if (!checkSimulatorRateLimit(`${tenantId}:${access.operatorId || "master"}`)) {
+      return privateJson({ error: "rate_limited", message: "Muitas simulações em sequência. Aguarde alguns segundos." }, 429);
+    }
     const featureGuard = await requireTenantFeature(tenantId, "simulator");
     if (!featureGuard.allowed) return privateJson({ error: featureGuard.errorCode, state: featureGuard.state, message: featureGuard.message }, featureGuard.statusHttp);
 
@@ -82,29 +100,36 @@ export async function POST(request: NextRequest) {
     const defaultInstructions = agents[0]?.instructions || "Atenda os clientes com simpatia, agilidade e clareza.";
     const preferredModel = agents[0]?.provider_route || "auto/best-chat";
 
-    // 3. Fetch published knowledge articles (up to 20)
+    // 3. Fetch published knowledge articles (up to 50) & rank by relevance
     const rArticles = await fetch(
-      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=20`,
+      url + `/rest/v1/crm_knowledge_articles?tenant_id=eq.${tenantId}&status=eq.published&order=updated_at.desc&limit=50`,
       {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       }
     );
-    const articles = (await rArticles.json()) as Array<{ title: string; body: string }>;
-    const defaultStoreInfo = Array.isArray(articles)
-      ? articles.map(a => `### ${a.title}\n${a.body}`).join("\n\n")
-      : "";
+    const articles = rArticles.ok ? ((await rArticles.json()) as Array<{ title: string; body: string }>) : [];
+    const defaultStoreInfo = selectKnowledgeArticles(articles, message).text;
 
-    // 4. Fetch operating hours from crm_tenant_settings
+    // 4. Fetch operating hours & official links from crm_tenant_settings
     let operatingHours: StoreAiContext["operatingHours"] = undefined;
+    let officialLinks: Record<string, string> | undefined = undefined;
     try {
-      const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description&limit=1`, {
+      const rSettings = await fetch(url + `/rest/v1/crm_tenant_settings?tenant_id=eq.${tenantId}&select=timezone,business_description,official_links&limit=1`, {
         headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
         cache: "no-store"
       });
       if (rSettings.ok) {
-        const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string }>;
+        const settings = (await rSettings.json()) as Array<{ timezone?: string; business_description: string; official_links?: Record<string, string> }>;
         const dbTimezone = settings[0]?.timezone || "America/Sao_Paulo";
+        const rawLinks = settings[0]?.official_links;
+        if (rawLinks && typeof rawLinks === "object" && !Array.isArray(rawLinks)) {
+          const limpos: Record<string, string> = {};
+          for (const [k, v] of Object.entries(rawLinks)) {
+            if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) limpos[k] = v.trim();
+          }
+          if (Object.keys(limpos).length > 0) officialLinks = limpos;
+        }
         const rawDesc = settings[0]?.business_description ?? "";
         if (rawDesc.startsWith("{")) {
           const parsed = JSON.parse(rawDesc);
@@ -125,26 +150,47 @@ export async function POST(request: NextRequest) {
     const instructions = draftContext.instructions || defaultInstructions;
     const storeInfo = draftContext.storeInfo || defaultStoreInfo;
 
+    const safeHistory = (Array.isArray(history) ? history : [])
+      .filter((h: unknown): h is { role: "user" | "assistant"; content: string } =>
+        Boolean(h && typeof h === "object" && typeof (h as { content?: unknown }).content === "string")
+      )
+      .slice(-20);
+
+    if (isOutOfScopeRequest(message, { storeName, instructions, storeInfo })) {
+      const reply = buildOutOfScopeReply(storeName);
+      return privateJson({
+        answer: reply,
+        reply,
+        outOfScope: true,
+        latencyMs: 5,
+        timestamp: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+        isSimulation: true
+      });
+    }
+
     const context: StoreAiContext = {
       storeName,
       agentLabel,
       instructions,
       storeInfo,
-      history,
+      history: safeHistory,
       primaryModel: preferredModel,
       operatingHours,
+      officialLinks,
       allowFallback: true
     };
 
     const cfg: AiConfig = {
       aiUrl: omniUrl,
       aiKey: omniKey,
-      aiModel: preferredModel.startsWith("auto") ? preferredModel : "auto/best-chat",
+      aiModel: preferredModel.startsWith("auto") ? preferredModel : "auto/gpt",
       systemPrompt: "Informações gerais da loja."
     };
 
     const startTime = Date.now();
-    const answer = await generateAnswer(message, cfg, context);
+    const rawAnswer = await generateAnswer(message, cfg, context);
+    const sanitized = sanitizeAiReply({ reply: rawAnswer, allowedText: storeInfo, officialLinks });
+    const answer = sanitized.reply;
     const latencyMs = Date.now() - startTime;
 
     return privateJson({

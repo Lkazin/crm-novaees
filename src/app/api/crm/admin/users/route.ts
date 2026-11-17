@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
-import { privateJson } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
+
+function checkOrigin(request: NextRequest): boolean {
+  return typeof isAllowedOrigin === "function" ? isAllowedOrigin(request.headers.get("origin"), request.url) : true;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,16 +104,8 @@ export async function GET(request: NextRequest) {
     const { url, serviceKey } = getAdminConfig();
     if (!serviceKey) return privateJson({ error: "backend_not_configured" }, 503);
 
-    // 1. Fetch users from Supabase Auth
-    const rUsers = await fetch(url + "/auth/v1/admin/users?per_page=500", {
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-      cache: "no-store"
-    });
-    if (!rUsers.ok) {
-      return privateJson({ error: "failed_to_fetch_users" }, 500);
-    }
-    const usersData = await rUsers.json();
-    const allUsers = (usersData?.users || []) as Array<{
+    // 1. Fetch users from Supabase Auth (paginated)
+    type AdminAuthUser = {
       id: string;
       email: string;
       created_at: string;
@@ -125,7 +121,22 @@ export async function GET(request: NextRequest) {
         permissions?: Partial<GranularPermissions>;
         is_blocked?: boolean;
       };
-    }>;
+    };
+    const allUsers: AdminAuthUser[] = [];
+    for (let page = 1; page <= 50; page++) {
+      const rUsers = await fetch(url + `/auth/v1/admin/users?page=${page}&per_page=200`, {
+        headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+        cache: "no-store"
+      });
+      if (!rUsers.ok) {
+        if (page === 1) return privateJson({ error: "failed_to_fetch_users" }, 500);
+        break;
+      }
+      const usersData = await rUsers.json();
+      const batch = (usersData?.users || []) as AdminAuthUser[];
+      allUsers.push(...batch);
+      if (batch.length < 200) break;
+    }
 
     // 2. Fetch all memberships
     const rMemb = await fetch(
@@ -241,6 +252,9 @@ export async function GET(request: NextRequest) {
  * with explicit role and granular permissions (Step 3: Logins & Acessos).
  */
 export async function POST(request: NextRequest) {
+  if (!checkOrigin(request)) {
+    return privateJson({ error: "origin_forbidden" }, 403);
+  }
   try {
     const auth = await verifyMasterRequest(request);
     if (!auth.authorized) {
@@ -472,6 +486,9 @@ export async function POST(request: NextRequest) {
  * Permanently deletes a client login. Refuses if the user still has linked stores.
  */
 export async function DELETE(request: NextRequest) {
+  if (!checkOrigin(request)) {
+    return privateJson({ error: "origin_forbidden" }, 403);
+  }
   try {
     const auth = await verifyMasterRequest(request);
     if (!auth.authorized) {
@@ -508,12 +525,12 @@ export async function DELETE(request: NextRequest) {
       headers
     });
     if (!rDel.ok) {
-      return privateJson({ error: "delete_failed", detail: await rDel.text() }, 500);
+      return privateJson({ error: "delete_failed" }, 500);
     }
     return privateJson({ success: true, deleted: true, userId });
-  } catch (err) {
+  } catch {
     return privateJson(
-      { error: "internal_error", message: err instanceof Error ? err.message : String(err) },
+      { error: "internal_error" },
       500
     );
   }
@@ -524,6 +541,9 @@ export async function DELETE(request: NextRequest) {
  * Updates a client user profile, block status, password, company links, or permissions.
  */
 export async function PATCH(request: NextRequest) {
+  if (!checkOrigin(request)) {
+    return privateJson({ error: "origin_forbidden" }, 403);
+  }
   try {
     const auth = await verifyMasterRequest(request);
     if (!auth.authorized) {
@@ -679,14 +699,13 @@ export async function PATCH(request: NextRequest) {
     });
 
     if (!rUpdate.ok) {
-      const err = await rUpdate.text();
-      return privateJson({ error: "update_failed", detail: err }, 500);
+      return privateJson({ error: "update_failed" }, 500);
     }
 
     return privateJson({ success: true });
-  } catch (err) {
+  } catch {
     return privateJson(
-      { error: "internal_error", message: err instanceof Error ? err.message : String(err) },
+      { error: "internal_error" },
       500
     );
   }

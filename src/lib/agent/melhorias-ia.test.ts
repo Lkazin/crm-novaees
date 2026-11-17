@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSystemPrompt } from "./ai";
-import { sanitizeAiReply, SAFE_HANDOFF_REPLY, mixesCatalogs } from "./commercial-guard";
+import { sanitizeAiReply, SAFE_HANDOFF_REPLY, mixesCatalogs, isOutOfScopeRequest, buildOutOfScopeReply } from "./commercial-guard";
 import { selectKnowledgeArticles, scoreArticle, tokenize } from "./knowledge";
 import { detectCustomerEscalation } from "./escalation";
 
@@ -161,4 +161,15 @@ test("respostas de escalonamento nao mencionam pausar a IA", () => {
     assert.equal(r.isEscalation, true, caso);
     assert.equal(/pausei|intelig[eê]ncia artificial/i.test(r.customerReply ?? ""), false, caso);
   }
+});
+
+test("escopo fechado recusa pesquisa no Google e tarefas externas fora da base da loja", () => {
+  const ctx = { storeName: "Loja X", instructions: "Atenda vendas de roupas.", storeInfo: "Vestido R$ 120,00" };
+  assert.equal(isOutOfScopeRequest("Pesquisa no Google o endereço do concorrente", ctx), true);
+  assert.equal(isOutOfScopeRequest("Escreva um código em Python para mim", ctx), true);
+  assert.equal(isOutOfScopeRequest("Quais os valores dos vestidos?", ctx), false);
+  const reply = buildOutOfScopeReply("Loja X");
+  assert.ok(reply.includes("Loja X"));
+  const p = buildSystemPrompt({ storeName: "Loja X", storeInfo: "Vestido R$ 120,00" });
+  assert.ok(p.includes("# 0. ESCOPO FECHADO DE ATENDIMENTO"));
 });

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
-import { privateJson } from "@/lib/crm/supabase-server";
+import { isAllowedOrigin, privateJson } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
+import { listAllSupabaseAuthUsers } from "@/lib/crm/recovery-store";
 import {
   getMasterPixConfig,
   saveMasterPixConfig,
@@ -13,6 +14,8 @@ import { patchCrmConfig } from "@/lib/crm/tenant-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getAdminConfig() {
   const url = (process.env.CRM_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL)?.trim().replace(/\/$/, "") ?? "";
@@ -53,12 +56,7 @@ export async function GET(request: NextRequest) {
     });
     const memberships = (await rMemb.json()) as Array<{ tenant_id: string; user_id: string; role: string }>;
 
-    const rUsers = await fetch(url + "/auth/v1/admin/users?per_page=200", {
-      headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
-      cache: "no-store"
-    });
-    const usersData = await rUsers.json();
-    const users = (usersData?.users || []) as Array<{ id: string; email: string }>;
+    const users = await listAllSupabaseAuthUsers(url, serviceKey);
     const userMap = new Map(users.map(u => [u.id, u]));
 
     // 3. Fetch all tenant settings
@@ -122,13 +120,16 @@ export async function GET(request: NextRequest) {
         totalApprovedMessages
       }
     });
-  } catch (err) {
-    return privateJson({ error: err instanceof Error ? err.message : "recharges_unavailable" }, 500);
+  } catch {
+    return privateJson({ error: "recharges_unavailable" }, 500);
   }
 }
 
 // POST: Actions approve_recharge, reject_recharge, update_pix_config
 export async function POST(request: NextRequest) {
+  if (!isAllowedOrigin(request.headers.get("origin"), request.url)) {
+    return privateJson({ error: "origin_forbidden" }, 403);
+  }
   try {
     const auth = await verifyMasterRequest(request);
     if (!auth.authorized) {
@@ -163,21 +164,19 @@ export async function POST(request: NextRequest) {
       const tenantId = String(body.tenantId || "").trim();
       const rechargeId = String(body.rechargeId || "").trim();
 
-      if (!tenantId || !rechargeId) {
+      if (!UUID.test(tenantId) || !rechargeId) {
         return privateJson({ error: "missing_parameters", message: "Identificador da loja e da recarga são obrigatórios." }, 400);
       }
 
       const redis = getRedis();
-      let redisConnected = false;
       let lockAcquired = false;
       const lockKey = `crm:lock:recharge_mutation:${tenantId}`;
 
       try {
-        if (redis.status !== "ready" && redis.status !== "connecting") {
-          await redis.connect();
-          redisConnected = true;
+        if (process.env.CRM_REDIS_URL && redis.status !== "ready" && redis.status !== "connecting" && redis.status !== "end") {
+          await redis.connect().catch(() => {});
         }
-        if (redis.status === "ready" || redis.status === "connecting") {
+        if (redis.status === "ready") {
           const acquired = await redis.set(lockKey, "1", "EX", 15, "NX");
           if (!acquired) {
             return privateJson({
@@ -194,7 +193,10 @@ export async function POST(request: NextRequest) {
         });
         if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
         const rows = (await rGet.json()) as Array<{ business_description: string }>;
-        const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
+        let dataObj: Record<string, unknown> = {};
+        try {
+          if (rows[0]?.business_description) dataObj = JSON.parse(rows[0].business_description);
+        } catch {}
         const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
 
         const target = recharges.find(r => r.id === rechargeId);
@@ -224,9 +226,6 @@ export async function POST(request: NextRequest) {
         if (lockAcquired) {
           try { await redis.del(lockKey); } catch {}
         }
-        if (redisConnected) {
-          try { redis.disconnect(); } catch {}
-        }
       }
     }
 
@@ -236,21 +235,19 @@ export async function POST(request: NextRequest) {
       const rechargeId = String(body.rechargeId || "").trim();
       const reason = String(body.reason || "Pagamento PIX não identificado").trim().slice(0, 300);
 
-      if (!tenantId || !rechargeId) {
+      if (!UUID.test(tenantId) || !rechargeId) {
         return privateJson({ error: "missing_parameters", message: "Identificador da loja e da recarga são obrigatórios." }, 400);
       }
 
       const redis = getRedis();
-      let redisConnected = false;
       let lockAcquired = false;
       const lockKey = `crm:lock:recharge_mutation:${tenantId}`;
 
       try {
-        if (redis.status !== "ready" && redis.status !== "connecting") {
-          await redis.connect();
-          redisConnected = true;
+        if (process.env.CRM_REDIS_URL && redis.status !== "ready" && redis.status !== "connecting" && redis.status !== "end") {
+          await redis.connect().catch(() => {});
         }
-        if (redis.status === "ready" || redis.status === "connecting") {
+        if (redis.status === "ready") {
           const acquired = await redis.set(lockKey, "1", "EX", 15, "NX");
           if (!acquired) {
             return privateJson({
@@ -267,7 +264,10 @@ export async function POST(request: NextRequest) {
         });
         if (!rGet.ok) return privateJson({ error: "tenant_settings_not_found" }, 404);
         const rows = (await rGet.json()) as Array<{ business_description: string }>;
-        const dataObj = rows[0]?.business_description ? JSON.parse(rows[0].business_description) : {};
+        let dataObj: Record<string, unknown> = {};
+        try {
+          if (rows[0]?.business_description) dataObj = JSON.parse(rows[0].business_description);
+        } catch {}
         const recharges: MessageRechargeItem[] = Array.isArray(dataObj.recharges) ? dataObj.recharges : [];
 
         const target = recharges.find(r => r.id === rechargeId);
@@ -298,14 +298,11 @@ export async function POST(request: NextRequest) {
         if (lockAcquired) {
           try { await redis.del(lockKey); } catch {}
         }
-        if (redisConnected) {
-          try { redis.disconnect(); } catch {}
-        }
       }
     }
 
     return privateJson({ error: "unknown_action", message: "Ação não reconhecida." }, 400);
-  } catch (err) {
-    return privateJson({ error: err instanceof Error ? err.message : "operation_failed" }, 500);
+  } catch {
+    return privateJson({ error: "operation_failed" }, 500);
   }
 }

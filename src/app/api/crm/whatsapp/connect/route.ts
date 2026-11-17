@@ -280,13 +280,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Control simultaneous connection attempts via Redis lock
+      // Control simultaneous connection attempts via Redis lock (never disconnect shared singleton)
       try {
         const redis = getRedis();
-        if (redis.status !== "ready" && redis.status !== "connecting") await redis.connect();
-        const lockKey = `crm:wa:connecting_lock:${tenantId}:${slotNumber}`;
-        await redis.set(lockKey, instanceName, "EX", 60);
-        redis.disconnect();
+        if (process.env.CRM_REDIS_URL && redis.status !== "ready" && redis.status !== "connecting" && redis.status !== "end") {
+          await redis.connect().catch(() => {});
+        }
+        if (redis.status === "ready") {
+          const lockKey = `crm:wa:connecting_lock:${tenantId}:${slotNumber}`;
+          await redis.set(lockKey, instanceName, "EX", 60);
+        }
       } catch {}
     }
 

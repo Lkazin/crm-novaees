@@ -16,7 +16,8 @@ import {
   getLegacyAdminToken,
   isLoginBlocked,
   recordFailedLoginAttempt,
-  resetLoginAttempts
+  resetLoginAttempts,
+  extractClientIp
 } from "@/lib/crm/master-auth";
 
 export const runtime = "nodejs";
@@ -36,9 +37,18 @@ export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(origin, request.url)) return privateJson({ error: "origin_forbidden" }, 403);
 
   try {
-    const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-      request.headers.get("x-real-ip") ||
-      "local_client";
+    const ip = extractClientIp(request);
+
+    // Check rate-limit lockout BEFORE verifying credentials to stop brute force
+    const blockCheck = await isLoginBlocked(ip, true);
+    if (blockCheck.blocked) {
+      return privateJson({
+        error: "too_many_attempts",
+        blocked: true,
+        canRecoverViaWhatsapp: true,
+        message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
+      }, 429);
+    }
 
     const body = await request.json().catch(() => ({}));
     const candidate = (
@@ -112,17 +122,6 @@ export async function POST(request: NextRequest) {
       return response;
     }
 
-    // Check if currently blocked
-    const blockCheck = await isLoginBlocked(ip, true);
-    if (blockCheck.blocked) {
-      return privateJson({
-        error: "too_many_attempts",
-        blocked: true,
-        canRecoverViaWhatsapp: true,
-        message: "Acesso Master bloqueado temporariamente por 15 minutos após 5 tentativas incorretas. Enviamos um código de segurança de 6 dígitos para seu WhatsApp oficial."
-      }, 429);
-    }
-
     // Record failed attempt
     const failResult = await recordFailedLoginAttempt(ip, true);
     if (failResult.blocked) {
@@ -139,8 +138,8 @@ export async function POST(request: NextRequest) {
       error: "invalid_credentials",
       message: `Credenciais de administrador inválidas. Acesso restrito ao Painel Master da NovaesWeb.${remaining > 0 ? ` (${remaining} tentativa${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"} antes do bloqueio)` : ""}`
     }, 401);
-  } catch (e) {
-    return privateJson({ error: e instanceof Error ? e.message : "auth_failed" }, 500);
+  } catch {
+    return privateJson({ error: "auth_failed" }, 500);
   }
 }
 
