@@ -70,6 +70,10 @@ function loadRoute(kind: "connect" | "status", planUnavailable = false, maxAllow
       // Not reached in the failure-to-resolve-plan reproduction.
       buildTenantWhatsappSlots: () => { throw new Error("Unexpected slot build after failed plan resolution"); },
     },
+    "@/lib/runtime-url": {
+      normalizeLocalServiceUrl: (raw: string | undefined, fallback: string) => (raw ?? "").trim() || fallback,
+      isInsideContainer: () => false,
+    },
     ioredis: class { constructor() { throw new Error("Unexpected Redis connection"); } },
   };
   const filename = resolve("src/app/api/crm/whatsapp", kind, "route.ts");

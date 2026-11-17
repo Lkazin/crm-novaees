@@ -48,7 +48,7 @@ export function isAllowedOrigin(origin: string | null, requestUrl: string): bool
     const u = new URL(requestUrl);
     if (o.origin === u.origin) return true;
     const localHosts = ["localhost", "127.0.0.1", "host.docker.internal", "0.0.0.0"];
-    if (o.protocol === u.protocol && o.port === u.port && localHosts.includes(o.hostname) && localHosts.includes(u.hostname)) return true;
+    if (localHosts.includes(o.hostname) && localHosts.includes(u.hostname)) return true;
     return o.origin === u.origin;
   } catch {
     return false;
