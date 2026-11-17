@@ -237,8 +237,8 @@ test("Etapa 2 (/api/crm/admin/clients): cria múltiplas empresas para o mesmo cu
         customerId: CUST_ANA,
         ownerName: "Ana Paula Costa",
         email: "ana@fornonobre.com.br",
-        planId: "crm-premium",
-        planName: "CRM Premium"
+        planId: "crm-professional",
+        planName: "Profissional"
       })
     })
   );
@@ -254,8 +254,8 @@ test("Etapa 2 (/api/crm/admin/clients): cria múltiplas empresas para o mesmo cu
         customerId: CUST_ANA,
         ownerName: "Ana Paula Costa",
         email: "ana@fornonobre.com.br",
-        planId: "crm-premium",
-        planName: "CRM Premium"
+        planId: "crm-professional",
+        planName: "Profissional"
       })
     })
   );

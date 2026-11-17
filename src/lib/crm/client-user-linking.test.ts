@@ -245,7 +245,7 @@ test("POST /api/crm/admin/clients with pre-existing userId links store without r
       businessWhatsapp: "51999997777",
       document: "12.345.678/0001-90",
       agentName: "Max Atendente",
-      planId: "crm-premium"
+      planId: "crm-professional"
     })
   }));
 

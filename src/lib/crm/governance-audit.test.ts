@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type Redis from "ioredis";
-import { CATALOG_SCHEMA_VERSION, DEFAULT_PLANS, getEffectiveTenantPlan, getMasterPlans, requireTenantFeature, saveMasterPlan, type CrmPlan } from "./plans";
+import { CATALOG_SCHEMA_VERSION, DEFAULT_PLANS, LEGACY_CONTRACT_PLANS, getEffectiveTenantPlan, getMasterPlans, requireTenantFeature, saveMasterPlan, type CrmPlan } from "./plans";
 import { syncWhatsappChannelsForPlanLimit } from "./whatsapp-slots";
 
 // Regression tests: all network and Redis activity is simulated; no real tenant is used.
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
-const start = DEFAULT_PLANS.find(p => p.id === "crm-start")!;
-const business = DEFAULT_PLANS.find(p => p.id === "crm-business")!;
+const essential = DEFAULT_PLANS.find(p => p.id === "crm-essential")!;
+const professional = DEFAULT_PLANS.find(p => p.id === "crm-professional")!;
+const legacyBusiness = LEGACY_CONTRACT_PLANS.find(p => p.id === "crm-business")!;
 function memoryRedis(catalog: CrmPlan[] = DEFAULT_PLANS) {
  const values = new Map<string,string>([["crm:master:plans",JSON.stringify(catalog.map(p=>({...p,catalogSchemaVersion:CATALOG_SCHEMA_VERSION})))]]);
  const deleted:string[]=[];
@@ -20,7 +21,7 @@ type Setting={tenant_id:string;business_description:string};
 async function fixture(run:(f:{settings:Setting[];calls:Array<{path:string;method:string;body:Record<string,unknown>}>;failChannels:()=>void})=>Promise<void>){
  const oldFetch=globalThis.fetch;const names=["CRM_SUPABASE_URL","CRM_SUPABASE_SERVICE_ROLE_KEY","CRM_ALERT_WEBHOOK_URL"];const old=names.map(n=>process.env[n]);
  process.env.CRM_SUPABASE_URL="https://governance-fixture.supabase.co";process.env.CRM_SUPABASE_SERVICE_ROLE_KEY="fixture-service-key-only-never-real";delete process.env.CRM_ALERT_WEBHOOK_URL;
- const settings:Setting[]=[{tenant_id:A,business_description:JSON.stringify({usageCounters:{trialUsed:17},plan:{planId:business.id,name:business.name,dueDate:"2099-12-01"}})},{tenant_id:B,business_description:JSON.stringify({plan:{planId:business.id,name:business.name,customQuotaOverride:777,exceptionReason:"Explicit fixture exception"}})}];
+ const settings:Setting[]=[{tenant_id:A,business_description:JSON.stringify({usageCounters:{trialUsed:17},plan:{planId:professional.id,name:professional.name,dueDate:"2099-12-01"}})},{tenant_id:B,business_description:JSON.stringify({plan:{planId:professional.id,name:professional.name,customQuotaOverride:777,exceptionReason:"Explicit fixture exception"}})}];
  const calls:Array<{path:string;method:string;body:Record<string,unknown>}>=[];let failure=false;
  globalThis.fetch=async(input,init)=>{const url=new URL(String(input));assert.equal(url.hostname,"governance-fixture.supabase.co");const method=init?.method||"GET";const body=init?.body?JSON.parse(String(init.body)):{};calls.push({path:url.pathname+url.search,method,body});
  if(url.pathname.endsWith("/crm_tenant_settings")&&method==="GET"){const id=url.searchParams.get("tenant_id")?.slice(3);return Response.json(id?settings.filter(s=>s.tenant_id===id):settings);}
@@ -37,9 +38,9 @@ async function fixture(run:(f:{settings:Setting[];calls:Array<{path:string;metho
 }
 
 test("immediate bulk publication propagates all limits, syncs channels/operators and preserves explicit exceptions",async()=>fixture(async f=>{
- const cache=memoryRedis();const result=await saveMasterPlan({...business,quotaLimit:700,maxOperators:2,maxWhatsappConnections:2},"apply","immediate","fixture_master",cache.redis);
+ const cache=memoryRedis();const result=await saveMasterPlan({...professional,quotaLimit:700,maxOperators:2,maxWhatsappConnections:2},"apply","immediate","fixture_master",cache.redis);
  assert.equal(result.applied,true);assert.deepEqual(result.succeededTenants,[A,B]);
- for(const row of f.settings){const saved=JSON.parse(row.business_description);assert.equal(saved.plan.contractedPlan.maxWhatsappConnections,2);assert.equal(saved.plan.contractedPlan.maxOperators,2);assert.deepEqual(saved.plan.contractedPlan.features,business.features);}
+ for(const row of f.settings){const saved=JSON.parse(row.business_description);assert.equal(saved.plan.contractedPlan.maxWhatsappConnections,2);assert.equal(saved.plan.contractedPlan.maxOperators,2);assert.deepEqual(saved.plan.contractedPlan.features,professional.features);}
  assert.equal(JSON.parse(f.settings[0].business_description).usageCounters.trialUsed,17);
  assert.deepEqual(f.calls.filter(c=>c.path.startsWith("/rest/v1/crm_usage_limits?")&&c.method==="PATCH").map(c=>c.body.monthly_model_requests),[700,777]);
  assert.equal(f.calls.filter(c=>c.path.startsWith("/rest/v1/crm_channels?")&&c.method==="PATCH").length,2);
@@ -47,14 +48,14 @@ test("immediate bulk publication propagates all limits, syncs channels/operators
 }));
 
 test("next_renewal UI alias creates next_cycle update and freezes old complete contract",async()=>fixture(async f=>{
- f.settings.splice(1);const cache=memoryRedis();const result=await saveMasterPlan({...business,quotaLimit:700,maxWhatsappConnections:2},"apply","next_renewal","fixture_master",cache.redis);
+ f.settings.splice(1);const cache=memoryRedis();const result=await saveMasterPlan({...professional,quotaLimit:700,maxWhatsappConnections:2},"apply","next_renewal","fixture_master",cache.redis);
  assert.equal(result.applied,true);assert.deepEqual(result.succeededTenants,[A]);const root=JSON.parse(f.settings[0].business_description);assert.equal(root.plan.pendingPlanUpdate.quotaLimit,700);assert.equal(root.plan.pendingPlanUpdate.effectiveAt,"2099-12-01");
- const plan=await getEffectiveTenantPlan(A,f.settings[0].business_description,cache.redis);assert.equal(plan.quotaLimit,600);assert.equal(plan.maxWhatsappConnections,3);assert.equal(plan.isContractFrozen,true);
+ const plan=await getEffectiveTenantPlan(A,f.settings[0].business_description,cache.redis);assert.equal(plan.quotaLimit,1000);assert.equal(plan.maxWhatsappConnections,3);assert.equal(plan.isContractFrozen,true);
 }));
 
 test("frozen snapshot does not inherit catalog features or greater limits",async()=>{
- const cache=memoryRedis(DEFAULT_PLANS.map(p=>p.id===business.id?{...p,maxOperators:5,maxWhatsappConnections:5}:p));
- const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,contractedPlan:{quotaLimit:600,price:business.price,features:start.features,maxOperators:1,maxWhatsappConnections:1,version:1}}}),cache.redis);
+ const cache=memoryRedis(DEFAULT_PLANS.map(p=>p.id===professional.id?{...p,maxOperators:5,maxWhatsappConnections:5}:p));
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:professional.id,contractedPlan:{quotaLimit:1000,price:professional.price,features:essential.features,maxOperators:1,maxWhatsappConnections:1,version:1}}}),cache.redis);
  assert.equal(plan.maxWhatsappConnections,1);assert.equal(plan.maxOperators,1);assert.equal(plan.allowedFeatures.includes("commercial_tags"),false);
 });
 
@@ -72,7 +73,7 @@ test("failed channel pause is rejected instead of reporting success",async()=>fi
 }));
 
 test("bulk propagation reports a failed tenant when channel pause fails",async()=>fixture(async f=>{
- f.failChannels();f.settings.splice(1);const result=await saveMasterPlan({...business,maxWhatsappConnections:1},"apply","immediate","fixture_master",memoryRedis().redis);assert.equal(result.applied,false);assert.equal(result.succeededTenants.length,0);assert.equal(result.failedTenants[0].tenantId,A);
+ f.failChannels();f.settings.splice(1);const result=await saveMasterPlan({...professional,maxWhatsappConnections:1},"apply","immediate","fixture_master",memoryRedis().redis);assert.equal(result.applied,false);assert.equal(result.succeededTenants.length,0);assert.equal(result.failedTenants[0].tenantId,A);
 }));
 
 test("guards and allowedFeatures both deny maintenance and suspended access",async()=>fixture(async f=>{
@@ -82,26 +83,27 @@ test("guards and allowedFeatures both deny maintenance and suspended access",asy
 }));
 
 test("invalid commercial limits and trial timestamps are refused",async()=>fixture(async()=>{
- const cache=memoryRedis();const initial=cache.values.get("crm:master:plans");await assert.rejects(saveMasterPlan({...business,maxWhatsappConnections:6},"apply","immediate","fixture_master",cache.redis),/invalid_plan_limits/);assert.equal(cache.values.get("crm:master:plans"),initial);
+ const cache=memoryRedis();const initial=cache.values.get("crm:master:plans");await assert.rejects(saveMasterPlan({...professional,maxWhatsappConnections:6},"apply","immediate","fixture_master",cache.redis),/invalid_plan_limits/);assert.equal(cache.values.get("crm:master:plans"),initial);
  await assert.rejects(getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:"crm-trial",trialStartedAt:"garbage"}}),cache.redis),/invalid_trial_start/);
 }));
 
 
 test("Business legacy contract with five slots cannot unlock Premium connections or resources",async()=>{
  const cache=memoryRedis();
- const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,name:"Plus",contractedPlan:{quotaLimit:600,price:business.price,features:[...business.features,"advanced_reports"],maxOperators:5,maxWhatsappConnections:5,version:1}}}),cache.redis);
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:legacyBusiness.id,name:"Plus",contractedPlan:{quotaLimit:600,price:legacyBusiness.price,features:[...legacyBusiness.features,"advanced_reports"],maxOperators:5,maxWhatsappConnections:5,version:1}}}),cache.redis);
  assert.equal(plan.planName,"CRM Business");assert.equal(plan.maxWhatsappConnections,3);assert.equal(plan.maxOperators,3);
  assert.equal(plan.allowedFeatures.includes("advanced_reports"),false);assert.equal(plan.featureStates?.advanced_reports.state,"locked_by_plan");
 });
 
 test("a resource unchecked in the published plan is blocked despite the old snapshot",async()=>{
- const catalog=DEFAULT_PLANS.map(p=>p.id===business.id?{...p,features:p.features.filter(f=>f!=="quick_replies")}:p);
- const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,contractedPlan:{quotaLimit:600,price:business.price,features:business.features,maxOperators:3,maxWhatsappConnections:3,version:1}}}),memoryRedis(catalog).redis);
+ const customPlan={...professional,id:"crm-custom-pro",name:"Profissional Custom",features:professional.features.filter(f=>f!=="quick_replies")};
+ const catalog=[...DEFAULT_PLANS,customPlan];
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:customPlan.id,contractedPlan:{quotaLimit:1000,price:professional.price,features:professional.features,maxOperators:3,maxWhatsappConnections:3,version:1}}}),memoryRedis(catalog).redis);
  assert.equal(plan.allowedFeatures.includes("quick_replies"),false);assert.equal(plan.featureStates?.quick_replies.state,"locked_by_plan");
 });
 
 
 test("legacy feature exceptions cannot silently unlock resources outside the selected plan",async()=>{
- const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:business.id,customFeaturesOverride:["advanced_reports"]}}),memoryRedis().redis);
+ const plan=await getEffectiveTenantPlan(A,JSON.stringify({plan:{planId:essential.id,customFeaturesOverride:["advanced_reports"]}}),memoryRedis().redis);
  assert.equal(plan.allowedFeatures.includes("advanced_reports"),false);
 });
