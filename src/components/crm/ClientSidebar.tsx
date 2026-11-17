@@ -112,8 +112,15 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
     setMobileOpen(false);
   };
 
+  const hasConnectedWhatsapp = whatsappSlots.some((s) => s.status === "connected" && s.unlocked);
   const allowedTabSet = Array.isArray(allowedTabs) ? new Set(allowedTabs) : null;
-  const isAllowed = (id: ClientTab) => !allowedTabSet || allowedTabSet.has(id);
+  const isAllowed = (id: ClientTab) => {
+    // Quando nenhum WhatsApp estiver conectado, as abas de atendimento ao vivo e contatos saem completamente do painel
+    if (!hasConnectedWhatsapp && (id === "atendimentos" || id === "contatos")) {
+      return false;
+    }
+    return !allowedTabSet || allowedTabSet.has(id);
+  };
 
   const normalizedQuery = searchable(query);
   const visibleIds = new Set(

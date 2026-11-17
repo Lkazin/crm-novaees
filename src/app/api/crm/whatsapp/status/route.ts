@@ -15,6 +15,16 @@ function extractPhoneFromJid(jid: unknown): string | null {
   return clean.length >= 10 ? clean : null;
 }
 
+function sanitizeQr(val: unknown): string | null {
+  if (!val || typeof val !== "string") return null;
+  const trimmed = val.trim();
+  if (trimmed.startsWith("data:image/")) return trimmed;
+  if (trimmed.length > 80 && /^[A-Za-z0-9+/=\r\n]+$/.test(trimmed)) {
+    return `data:image/png;base64,${trimmed.replace(/[\r\n]/g, "")}`;
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const [masterAuth, operator] = await Promise.all([
@@ -242,6 +252,26 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
 
+      let liveQrCode = qrcodeFromWebhook;
+      if (!liveQrCode && !isConnected && (state === "connecting" || state === "close")) {
+        try {
+          const connectRes = await fetch(`${url}/instance/connect/${encodeURIComponent(instanceName)}`, {
+            headers: { apikey: key },
+            cache: "no-store",
+            signal: AbortSignal.timeout(3000)
+          });
+          if (connectRes.ok) {
+            const connectData = await connectRes.json();
+            liveQrCode = (
+              sanitizeQr(connectData?.base64) ||
+              sanitizeQr(connectData?.qrcode?.base64) ||
+              sanitizeQr(connectData?.code) ||
+              null
+            );
+          }
+        } catch {}
+      }
+
       return NextResponse.json({
         instanceName,
         slot: extractSlotFromInstanceName(instanceName),
@@ -251,7 +281,7 @@ export async function GET(req: NextRequest) {
         qrScanned: isConnected || qrScannedFromWebhook,
         phoneNumber,
         profileName,
-        qrcode: isConnected ? null : qrcodeFromWebhook,
+        qrcode: isConnected ? null : liveQrCode,
         whatsappSlots
       });
     } catch {

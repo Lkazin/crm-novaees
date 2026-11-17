@@ -1,5 +1,9 @@
 # NovaesWeb CRM AI - Contexto do Projeto para Antigravity / IA
 
+> ### ⚠️ REGRA MÁXIMA DE PRESERVAÇÃO E SEGURANÇA (OBRIGATÓRIA)
+> **Nunca remover, sobrescrever, desconfigurar ou desconectar o que já existe no sistema durante atualizações, refatorações ou correções de bugs.**
+> Qualquer modificação deve ser estritamente cirúrgica para corrigir o erro apontado, preservando 100% das conexões ativas, instâncias conectadas de WhatsApp, configurações dos clientes, horários, instruções da IA, planos e bancos de dados.
+
 ## 1. Repositórios e Pastas do Ecossistema
 - **CRM IA:** `C:\Users\camil\novaesweb-crm-ai` (Next.js 15, React 19, Supabase, Redis, Playwright).
   - Branch: `main`

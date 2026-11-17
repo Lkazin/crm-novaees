@@ -287,18 +287,6 @@ export default function ClientWorkspace({
   }, [onTabChange]);
 
   const viewerAllowedTabs = data?.viewer?.allowedTabs ?? null;
-  const canAccessTab = useCallback(
-    (tab: Tab) => !Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.includes(tab),
-    [viewerAllowedTabs],
-  );
-
-  useEffect(() => {
-    if (!Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.length === 0) return;
-    if (!viewerAllowedTabs.includes(activeTab)) {
-      const preferred = (viewerAllowedTabs.includes("atendimentos") ? "atendimentos" : viewerAllowedTabs[0]) as Tab;
-      setActiveTab(preferred);
-    }
-  }, [viewerAllowedTabs, activeTab, setActiveTab]);
   const [selected, setSelected] = useState("");
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -617,6 +605,51 @@ export default function ClientWorkspace({
   }, [tenant, slotLabels]);
   const [selectedWhatsappSlot, setSelectedWhatsappSlot] = useState<number>(1);
 
+  // Status de conexão real do WhatsApp da loja
+  const hasConnectedWhatsapp = useMemo(() => {
+    return whatsappSlots.some(s => s.status === "connected" && s.unlocked) || qrState === "open";
+  }, [whatsappSlots, qrState]);
+
+  // Se nenhum WhatsApp estiver conectado, as abas de atendimento e contatos saem completamente do painel
+  const canAccessTab = useCallback(
+    (tab: Tab) => {
+      if (!hasConnectedWhatsapp && (tab === "atendimentos" || tab === "contatos")) {
+        return false;
+      }
+      return !Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.includes(tab);
+    },
+    [viewerAllowedTabs, hasConnectedWhatsapp],
+  );
+
+  const effectiveAllowedTabs = useMemo(() => {
+    if (!hasConnectedWhatsapp) {
+      const base = Array.isArray(viewerAllowedTabs)
+        ? viewerAllowedTabs
+        : ["whatsapp", "conhecimento", "simulador", "atendimentos", "horarios", "contatos", "equipe", "relatorios", "artigos", "plano", "seguranca"];
+      return base.filter(t => t !== "atendimentos" && t !== "contatos");
+    }
+    return viewerAllowedTabs;
+  }, [viewerAllowedTabs, hasConnectedWhatsapp]);
+
+  useEffect(() => {
+    if (!hasConnectedWhatsapp && (activeTab === "atendimentos" || activeTab === "contatos")) {
+      setActiveTab("whatsapp");
+      return;
+    }
+    if (!Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.length === 0) return;
+    if (!viewerAllowedTabs.includes(activeTab)) {
+      const allowedList = hasConnectedWhatsapp 
+        ? viewerAllowedTabs 
+        : viewerAllowedTabs.filter(t => t !== "atendimentos" && t !== "contatos");
+      const preferred = (hasConnectedWhatsapp && allowedList.includes("atendimentos")
+        ? "atendimentos"
+        : allowedList.includes("whatsapp")
+          ? "whatsapp"
+          : allowedList[0] || "whatsapp") as Tab;
+      setActiveTab(preferred);
+    }
+  }, [viewerAllowedTabs, activeTab, setActiveTab, hasConnectedWhatsapp]);
+
   useEffect(() => {
     const currentSlot = whatsappSlots.find(s=>s.slot===selectedWhatsappSlot);
     if (currentSlot && !currentSlot.unlocked) {
@@ -930,7 +963,8 @@ export default function ClientWorkspace({
       prevDataRef.current = json;
       setData(json);
       if (Array.isArray(json.viewer?.allowedTabs) && json.viewer.allowedTabs.length > 0 && !json.viewer.allowedTabs.includes(activeTab)) {
-        const preferred = (json.viewer.allowedTabs.includes("atendimentos") ? "atendimentos" : json.viewer.allowedTabs[0]) as Tab;
+        const allowed = hasConnectedWhatsapp ? json.viewer.allowedTabs : json.viewer.allowedTabs.filter(t => t !== "atendimentos" && t !== "contatos");
+        const preferred = (hasConnectedWhatsapp && allowed.includes("atendimentos") ? "atendimentos" : allowed.includes("whatsapp") ? "whatsapp" : allowed[0] || "whatsapp") as Tab;
         setActiveTab(preferred);
       }
       setIsSuspended(json.isSuspended === true);
@@ -961,7 +995,7 @@ export default function ClientWorkspace({
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [fetchAiSettings, soundEnabled, playNotificationSound, isSuspended]);
+  }, [fetchAiSettings, soundEnabled, playNotificationSound, isSuspended, activeTab, hasConnectedWhatsapp, setActiveTab]);
 
   // Pulse polling every 1.5s when tab is visible, with AbortController cleanup
   useEffect(() => {
@@ -1177,8 +1211,10 @@ export default function ClientWorkspace({
         setQrExpiresIn(60);
         setQrNotice(data.message || "QR Code gerado! Escaneie com seu WhatsApp em Aparelhos Conectados.");
       } else {
-        setQrError(true);
-        setQrNotice(data.message || "Aguardando geração do QR Code. Tente novamente em alguns segundos.");
+        setQrState("connecting");
+        setQrError(false);
+        setQrExpiresIn(60);
+        setQrNotice(data.message || "Aguardando geração do QR Code. O código aparecerá em instantes...");
       }
     } catch {
       setQrError(true);
@@ -1208,6 +1244,8 @@ export default function ClientWorkspace({
         setConnectedPhone(null);
         setConnectedProfile(null);
         setQrExpiresIn(0);
+        setWhatsappSlots(prev => prev.map(s => s.slot === selectedWhatsappSlot ? { ...s, status: "disconnected", phoneNumber: undefined, profileName: undefined } : s));
+        setActiveTab("whatsapp");
         setQrNotice(data.message || "Instância apagada com sucesso! O WhatsApp foi desconectado.");
         void checkStatus();
         if (tenant) void fetchData(tenant, true);
@@ -1229,7 +1267,7 @@ export default function ClientWorkspace({
     const timer = setInterval(() => {
       setQrExpiresIn(prev => {
         if (prev <= 1) {
-          setQrNotice("O QR Code expirou. Clique em 'Renovar QR Code' para gerar um novo código.");
+          setQrNotice("O QR Code expirou por segurança. Clique em 'Renovar QR Code' para gerar um novo código.");
           return 0;
         }
         return prev - 1;
@@ -1275,6 +1313,17 @@ export default function ClientWorkspace({
               setQrNotice("WhatsApp Conectado com Sucesso! Conexão confirmada pela Evolution API e pronta para uso.");
               if (tenant) void fetchData(tenant, true);
             }
+          } else if (s.qrcode && !s.connected && s.state !== "open") {
+            const formatted = s.qrcode.startsWith("data:") ? s.qrcode : `data:image/png;base64,${s.qrcode}`;
+            setQrCode(prev => {
+              if (prev !== formatted) {
+                setQrExpiresIn(60);
+                return formatted;
+              }
+              return prev;
+            });
+            setQrState("connecting");
+            setQrError(false);
           } else if (qrState === "open" && s.state === "close") {
             // Automatic disconnection detection without F5
             setQrState("disconnected");
@@ -2244,7 +2293,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               whatsappSlots={whatsappSlots}
               teamOperators={teamOperators}
               clientRecoveryVerified={clientRecoveryVerified}
-              allowedTabs={viewerAllowedTabs}
+              allowedTabs={effectiveAllowedTabs}
             />
           )}
 
@@ -3330,16 +3379,31 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         }}
                       />
                       {qrExpiresIn === 0 ? (
-                        <div style={{marginTop: "10px"}}>
-                          <span style={{color: "#dc2626", fontSize: "12px", fontWeight: 800, display: "block", marginBottom: "8px"}}>
-                            QR Code expirado
+                        <div style={{marginTop: "12px"}}>
+                          <span style={{color: "#dc2626", fontSize: "13px", fontWeight: 800, display: "block", marginBottom: "8px"}}>
+                            QR Code expirado por segurança
                           </span>
                           <button
                             type="button"
                             onClick={() => void handleConnectWhatsApp()}
-                            style={{padding: "8px 14px", borderRadius: "8px", background: "#ec4899", color: "#fff", border: "none", fontWeight: 700, fontSize: "12px", cursor: "pointer"}}
+                            disabled={qrLoading}
+                            style={{
+                              padding: "10px 18px",
+                              borderRadius: "10px",
+                              background: "linear-gradient(135deg, #ec4899, #8b5cf6)",
+                              color: "#fff",
+                              border: "none",
+                              fontWeight: 800,
+                              fontSize: "13px",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              boxShadow: "0 4px 15px rgba(236,72,153,0.35)"
+                            }}
                           >
-                            Renovar QR Code
+                            <RefreshCw size={14} className={qrLoading ? "spin" : ""} />
+                            {qrLoading ? "Gerando novo código..." : "Renovar QR Code Agora"}
                           </button>
                         </div>
                       ) : (
@@ -3404,7 +3468,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       {
                         num: 2,
                         title: "Passo 2 — Ler QR Code na tela",
-                        desc: "Aponte a câmera do WhatsApp no celular da sua empresa.",
+                        desc: qrExpiresIn === 0 && qrCode
+                          ? "O código expirou por segurança. Clique no botão de renovar."
+                          : "Aponte a câmera do WhatsApp no celular da sua empresa.",
                         st: step2
                       },
                       {
@@ -3430,7 +3496,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     const getColors = (st: StepStatus) => {
                       if (st === "done") return { bg: "rgba(0, 219, 140, 0.14)", border: "#00db8c", badgeBg: "#00db8c", badgeColor: "#002b1b", text: "#d1fae5", label: "Concluída" };
                       if (st === "active") return { bg: "rgba(139, 92, 246, 0.18)", border: "#8b5cf6", badgeBg: "#8b5cf6", badgeColor: "#ffffff", text: "#ddd6fe", label: "Em andamento" };
-                      if (st === "error") return { bg: "rgba(239, 68, 68, 0.16)", border: "#ef4444", badgeBg: "#ef4444", badgeColor: "#ffffff", text: "#fecaca", label: "Erro / Expirado" };
+                      if (st === "error") return { bg: "rgba(239, 68, 68, 0.16)", border: "#ef4444", badgeBg: "#ef4444", badgeColor: "#ffffff", text: "#fecaca", label: qrExpiresIn === 0 ? "Código Expirado" : "Erro / Tentar Novamente" };
                       return { bg: "rgba(107, 114, 128, 0.1)", border: "#374151", badgeBg: "#374151", badgeColor: "#9ca3af", text: "#9ca3af", label: "Não iniciada" };
                     };
 
@@ -4621,7 +4687,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             )}
 
             {/* SEÇÃO 3: ATENDIMENTOS E CONVERSAS */}
-            {activeTab === "atendimentos" && (
+            {activeTab === "atendimentos" && hasConnectedWhatsapp && (
               <>
                 {/* Alerta Inteligente de Franquia (se >= 80% consumida) */}
                 <ConsumptionAlertBanner
@@ -6004,7 +6070,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             )}
 
             {/* SEÇÃO 4: CONTATOS */}
-            {activeTab === "contatos" && (
+            {activeTab === "contatos" && hasConnectedWhatsapp && (
               <ContactsSection
                 contacts={contacts}
                 contactName={contactName}

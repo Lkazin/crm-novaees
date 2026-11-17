@@ -422,6 +422,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 5.1 If QR code is not ready yet, retry up to 2 times with a short interval
+    if (!qrcodeBase64) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          await new Promise(r => setTimeout(r, 600));
+          const retryRes = await fetch(`${url}/instance/connect/${encodeURIComponent(instanceName)}`, {
+            headers: { apikey: key },
+            cache: "no-store",
+            signal: AbortSignal.timeout(4000)
+          });
+          if (retryRes.ok) {
+            const retryJson = await retryRes.json();
+            qrcodeBase64 = (
+              sanitizeQr(retryJson?.base64) ||
+              sanitizeQr(retryJson?.qrcode?.base64) ||
+              sanitizeQr(retryJson?.code) ||
+              null
+            );
+            if (qrcodeBase64) break;
+          }
+        } catch {}
+      }
+    }
+
     // 6. Auto-configure webhook and register channel in Supabase
     await configureEvolutionWebhook(url, key, secret, instanceName);
     await syncChannelStatus(instanceName, tenantId, "disconnected");
