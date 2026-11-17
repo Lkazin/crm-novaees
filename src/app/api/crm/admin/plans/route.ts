@@ -259,8 +259,8 @@ export async function PATCH(request: NextRequest) {
 
     const masterPlans = await getMasterPlans();
     const matchedPlan = selectPublishedPlan(masterPlans, planId, planName);
-    if (!matchedPlan) return privateJson({ error: "plan_not_found" }, 400);
-    if (matchedPlan.id === "crm-trial") return privateJson({ error: "trial_requires_new_account" }, 400);
+    if (!matchedPlan) return privateJson({ error: "plan_not_found", message: "Plano comercial selecionado não encontrado ou inativo." }, 400);
+    if (matchedPlan.id === "crm-trial") return privateJson({ error: "trial_requires_new_account", message: "O plano Grátis 7 dias é exclusivo para novas contas. Selecione Essencial, Profissional ou Empresarial." }, 400);
 
     const suppliedPrice = typeof body.planPrice === "string" ? body.planPrice.trim() : "";
     if (body.billingCycle !== undefined && !["monthly", "annual"].includes(body.billingCycle)) return privateJson({error:"invalid_billing_cycle"},400);

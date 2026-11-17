@@ -784,7 +784,9 @@ export default function AdminCRM() {
   const [changePlanModalOpen, setChangePlanModalOpen] = useState(false);
   const [selectedClientForPlan, setSelectedClientForPlan] = useState<Client | null>(null);
   const [assignBillingCycle, setAssignBillingCycle] = useState<"monthly" | "annual">("monthly");
-  const [targetPlanToAssign, setTargetPlanToAssign] = useState<PlanItem>(DEFAULT_PLANS[0]);
+  const [targetPlanToAssign, setTargetPlanToAssign] = useState<PlanItem>(
+    () => DEFAULT_PLANS.find(p => p.id !== "crm-trial") || DEFAULT_PLANS[0]
+  );
   const [assigningPlan, setAssigningPlan] = useState(false);
   const [customQuotaChecked, setCustomQuotaChecked] = useState(false);
   const [customQuotaValue, setCustomQuotaValue] = useState<number>(0);
@@ -1923,7 +1925,14 @@ export default function AdminCRM() {
   // Open Assign Plan Modal for a client
   const handleOpenAssignModal = (client: Client) => {
     setSelectedClientForPlan(client);
-    const cur = plans.find(p => p.id === client.plan.planId || p.name === client.plan.name) || plans[0];
+    const catalogSource = plans.length > 0 ? plans : DEFAULT_PLANS;
+    const paidPlans = catalogSource.filter(p => p.id !== "crm-trial" && p.isActive !== false);
+    const cur =
+      paidPlans.find(p => p.id === client.plan.planId || p.name === client.plan.name) ||
+      paidPlans.find(p => p.id === "crm-professional") ||
+      paidPlans[0] ||
+      DEFAULT_PLANS.find(p => p.id !== "crm-trial") ||
+      DEFAULT_PLANS[0];
     setTargetPlanToAssign(cur);
     if (client.plan.customQuotaOverride) {
       setCustomQuotaChecked(true);
@@ -1958,7 +1967,16 @@ export default function AdminCRM() {
           exceptionReason: customQuotaChecked ? customQuotaReason.trim() : null
         })
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          setChangePlanModalOpen(false);
+          setAuthenticated(false);
+          setError("Sua sessão Master foi encerrada (ao entrar como cliente/operador no mesmo navegador, o cookie Master é desativado por segurança). Entre novamente na Central Master.");
+          return;
+        }
+        throw new Error(data.message || data.error || "Falha ao atualizar plano da loja.");
+      }
       setNotice(
         `Plano da loja "${selectedClientForPlan.name}" atualizado para ${targetPlanToAssign.name}${
           customQuotaChecked ? ` com exceção contratual (${customQuotaValue} msgs)` : ""
@@ -1967,8 +1985,8 @@ export default function AdminCRM() {
       setChangePlanModalOpen(false);
       await fetchClients();
       await fetchPlans();
-    } catch {
-      setError("Falha ao atualizar plano da loja.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao atualizar plano da loja.");
     } finally {
       setAssigningPlan(false);
     }

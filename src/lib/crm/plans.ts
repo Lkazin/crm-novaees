@@ -526,7 +526,8 @@ export function normalizeCatalogPlan(raw: CrmPlan): CrmPlan {
       maxOperators: Math.min(raw.maxOperators, defaultMatch.maxOperators),
       maxWhatsappConnections: Math.min(raw.maxWhatsappConnections, defaultMatch.maxWhatsappConnections),
       ...(defaultMatch.id === "crm-trial" ? { name: defaultMatch.name, price: "0,00", quotaLimit: defaultMatch.quotaLimit } : {}),
-      ...(defaultMatch.id === "crm-premium" ? { price: "89,90", quotaLimit: 1200 } : {})
+      ...(defaultMatch.id === "crm-premium" ? { price: "89,90", quotaLimit: 1200 } : {}),
+      catalogSchemaVersion: CATALOG_SCHEMA_VERSION
     };
   }
 
