@@ -610,17 +610,18 @@ export default function ClientWorkspace({
     return whatsappSlots.some(s => s.status === "connected" && s.unlocked) || qrState === "open";
   }, [whatsappSlots, qrState]);
 
-  // Se nenhum WhatsApp estiver conectado, as abas de atendimento e contatos saem completamente do painel
+  // As abas dependem apenas da permissao do operador, nunca do status da conexao:
+  // com o WhatsApp desconectado o historico precisa continuar consultavel.
   const canAccessTab = useCallback(
     (tab: Tab) => {
       return !Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.includes(tab);
     },
-    [viewerAllowedTabs, hasConnectedWhatsapp],
+    [viewerAllowedTabs],
   );
 
   const effectiveAllowedTabs = useMemo(() => {
     return viewerAllowedTabs;
-  }, [viewerAllowedTabs, hasConnectedWhatsapp]);
+  }, [viewerAllowedTabs]);
 
   useEffect(() => {
     if (!Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.length === 0) return;
@@ -4728,7 +4729,32 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             {/* SEÇÃO 3: ATENDIMENTOS E CONVERSAS */}
             {activeTab === "atendimentos" && (!viewerAllowedTabs || viewerAllowedTabs.includes("atendimentos")) && (
               <>
-                {!hasConnectedWhatsapp && <p role="status">WhatsApp desconectado. Reconecte para enviar mensagens.</p>}
+                {!hasConnectedWhatsapp && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "10px",
+                      padding: "12px 14px",
+                      marginBottom: "14px",
+                      borderRadius: "10px",
+                      border: "1px solid rgba(245, 158, 11, 0.45)",
+                      background: "rgba(245, 158, 11, 0.10)",
+                      color: "#fbbf24",
+                      fontSize: "13px",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <span aria-hidden="true" style={{ fontSize: "15px", lineHeight: 1.2 }}>⚠</span>
+                    <span>
+                      <strong style={{ color: "#fcd34d" }}>WhatsApp desconectado.</strong>{" "}
+                      O histórico continua disponível para consulta, mas não é possível enviar
+                      mensagens até reconectar na aba WhatsApp.
+                    </span>
+                  </div>
+                )}
                 {/* Alerta Inteligente de Franquia (se >= 80% consumida) */}
                 <ConsumptionAlertBanner
                   quotaUsed={quotaData.quotaUsed}
