@@ -533,6 +533,8 @@ export default function ClientWorkspace({
   // Human Messaging state
   const [humanInput, setHumanInput] = useState("");
   const [sendingHumanMsg, setSendingHumanMsg] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const consecutiveCloseRef = useRef(0);
 
   // Funnel & Tags filtering state
   const [funnelFilter, setFunnelFilter] = useState<"all" | "novo" | "ai" | "waiting_human" | "human" | "waiting_client" | "closed">("all");
@@ -1331,6 +1333,7 @@ export default function ClientWorkspace({
             setQrScanned(true);
           }
           if (s.connected || s.state === "open") {
+            consecutiveCloseRef.current = 0;
             setQrScanned(true);
             setQrValidating(true);
             setQrState("open");
@@ -1345,6 +1348,7 @@ export default function ClientWorkspace({
               if (tenant) void fetchData(tenant, true);
             }
           } else if (s.qrcode && !s.connected && s.state !== "open") {
+            consecutiveCloseRef.current = 0;
             const formatted = s.qrcode.startsWith("data:") ? s.qrcode : `data:image/png;base64,${s.qrcode}`;
             setQrCode(prev => {
               if (prev !== formatted) {
@@ -1356,12 +1360,15 @@ export default function ClientWorkspace({
             setQrState("connecting");
             setQrError(false);
           } else if (qrState === "open" && s.state === "close") {
-            // Automatic disconnection detection without F5
-            setQrState("disconnected");
-            setQrScanned(false);
-            setConnectedPhone(null);
-            setConnectedProfile(null);
-            setQrNotice("O WhatsApp foi desconectado. Gere um novo QR Code para reconectar.");
+            // Require 2 consecutive close detections to eliminate momentary false alarm flickers
+            consecutiveCloseRef.current += 1;
+            if (consecutiveCloseRef.current >= 2) {
+              setQrState("disconnected");
+              setQrScanned(false);
+              setConnectedPhone(null);
+              setConnectedProfile(null);
+              setQrNotice("O WhatsApp foi desconectado. Gere um novo QR Code para reconectar.");
+            }
           }
         }
       } catch {}
@@ -2236,28 +2243,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
 
   const urgentCount = funnelCounts.waiting_human;
 
-  // Filtered conversations by search, funnel stage, commercial tag, and priority
-  const filtered = useMemo(() => conversations.filter(c => {
-    const contact = byContact.get(c.contact_id);
-    const matchesSearch = (contact?.phone + " " + (contact?.display_name ?? "")).toLowerCase().includes(search.toLowerCase());
-
-    const stage = getEffectiveStage(c);
-    const matchesFunnel = funnelFilter === "all" || stage === funnelFilter;
-
-    const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
-    const matchesTag = tagFilter === "all" || contactTagId === tagFilter;
-
-    const prio = c.priority || (stage === "waiting_human" ? "urgent" : "normal");
-    const matchesPriority = priorityFilter === "all" || prio === priorityFilter;
-
-    return matchesSearch && matchesFunnel && matchesTag && matchesPriority;
-  }), [conversations, byContact, search, funnelFilter, tagFilter, priorityFilter, contactTagMap, getEffectiveStage]);
-
-  // List of pending human requests for the Bell Notification Dropdown
-  const pendingHumanList = useMemo(() => {
-    return conversations.filter(c => c.status === "urgent" || c.status === "waiting_human");
-  }, [conversations]);
-
+  // Map of messages grouped by conversation, sorted newest first
   const messagesByConversation = useMemo(() => {
     const map = new Map<string, Message[]>();
     for (const m of messages) {
@@ -2274,12 +2260,61 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     return map;
   }, [messages]);
 
+  // Filtered and dynamically sorted conversations (urgent first, newest message on top like WhatsApp Web)
+  const filtered = useMemo(() => {
+    const list = conversations.filter(c => {
+      const contact = byContact.get(c.contact_id);
+      const matchesSearch = (contact?.phone + " " + (contact?.display_name ?? "")).toLowerCase().includes(search.toLowerCase());
+
+      const stage = getEffectiveStage(c);
+      const matchesFunnel = funnelFilter === "all" || stage === funnelFilter;
+
+      const contactTagId = contact ? contactTagMap.get(contact.id) : undefined;
+      const matchesTag = tagFilter === "all" || contactTagId === tagFilter;
+
+      const prio = c.priority || (stage === "waiting_human" ? "urgent" : "normal");
+      const matchesPriority = priorityFilter === "all" || prio === priorityFilter;
+
+      return matchesSearch && matchesFunnel && matchesTag && matchesPriority;
+    });
+
+    return list.sort((a, b) => {
+      const aStage = getEffectiveStage(a);
+      const bStage = getEffectiveStage(b);
+      const aUrgent = aStage === "waiting_human" || a.status === "urgent";
+      const bUrgent = bStage === "waiting_human" || b.status === "urgent";
+      if (aUrgent && !bUrgent) return -1;
+      if (!aUrgent && bUrgent) return 1;
+
+      const aMsgs = messagesByConversation.get(a.id);
+      const bMsgs = messagesByConversation.get(b.id);
+      const aLatest = aMsgs?.[0]?.created_at ? Date.parse(aMsgs[0].created_at) : (a.last_message_at ? Date.parse(a.last_message_at) : 0);
+      const bLatest = bMsgs?.[0]?.created_at ? Date.parse(bMsgs[0].created_at) : (b.last_message_at ? Date.parse(b.last_message_at) : 0);
+      return bLatest - aLatest;
+    });
+  }, [conversations, byContact, search, funnelFilter, tagFilter, priorityFilter, contactTagMap, getEffectiveStage, messagesByConversation]);
+
+  // List of pending human requests for the Bell Notification Dropdown
+  const pendingHumanList = useMemo(() => {
+    return conversations.filter(c => c.status === "urgent" || c.status === "waiting_human");
+  }, [conversations]);
+
   const current = filtered.find(c => c.id === selected) ?? filtered[0] ?? null;
   const thread = useMemo(() => {
     if (!current) return [];
     const list = messagesByConversation.get(current.id) ?? [];
     return [...list].reverse();
   }, [current, messagesByConversation]);
+
+  // Auto-scroll para a última mensagem e limpeza inteligente de mensagens não lidas
+  useEffect(() => {
+    if (activeTab === "atendimentos" && current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        setReadTimestamps(prev => ({ ...prev, [current.id]: Date.now() }));
+      }
+    }
+  }, [current?.id, thread.length, activeTab]);
 
   // Quota percentage
   const quotaPercent = quotaData.quotaLimit > 0 ? Math.min(100, Math.round((quotaData.quotaUsed / quotaData.quotaLimit) * 100)) : 0;
@@ -6145,6 +6180,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               Nenhuma mensagem registrada nesta conversa ainda.
                             </div>
                           )}
+                          <div ref={messagesEndRef} />
                         </div>
 
                         {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + RESPOSTAS RÁPIDAS */}
@@ -6175,21 +6211,34 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               <span>🤖 A IA está ativa nesta conversa. Ao enviar uma resposta abaixo ou clicar em <strong>Assumir Atendimento</strong>, a IA será pausada automaticamente.</span>
                             </div>
                           )}
-                          <div style={{display: "flex", gap: "10px", alignItems: "center"}}>
-                            <input
-                              type="text"
-                              placeholder="Digite sua resposta para o cliente no WhatsApp..."
+                          <div style={{display: "flex", gap: "10px", alignItems: "flex-end"}}>
+                            <textarea
+                              rows={2}
+                              placeholder="Digite sua resposta para o cliente no WhatsApp... (Enter para enviar, Shift+Enter para quebra de linha)"
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                  e.preventDefault();
+                                  if (!sendingHumanMsg && hasConnectedWhatsapp && humanInput.trim()) {
+                                    void handleSendHumanMessage();
+                                  }
+                                }
+                              }}
                               disabled={sendingHumanMsg || !hasConnectedWhatsapp}
                               style={{
                                 flex: 1,
-                                padding: "12px 14px",
+                                padding: "10px 14px",
                                 borderRadius: "10px",
                                 background: "#141124",
                                 border: "1px solid rgba(236, 72, 153, 0.35)",
                                 color: "#fff",
-                                fontSize: "14px"
+                                fontSize: "14px",
+                                lineHeight: "1.4",
+                                resize: "none",
+                                fontFamily: "inherit",
+                                minHeight: "44px",
+                                maxHeight: "120px"
                               }}
                             />
                             <button
@@ -6205,7 +6254,8 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 fontWeight: 700,
                                 background: "var(--grad-primary)",
                                 cursor: "pointer",
-                                flexShrink: 0
+                                flexShrink: 0,
+                                height: "44px"
                               }}
                             >
                               <Send size={15}/> {sendingHumanMsg ? "Enviando..." : "Responder no WhatsApp"}
