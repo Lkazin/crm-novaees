@@ -20,6 +20,8 @@ function fixture(failPath="") {
       checkTrialEligibility:async()=>({eligible:true}),recordTrialRegistration:async()=>undefined,
       syncTenantUsageLimits:async()=>undefined},
     "@/lib/crm/whatsapp-slots":{},
+    "@/lib/crm/billing":{},
+    "@/lib/runtime-url":{resolveRuntimeOrigin:()=>"https://fixture.invalid"},
   };
   const fetchFixture=async(input:string|URL,init?:RequestInit)=>{
     const u=new URL(String(input));assert.equal(u.hostname,"fixture.supabase.co");

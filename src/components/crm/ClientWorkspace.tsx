@@ -521,6 +521,14 @@ export default function ClientWorkspace({
   const [connectedProfile, setConnectedProfile] = useState<string | null>(null);
   const [qrExpiresIn, setQrExpiresIn] = useState<number>(0);
   const [readTimestamps, setReadTimestamps] = useState<Record<string, number>>({});
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+    open: boolean;
+    type: "message" | "conversation";
+    id: string;
+    title: string;
+    description: string;
+  } | null>(null);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
 
   // Human Messaging state
   const [humanInput, setHumanInput] = useState("");
@@ -937,12 +945,21 @@ export default function ClientWorkspace({
       }
       const json = await response.json() as Data;
 
-      // Check if new urgent handoffs arrived
+      // Check if new urgent handoffs or new inbound customer messages arrived
       if (silent && soundEnabled && !isSuspended) {
         const prevUrgent = prevDataRef.current?.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         const newUrgent = json.conversations?.filter(c => c.status === "urgent" || c.status === "waiting_human").length || 0;
         if (newUrgent > prevUrgent) {
           playNotificationSound();
+        } else {
+          const prevMsgCount = prevDataRef.current?.messages?.length || 0;
+          const newMsgCount = json.messages?.length || 0;
+          if (newMsgCount > prevMsgCount) {
+            const hasNewInbound = json.messages?.slice(prevMsgCount).some(m => m.direction === "inbound");
+            if (hasNewInbound) {
+              playNotificationSound();
+            }
+          }
         }
       }
 
@@ -1036,6 +1053,26 @@ export default function ClientWorkspace({
       if (controller) controller.abort();
     };
   }, [authenticated, tenant, playNotificationSound, fetchData, soundEnabled]);
+
+  // Polling automático e suave da aba de Atendimentos ao Vivo (a cada 3.5s) para conversa fluir em tempo real sem F5
+  useEffect(() => {
+    if (!authenticated || !tenant || activeTab !== "atendimentos") return;
+    let timer: NodeJS.Timeout | null = null;
+    let isCancelled = false;
+
+    const pollChat = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (isCancelled) return;
+      await fetchData(tenant, true);
+    };
+
+    timer = setInterval(() => void pollChat(), 3500);
+
+    return () => {
+      isCancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [authenticated, tenant, activeTab, fetchData]);
 
   // Request browser desktop notification permission on user interaction
   useEffect(() => {
@@ -1687,49 +1724,61 @@ export default function ClientWorkspace({
     }
   }
 
-  async function handleDeleteMessage(messageId: string) {
-    if (!window.confirm("Deseja realmente apagar esta mensagem do histórico?")) return;
-    try {
-      const res = await fetch(`/api/crm/operator/chat/delete?tenant=${encodeURIComponent(tenant)}&messageId=${encodeURIComponent(messageId)}`, {
-        method: "DELETE",
-        credentials: "same-origin"
-      });
-      if (res.ok) {
-        setData(prev => prev ? {
-          ...prev,
-          messages: prev.messages.filter(m => m.id !== messageId)
-        } : prev);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert(err.message || "Não foi possível apagar a mensagem.");
-      }
-    } catch {
-      alert("Erro ao conectar com o servidor para apagar a mensagem.");
-    }
+  function handleDeleteMessage(messageId: string) {
+    setDeleteConfirmModal({
+      open: true,
+      type: "message",
+      id: messageId,
+      title: "Apagar Mensagem",
+      description: "Tem certeza que deseja apagar esta mensagem do histórico de atendimento?"
+    });
   }
 
-  async function handleDeleteConversation(conversationId: string) {
-    if (!window.confirm("Deseja realmente apagar esta conversa e todo o seu histórico de mensagens? Esta ação não pode ser desfeita.")) return;
+  function handleDeleteConversation(conversationId: string) {
+    setDeleteConfirmModal({
+      open: true,
+      type: "conversation",
+      id: conversationId,
+      title: "Excluir Conversa Completa",
+      description: "Deseja realmente apagar esta conversa e todo o histórico de mensagens? Esta ação é definitiva e não pode ser desfeita."
+    });
+  }
+
+  async function executeConfirmDelete() {
+    if (!deleteConfirmModal || isDeletingChat) return;
+    setIsDeletingChat(true);
+    const { type, id } = deleteConfirmModal;
     try {
-      const res = await fetch(`/api/crm/operator/chat/delete?tenant=${encodeURIComponent(tenant)}&conversationId=${encodeURIComponent(conversationId)}`, {
+      const param = type === "message" ? `messageId=${encodeURIComponent(id)}` : `conversationId=${encodeURIComponent(id)}`;
+      const res = await fetch(`/api/crm/operator/chat/delete?tenant=${encodeURIComponent(tenant)}&${param}`, {
         method: "DELETE",
         credentials: "same-origin"
       });
       if (res.ok) {
-        setData(prev => prev ? {
-          ...prev,
-          conversations: prev.conversations.filter(c => c.id !== conversationId),
-          messages: prev.messages.filter(m => m.conversation_id !== conversationId)
-        } : prev);
-        if (selected === conversationId) {
-          setSelected("");
+        if (type === "message") {
+          setData(prev => prev ? {
+            ...prev,
+            messages: prev.messages.filter(m => m.id !== id)
+          } : prev);
+        } else {
+          setData(prev => prev ? {
+            ...prev,
+            conversations: prev.conversations.filter(c => c.id !== id),
+            messages: prev.messages.filter(m => m.conversation_id !== id)
+          } : prev);
+          if (selected === id) {
+            setSelected("");
+          }
         }
+        setDeleteConfirmModal(null);
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.message || "Não foi possível apagar a conversa.");
+        alert(err.message || "Não foi possível concluir a exclusão.");
       }
     } catch {
-      alert("Erro ao conectar com o servidor para apagar a conversa.");
+      alert("Erro ao conectar com o servidor para apagar.");
+    } finally {
+      setIsDeletingChat(false);
     }
   }
 
@@ -6057,7 +6106,36 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                   <Trash2 size={11} />
                                 </button>
                               </div>
-                              <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>
+                              {(() => {
+                                const trimmed = (m.body || "").trim();
+                                const audioMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:mp3|ogg|wav|m4a|aac)(?:\?[^\s]*)?)/i) ||
+                                                   trimmed.match(/^\[(?:Áudio|Audio)\]\s*(https?:\/\/[^\s]+)/i);
+                                if (audioMatch) {
+                                  const audioUrl = audioMatch[1];
+                                  const textPart = trimmed.replace(audioMatch[0], "").trim();
+                                  return (
+                                    <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                                      <audio controls src={audioUrl} style={{width: "100%", maxWidth: "260px", height: "36px"}} />
+                                      {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{textPart}</p>}
+                                    </div>
+                                  );
+                                }
+                                const imageMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s]*)?)/i) ||
+                                                   trimmed.match(/^\[(?:Imagem|Image)\]\s*(https?:\/\/[^\s]+)/i);
+                                if (imageMatch) {
+                                  const imgUrl = imageMatch[1];
+                                  const textPart = trimmed.replace(imageMatch[0], "").trim();
+                                  return (
+                                    <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                                      <a href={imgUrl} target="_blank" rel="noopener noreferrer" title="Clique para abrir imagem em tamanho original">
+                                        <img src={imgUrl} alt="Mídia recebida" style={{maxWidth: "100%", maxHeight: "240px", borderRadius: "8px", objectFit: "cover", border: "1px solid rgba(255,255,255,0.1)"}} />
+                                      </a>
+                                      {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{textPart}</p>}
+                                    </div>
+                                  );
+                                }
+                                return <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>;
+                              })()}
                               <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
                                 {dateTime(m.created_at)}
                               </small>
@@ -7019,6 +7097,110 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             )}
           </Content>
         </>
+      )}
+
+      {/* Modal Visual de Confirmação de Exclusão (Chat e Conversas) */}
+      {deleteConfirmModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(10, 8, 20, 0.78)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px"
+          }}
+          onClick={() => !isDeletingChat && setDeleteConfirmModal(null)}
+        >
+          <div
+            style={{
+              background: "#181427",
+              border: "1px solid rgba(239, 68, 68, 0.4)",
+              boxShadow: "0 12px 36px rgba(0, 0, 0, 0.6), 0 0 20px rgba(239, 68, 68, 0.15)",
+              borderRadius: "16px",
+              padding: "24px",
+              maxWidth: "440px",
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: "16px"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "10px",
+                background: "rgba(239, 68, 68, 0.18)",
+                border: "1px solid #ef4444",
+                display: "grid",
+                placeItems: "center",
+                color: "#fca5a5",
+                flexShrink: 0
+              }}>
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, color: "#fff", fontSize: "16px", fontWeight: 700 }}>
+                  {deleteConfirmModal.title}
+                </h3>
+                <span style={{ fontSize: "11px", color: "#fca5a5", fontWeight: 600 }}>
+                  Ação Irreversível
+                </span>
+              </div>
+            </div>
+            <p style={{ margin: 0, color: "#cbd5e1", fontSize: "13px", lineHeight: "1.6" }}>
+              {deleteConfirmModal.description}
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
+              <button
+                type="button"
+                disabled={isDeletingChat}
+                onClick={() => setDeleteConfirmModal(null)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  background: "rgba(255, 255, 255, 0.08)",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  color: "#e2e8f0",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingChat}
+                onClick={() => void executeConfirmDelete()}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: "8px",
+                  background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                  border: "none",
+                  color: "#fff",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  cursor: isDeletingChat ? "wait" : "pointer",
+                  boxShadow: "0 4px 12px rgba(239, 68, 68, 0.35)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+              >
+                <Trash2 size={14} />
+                {isDeletingChat ? "Excluindo..." : "Sim, Excluir"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
