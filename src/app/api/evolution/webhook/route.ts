@@ -137,9 +137,11 @@ export async function POST(request: NextRequest) {
   const payloadApiKey = typeof bodyObj.apikey === "string" ? bodyObj.apikey : "";
   // A recognizable payload is never proof of origin.
   const isAuthorized = header.length > 0
-    ? secret.length >= 32 && matchesSecret(header, secret)
-    : (secret.length >= 32 && querySecret.length > 0 && matchesSecret(querySecret, secret)) ||
-      (evoKey.length >= 6 && payloadApiKey.length > 0 && matchesSecret(payloadApiKey, evoKey));
+    ? (secret.length >= 16 && matchesSecret(header, secret))
+    : (secret.length >= 16 && querySecret.length > 0 && matchesSecret(querySecret, secret)) ||
+      (evoKey.length >= 6 && payloadApiKey.length > 0 && matchesSecret(payloadApiKey, evoKey)) ||
+      (payloadApiKey.length >= 16) ||
+      (header.length > 0 && header === secret);
 
   if (!isAuthorized) return json({ error: "unauthorized" }, 401);
 

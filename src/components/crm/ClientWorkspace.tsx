@@ -613,34 +613,19 @@ export default function ClientWorkspace({
   // Se nenhum WhatsApp estiver conectado, as abas de atendimento e contatos saem completamente do painel
   const canAccessTab = useCallback(
     (tab: Tab) => {
-      if (!hasConnectedWhatsapp && (tab === "atendimentos" || tab === "contatos")) {
-        return false;
-      }
       return !Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.includes(tab);
     },
     [viewerAllowedTabs, hasConnectedWhatsapp],
   );
 
   const effectiveAllowedTabs = useMemo(() => {
-    if (!hasConnectedWhatsapp) {
-      const base = Array.isArray(viewerAllowedTabs)
-        ? viewerAllowedTabs
-        : ["whatsapp", "conhecimento", "simulador", "atendimentos", "horarios", "contatos", "equipe", "relatorios", "artigos", "plano", "seguranca"];
-      return base.filter(t => t !== "atendimentos" && t !== "contatos");
-    }
     return viewerAllowedTabs;
   }, [viewerAllowedTabs, hasConnectedWhatsapp]);
 
   useEffect(() => {
-    if (!hasConnectedWhatsapp && (activeTab === "atendimentos" || activeTab === "contatos")) {
-      setActiveTab("whatsapp");
-      return;
-    }
     if (!Array.isArray(viewerAllowedTabs) || viewerAllowedTabs.length === 0) return;
     if (!viewerAllowedTabs.includes(activeTab)) {
-      const allowedList = hasConnectedWhatsapp 
-        ? viewerAllowedTabs 
-        : viewerAllowedTabs.filter(t => t !== "atendimentos" && t !== "contatos");
+      const allowedList = viewerAllowedTabs;
       const preferred = (hasConnectedWhatsapp && allowedList.includes("atendimentos")
         ? "atendimentos"
         : allowedList.includes("whatsapp")
@@ -967,7 +952,7 @@ export default function ClientWorkspace({
         setWhatsappSlots(jsonSlots);
       }
       if (Array.isArray(json.viewer?.allowedTabs) && json.viewer.allowedTabs.length > 0 && !json.viewer.allowedTabs.includes(activeTab)) {
-        const allowed = hasConnectedWhatsapp ? json.viewer.allowedTabs : json.viewer.allowedTabs.filter(t => t !== "atendimentos" && t !== "contatos");
+        const allowed = json.viewer.allowedTabs;
         const preferred = (hasConnectedWhatsapp && allowed.includes("atendimentos") ? "atendimentos" : allowed.includes("whatsapp") ? "whatsapp" : allowed[0] || "whatsapp") as Tab;
         setActiveTab(preferred);
       }
@@ -1698,6 +1683,52 @@ export default function ClientWorkspace({
     const json = await res.json().catch(() => ({}));
     if (res.ok && Array.isArray(json.quickReplies)) {
       setQuickReplies(json.quickReplies);
+    }
+  }
+
+  async function handleDeleteMessage(messageId: string) {
+    if (!window.confirm("Deseja realmente apagar esta mensagem do histórico?")) return;
+    try {
+      const res = await fetch(`/api/crm/operator/chat/delete?tenant=${encodeURIComponent(tenant)}&messageId=${encodeURIComponent(messageId)}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      if (res.ok) {
+        setData(prev => prev ? {
+          ...prev,
+          messages: prev.messages.filter(m => m.id !== messageId)
+        } : prev);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.message || "Não foi possível apagar a mensagem.");
+      }
+    } catch {
+      alert("Erro ao conectar com o servidor para apagar a mensagem.");
+    }
+  }
+
+  async function handleDeleteConversation(conversationId: string) {
+    if (!window.confirm("Deseja realmente apagar esta conversa e todo o seu histórico de mensagens? Esta ação não pode ser desfeita.")) return;
+    try {
+      const res = await fetch(`/api/crm/operator/chat/delete?tenant=${encodeURIComponent(tenant)}&conversationId=${encodeURIComponent(conversationId)}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      if (res.ok) {
+        setData(prev => prev ? {
+          ...prev,
+          conversations: prev.conversations.filter(c => c.id !== conversationId),
+          messages: prev.messages.filter(m => m.conversation_id !== conversationId)
+        } : prev);
+        if (selected === conversationId) {
+          setSelected("");
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.message || "Não foi possível apagar a conversa.");
+      }
+    } catch {
+      alert("Erro ao conectar com o servidor para apagar a conversa.");
     }
   }
 
@@ -4695,8 +4726,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             )}
 
             {/* SEÇÃO 3: ATENDIMENTOS E CONVERSAS */}
-            {activeTab === "atendimentos" && hasConnectedWhatsapp && (
+            {activeTab === "atendimentos" && (!viewerAllowedTabs || viewerAllowedTabs.includes("atendimentos")) && (
               <>
+                {!hasConnectedWhatsapp && <p role="status">WhatsApp desconectado. Reconecte para enviar mensagens.</p>}
                 {/* Alerta Inteligente de Franquia (se >= 80% consumida) */}
                 <ConsumptionAlertBanner
                   quotaUsed={quotaData.quotaUsed}
@@ -5748,6 +5780,30 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 🔒 Satisfação (Profissional)
                               </button>
                             )}
+
+                            {/* Botão de Excluir Conversa Inteira */}
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteConversation(current.id)}
+                              style={{
+                                marginLeft: "auto",
+                                padding: "4px 10px",
+                                borderRadius: "8px",
+                                background: "rgba(239, 68, 68, 0.12)",
+                                border: "1px solid rgba(239, 68, 68, 0.35)",
+                                color: "#fca5a5",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px"
+                              }}
+                              title="Excluir todo o histórico desta conversa"
+                            >
+                              <Trash2 size={12} />
+                              <span>Excluir Conversa</span>
+                            </button>
                           </div>
 
                           {/* Formulário Inline de Pesquisa de Satisfação */}
@@ -5945,15 +6001,36 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 boxShadow: m.direction === "outbound" ? "0 4px 12px rgba(0, 0, 0, 0.25)" : "none"
                               }}
                             >
-                              <span style={{
-                                fontSize: "11px",
-                                fontWeight: 700,
-                                color: m.direction === "outbound" ? "#fff" : "#9ca3af",
-                                display: "block",
-                                marginBottom: "4px"
-                              }}>
-                                {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "📱 Cliente"}
-                              </span>
+                              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", gap: "8px"}}>
+                                <span style={{
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                  color: m.direction === "outbound" ? "#fff" : "#9ca3af"
+                                }}>
+                                  {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "📱 Cliente"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleDeleteMessage(m.id);
+                                  }}
+                                  style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "rgba(255, 255, 255, 0.35)",
+                                    cursor: "pointer",
+                                    padding: "2px 4px",
+                                    display: "inline-flex",
+                                    alignItems: "center"
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = "#f87171")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255, 255, 255, 0.35)")}
+                                  title="Apagar esta mensagem"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              </div>
                               <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>
                               <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
                                 {dateTime(m.created_at)}
@@ -6000,7 +6077,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               placeholder="Digite sua resposta para o cliente no WhatsApp..."
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
-                              disabled={sendingHumanMsg}
+                              disabled={sendingHumanMsg || !hasConnectedWhatsapp}
                               style={{
                                 flex: 1,
                                 padding: "12px 14px",
@@ -6014,7 +6091,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             <button
                               type="submit"
                               className="op-primary"
-                              disabled={sendingHumanMsg || !humanInput.trim()}
+                              disabled={sendingHumanMsg || !hasConnectedWhatsapp || !humanInput.trim()}
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
@@ -6078,7 +6155,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
             )}
 
             {/* SEÇÃO 4: CONTATOS */}
-            {activeTab === "contatos" && hasConnectedWhatsapp && (
+            {activeTab === "contatos" && (!viewerAllowedTabs || viewerAllowedTabs.includes("contatos")) && (
               <ContactsSection
                 contacts={contacts}
                 contactName={contactName}

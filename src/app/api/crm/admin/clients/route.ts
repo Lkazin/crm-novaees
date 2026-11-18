@@ -652,26 +652,15 @@ export async function PATCH(request: NextRequest) {
         planObj.isOverdue = false;
         // A repeated confirmation must not extend an already-paid annual period.
         Object.assign(planObj, paidPeriodUpdate(planObj.billingCycle, dueDate, alreadyPaidForCycle));
-        // Clear payment-overdue suspension if any
-        if (dataObj.suspension && !dataObj.suspension.internalNote) {
-          dataObj.suspension.isSuspended = false;
-          dataObj.suspension.publicReason = "";
-        }
       }
 
       planObj.status = newPaymentStatus;
       dataObj.plan = planObj;
       dataObj.paymentHistory = paymentHistory.slice(0, 50);
 
-      await saveSettingsObj(dataObj, { ai_sending_enabled: false }, ["plan", "paymentHistory"]);
+      await saveSettingsObj(dataObj, {}, ["plan", "paymentHistory"]);
 
       if (newPaymentStatus === "paid") {
-        await fetch(url + `/rest/v1/crm_tenants?id=eq.${tenantId}`, {
-          method: "PATCH",
-          headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "active" })
-        });
-
         if (!duplicatePrevented) {
           await recordPlanAudit({
             id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -692,7 +681,7 @@ export async function PATCH(request: NextRequest) {
         paymentStatus: newPaymentStatus,
         duplicatePrevented,
         paymentHistory: dataObj.paymentHistory,
-        active: newPaymentStatus === "paid"
+        active: newPaymentStatus === "paid" && !dataObj.suspension?.isSuspended
       });
     }
 

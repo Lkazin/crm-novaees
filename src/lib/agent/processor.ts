@@ -854,11 +854,11 @@ export async function processWebhook(
                     detail: { replyChars: (rawFollowUp ?? "").length, blocked: followUpGuard.blocked, followUp: true }
                   }).catch(() => {});
                 }
+                followUp = followUpGuard.reply.trim();
                 if (followUpGuard.blocked) {
                   const transferred = await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Informação comercial não confirmada no follow-up").catch(() => null);
                   if (!transferred) followUp = HANDOFF_FAILURE_REPLY;
                 }
-                followUp = followUpGuard.reply.trim();
               }
               if (!followUp) {
                 const transferred = await (deps.handoff ?? handoffToHuman)(incoming.instance, incoming.number, false, "Falha da IA no follow-up — encaminhado para equipe").catch(() => null);
