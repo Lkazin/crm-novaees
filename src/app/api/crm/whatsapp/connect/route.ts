@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
+import { authorizeCrmInstance, resolveCanonicalCrmInstance } from "@/lib/crm/tenant-access";
 import { verifyOperator, isAllowedOrigin } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
 import { getEffectiveTenantPlan, getRedis } from "@/lib/crm/plans";
@@ -198,8 +198,23 @@ export async function POST(req: NextRequest) {
     const slotNumber = extractSlotFromInstanceName(instanceName);
     if (requestedSlot !== undefined && requestedSlot !== slotNumber) return NextResponse.json({ error: "slot_instance_mismatch" }, { status: 403 });
 
-    const channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
-    if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
+    let channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
+    if (!channelAccess) {
+      // O nome enviado pelo navegador nao bate com a empresa da sessao: resolve o
+      // nome correto do slot no servidor em vez de bloquear a geracao do QR.
+      const canonical = await resolveCanonicalCrmInstance(req, tenantId, requestedSlot ?? slotNumber).catch(() => null);
+      if (canonical) {
+        console.warn(`[WhatsApp Connect] Instancia "${instanceName}" corrigida para "${canonical.instanceName}" (tenant ${canonical.tenant.id}).`);
+        instanceName = canonical.instanceName;
+        channelAccess = { tenant: canonical.tenant, access: canonical.access };
+      }
+    }
+    if (!channelAccess) {
+      return NextResponse.json({
+        error: "channel_forbidden",
+        message: "Este número de WhatsApp não pertence à empresa da sua sessão. Recarregue a página (F5) e tente novamente."
+      }, { status: 403 });
+    }
     tenantId = channelAccess.tenant.id;
     const accessObj = (channelAccess as { access?: { isMaster?: boolean; memberships?: Array<{ tenant_id: string; role: string; allowed_tabs?: string[] | null }> } }).access;
     if (!masterAuth.authorized && accessObj && !accessObj.isMaster && Array.isArray(accessObj.memberships)) {

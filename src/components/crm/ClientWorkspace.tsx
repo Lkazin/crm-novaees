@@ -962,6 +962,10 @@ export default function ClientWorkspace({
 
       prevDataRef.current = json;
       setData(json);
+      const jsonSlots = (json as unknown as { whatsappSlots?: WhatsappSlotItem[] }).whatsappSlots;
+      if (Array.isArray(jsonSlots) && jsonSlots.length > 0) {
+        setWhatsappSlots(jsonSlots);
+      }
       if (Array.isArray(json.viewer?.allowedTabs) && json.viewer.allowedTabs.length > 0 && !json.viewer.allowedTabs.includes(activeTab)) {
         const allowed = hasConnectedWhatsapp ? json.viewer.allowedTabs : json.viewer.allowedTabs.filter(t => t !== "atendimentos" && t !== "contatos");
         const preferred = (hasConnectedWhatsapp && allowed.includes("atendimentos") ? "atendimentos" : allowed.includes("whatsapp") ? "whatsapp" : allowed[0] || "whatsapp") as Tab;
@@ -1192,6 +1196,10 @@ export default function ClientWorkspace({
         setQrError(true);
         setQrState("disconnected");
         return;
+      }
+      if (typeof data.instanceName === "string" && data.instanceName && data.instanceName !== instanceName) {
+        // O servidor corrigiu o nome da instancia: guarda o nome certo para o polling de status.
+        setWhatsappSlots(prev => prev.map(s => s.slot === selectedWhatsappSlot ? { ...s, instanceName: data.instanceName } : s));
       }
       if (data.connected || data.state === "open") {
         setQrState("open");

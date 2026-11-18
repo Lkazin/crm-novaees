@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
-import { authorizeCrmInstance } from "@/lib/crm/tenant-access";
+import { authorizeCrmInstance, resolveCanonicalCrmInstance } from "@/lib/crm/tenant-access";
 import Redis from "ioredis";
 import { verifyOperator } from "@/lib/crm/supabase-server";
 import { verifyMasterRequest } from "@/lib/crm/master-auth";
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     url = normalizeLocalServiceUrl(url, "http://127.0.0.1:8080");
     const key = process.env.EVOLUTION_API_KEY ?? "";
     const rawInstance = req.nextUrl.searchParams.get("instance") || req.nextUrl.searchParams.get("instanceName") || process.env.EVOLUTION_INSTANCE || "novaesweb-ia-teste";
-    const instanceName = rawInstance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
+    let instanceName = rawInstance.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 32);
     let tenantId = req.nextUrl.searchParams.get("tenantId") || req.nextUrl.searchParams.get("tenant") || undefined;
     const includeAllSlots = req.nextUrl.searchParams.get("allSlots") === "1";
 
@@ -63,7 +63,16 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    const channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
+    let channelAccess = await authorizeCrmInstance(req, tenantId, instanceName, true);
+    if (!channelAccess) {
+      const slotParam = Number(req.nextUrl.searchParams.get("slot"));
+      const fallbackSlot = Number.isInteger(slotParam) && slotParam >= 1 && slotParam <= 5 ? slotParam : extractSlotFromInstanceName(instanceName);
+      const canonical = await resolveCanonicalCrmInstance(req, tenantId, fallbackSlot).catch(() => null);
+      if (canonical) {
+        instanceName = canonical.instanceName;
+        channelAccess = { tenant: canonical.tenant, access: canonical.access };
+      }
+    }
     if (!channelAccess) return NextResponse.json({ error: "channel_forbidden" }, { status: 403 });
     tenantId = channelAccess.tenant.id;
 

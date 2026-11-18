@@ -164,6 +164,27 @@ export async function authorizeCrmInstance(request: NextRequest, tenantId: strin
   return { tenant, access };
 }
 
+/**
+ * Resolve, no servidor, o nome canonico da instancia de um slot do tenant da sessao.
+ * Evita "channel_forbidden" quando o navegador manda um nome de instancia
+ * desatualizado/errado (ex.: fallback "novaesweb-ia-teste" num painel de cliente).
+ * Nunca adota instancia de outra empresa.
+ */
+export async function resolveCanonicalCrmInstance(request: NextRequest, tenantId: string | undefined, slot: number, checks: AccessChecks = {}) {
+  const access = await getCrmAccess(request, checks);
+  if (!access) return null;
+  const tenant = selectCrmTenant(access, tenantId);
+  if (!tenant) return null;
+  const channels = await serviceRows<Array<{ instance_name: string }>>(
+    `crm_channels?select=instance_name&tenant_id=eq.${tenant.id}`);
+  const slot1 = channels.find(c => !/_[2345]$/.test(c.instance_name))?.instance_name;
+  const instanceName = expectedSlotInstanceName(tenant.name, slot, slot1);
+  const owners = await serviceRows<Array<{ tenant_id: string }>>(
+    `crm_channels?select=tenant_id&instance_name=eq.${encodeURIComponent(instanceName)}&limit=2`);
+  if (owners.some(c => c.tenant_id !== tenant.id)) return null;
+  return { tenant, access, instanceName };
+}
+
 /** A contracted feature is usable only when its current governance state allows it. */
 export function crmFeatureAllowed(plan: EffectiveTenantPlan, feature: FeatureId): boolean {
   return !plan.isSuspended && plan.featureStates?.[feature]?.state === "allowed";
