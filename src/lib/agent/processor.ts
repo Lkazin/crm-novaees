@@ -514,6 +514,12 @@ export async function processWebhook(
         }
 
         const escalationReply = !convId ? HANDOFF_FAILURE_REPLY : esc.customerReply || "Claro! 😊 Vou encaminhar nossa conversa para um atendente da equipe, que continuará com você.";
+        // B3: a escalacao tambem e um envio ao cliente. Sem esta checagem ela saia
+        // mesmo com a loja suspensa ou a conversa bloqueada.
+        if (deps.maySend && !(await deps.maySend(incoming))) {
+          await markItemsDone(escItems);
+          return false;
+        }
         await (deps.send ?? sendText)(incoming.number, escalationReply, cfg, incoming.instance);
         await markItemsDone(escItems);
         try {
@@ -523,6 +529,7 @@ export async function processWebhook(
           // o painel mostra a conversa sem essa resposta e ninguem percebe.
           console.error("[crm-ai] resposta de escalonamento enviada mas nao persistida:", err instanceof Error ? err.message : String(err));
         }
+        return true;
       };
 
       const combinedText = items.map(it => it.text.trim()).filter(Boolean).join("\n") || incoming.text;
@@ -561,7 +568,10 @@ export async function processWebhook(
 
       // 8. If in AI mode and escalation/human request was detected BEFORE AI reply -> hand off to human without charging AI quota
       if (escalation.isEscalation) {
-        await performEscalation(escalation, combinedText, items);
+        const escalationSent = await performEscalation(escalation, combinedText, items);
+        if (!escalationSent) {
+          return { status: "disabled", reason: "tenant_or_conversation_blocked" };
+        }
         return { status: "sent", reason: `escalated_${escalation.category || "human"}` };
       }
 
@@ -722,6 +732,12 @@ export async function processWebhook(
         try {
           for (let i = 0; i < bubbles.length; i++) {
             const bubble = bubbles[i];
+            // B1: o bloqueio do tenant/conversa pode cair no meio da resposta.
+            // Checar antes de cada bolha evita entregar as partes restantes.
+            if (i > 0 && deps.maySend && !(await deps.maySend(incoming))) {
+              console.warn("[crm-ai] resposta interrompida entre bolhas: tenant/conversa bloqueado");
+              break;
+            }
             if (i > 0) {
               // Entre bolhas: sinal curto sem bloquear HTTP e pausa curta.
               bubblePresenceInflight = (deps.sendPresence ?? sendPresence)(
@@ -831,6 +847,9 @@ export async function processWebhook(
               break;
             }
             let followSent = false;
+            // Quantas bolhas do follow-up realmente chegaram ao cliente. Sem isso,
+            // uma falha na 2a bolha libera a franquia inteira mesmo com a 1a entregue.
+            let followBubblesSent = 0;
             try {
               const turnCtx: StoreAiContext = { ...context, history: followUpContextHistory };
               let followUp = "";
@@ -872,7 +891,15 @@ export async function processWebhook(
               const followUpBubbles = splitIntoBubbles(followUp);
               let firstOutcome: { messageId?: string } | void = undefined;
               for (let bi = 0; bi < followUpBubbles.length; bi++) {
+                // B1: bloqueio do tenant/conversa pode mudar entre as bolhas. Sem esta
+                // checagem, uma loja bloqueada no meio da resposta continuava recebendo
+                // as partes restantes.
+                if (bi > 0 && deps.maySend && !(await deps.maySend(incoming))) {
+                  console.warn("[crm-ai] follow-up interrompido entre bolhas: tenant/conversa bloqueado");
+                  break;
+                }
                 const out = await (deps.send ?? sendText)(incoming.number, followUpBubbles[bi], cfg, incoming.instance);
+                followBubblesSent = bi + 1;
                 if (bi === 0) firstOutcome = out;
               }
               followSent = true;
@@ -887,8 +914,12 @@ export async function processWebhook(
               await persistOutboundInSupabase(incoming.instance, incoming.number, followUpBubbles.join("\n\n"), extId);
               followUpContextHistory = [...followUpContextHistory, { role: "user", content: extraText }, { role: "assistant", content: followUp }];
             } finally {
-              if (!followSent) {
+              // So devolve a franquia quando NADA saiu. Se ao menos uma bolha chegou
+              // ao cliente, a reserva fica (mesma regra do fluxo principal).
+              if (!followSent && followBubblesSent === 0) {
                 await quotaStore.release(followUpInput, followRes.token).catch(() => {});
+              }
+              if (!followSent) {
                 await clearInflightItems(extraItems);
               }
             }
