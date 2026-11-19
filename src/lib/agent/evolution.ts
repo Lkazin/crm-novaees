@@ -129,3 +129,75 @@ export async function holdTypingPresence(
     });
   };
 }
+
+export type EvolutionMediaPayload = {
+  mediatype: "image" | "audio" | "document";
+  mimetype: string;
+  base64: string;
+  fileName?: string;
+  caption?: string;
+};
+
+export async function sendMedia(
+  number: string,
+  media: EvolutionMediaPayload,
+  cfg: EvolutionSendConfig,
+  targetInstance?: string
+): Promise<SendResult> {
+  const instance = encodeURIComponent(targetInstance || cfg.instance);
+  const cleanBase64 = media.base64.replace(/^data:[^;]+;base64,/, "").trim();
+  const isAudio = media.mediatype === "audio";
+  const endpoint = isAudio
+    ? `${cfg.evolutionUrl}/message/sendWhatsAppAudio/${instance}`
+    : `${cfg.evolutionUrl}/message/sendMedia/${instance}`;
+
+  const body = isAudio
+    ? {
+        number,
+        audio: cleanBase64
+      }
+    : {
+        number,
+        mediatype: media.mediatype,
+        mimetype: media.mimetype,
+        caption: media.caption || "",
+        media: cleanBase64,
+        fileName: media.fileName || (media.mediatype === "image" ? "imagem.png" : "arquivo")
+      };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: cfg.evolutionKey },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const errJson = await response.json();
+        detail = Array.isArray(errJson?.response?.message)
+          ? errJson.response.message.join("; ")
+          : (errJson?.message || errJson?.error || "");
+      } catch {
+        try {
+          detail = await response.text();
+        } catch {}
+      }
+      const fullMsg = `Evolution mídia retornou HTTP ${response.status}${detail ? `: ${detail}` : ""}`;
+      throw new EvolutionSendError(fullMsg, response.status >= 400 && response.status < 500 && response.status !== 408 ? "rejected" : "uncertain");
+    }
+    try {
+      const data = await response.json();
+      const messageId = data?.key?.id || data?.messageId || data?.id || undefined;
+      return { messageId };
+    } catch {
+      return {};
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}

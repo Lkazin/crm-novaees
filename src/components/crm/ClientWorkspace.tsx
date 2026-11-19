@@ -1,6 +1,7 @@
 "use client";
 import ContactsSection from "./ContactsSection";
 import { ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
+import { CrmToastStack, useCrmToast, CrmEmptyState } from "@/components/crm/CrmUiKit";
 import { QuotaExplainer } from "@/components/crm/QuotaExplainer";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -20,7 +21,7 @@ import {
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
   Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, Copy, MessageCircle, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle,
-  KeyRound, Lock, AlertTriangle, X
+  KeyRound, Lock, AlertTriangle, X, Paperclip, FileAudio, FileText
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
@@ -530,9 +531,21 @@ export default function ClientWorkspace({
   } | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
 
-  // Human Messaging state
+  // Human Messaging & Media Upload state
+  const { toasts: clientToasts, pushToast: pushClientToast, dismissToast: dismissClientToast } = useCrmToast();
   const [humanInput, setHumanInput] = useState("");
   const [sendingHumanMsg, setSendingHumanMsg] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<{
+    mediatype: "image" | "audio" | "document";
+    mimetype: string;
+    fileName: string;
+    sizeBytes: number;
+    base64: string;
+    previewUrl: string;
+  } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
+  const [aiSavedAt, setAiSavedAt] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const consecutiveCloseRef = useRef(0);
 
@@ -1407,10 +1420,15 @@ export default function ClientWorkspace({
       if (!res.ok) throw new Error();
       setAgentLabel(finalLabel);
       isAiDirtyRef.current = false;
+      setAiSavedAt(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }));
       await fetchAiSettings(tenant, true);
-      setAiNotice("Configurações gravadas. Teste as respostas no simulador e revise a conexão e a ativação da IA.");
+      const okMsg = "Configurações da IA salvas e ativas! Teste as respostas no simulador abaixo.";
+      setAiNotice(okMsg);
+      pushClientToast("success", "Configurações da IA salvas", okMsg);
     } catch {
-      setAiNotice("Falha ao salvar configurações da IA.");
+      const errMsg = "Falha ao salvar configurações da IA. Tente novamente.";
+      setAiNotice(errMsg);
+      pushClientToast("error", "Erro ao salvar IA", errMsg);
     } finally {
       setSavingAi(false);
     }
@@ -1443,16 +1461,21 @@ export default function ClientWorkspace({
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        setHoursError(errJson.message || errJson.error || "Falha ao salvar horários de atendimento no banco de dados.");
+        const msg = errJson.message || errJson.error || "Falha ao salvar horários de atendimento no banco de dados.";
+        setHoursError(msg);
+        pushClientToast("error", "Erro ao salvar horários", msg);
         return;
       }
       isHoursDirtyRef.current = false;
       setOperatingHours(payloadHours);
       await fetchAiSettings(tenant);
-      setHoursNotice("Horários de atendimento salvos com sucesso no Supabase! A IA respeitará rigorosamente esta configuração.");
+      const okMsg = "Horários de atendimento salvos com sucesso! A IA respeitará rigorosamente esta configuração.";
+      setHoursNotice(okMsg);
+      pushClientToast("success", "Horários salvos", okMsg);
       setTimeout(() => setHoursNotice(""), 8000);
     } catch {
       setHoursError("Falha de comunicação ao salvar horários de atendimento.");
+      pushClientToast("error", "Falha de comunicação", "Não foi possível salvar os horários agora.");
     } finally {
       setSavingHours(false);
     }
@@ -1644,26 +1667,124 @@ export default function ClientWorkspace({
     }
   }
 
-  // Send real human message via Evolution API
+  function clearPendingMedia() {
+    if (pendingMedia?.previewUrl) {
+      URL.revokeObjectURL(pendingMedia.previewUrl);
+    }
+    setPendingMedia(null);
+    setUploadProgress(null);
+    if (mediaFileInputRef.current) {
+      mediaFileInputRef.current.value = "";
+    }
+  }
+
+  function handleSelectMediaFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 6 * 1024 * 1024) {
+      pushClientToast("warning", "Arquivo muito grande", "Escolha uma imagem, áudio ou documento de até 6 MB.");
+      e.target.value = "";
+      return;
+    }
+    const mediatype: "image" | "audio" | "document" = file.type.startsWith("image/")
+      ? "image"
+      : file.type.startsWith("audio/")
+        ? "audio"
+        : "document";
+    const previewUrl = URL.createObjectURL(file);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = typeof reader.result === "string" ? reader.result : "";
+      if (!base64) {
+        URL.revokeObjectURL(previewUrl);
+        pushClientToast("error", "Erro ao ler arquivo", "Não foi possível preparar a prévia do arquivo.");
+        return;
+      }
+      if (pendingMedia?.previewUrl) URL.revokeObjectURL(pendingMedia.previewUrl);
+      setPendingMedia({
+        mediatype,
+        mimetype: file.type || "application/octet-stream",
+        fileName: file.name,
+        sizeBytes: file.size,
+        base64,
+        previewUrl
+      });
+    };
+    reader.onerror = () => {
+      URL.revokeObjectURL(previewUrl);
+      pushClientToast("error", "Erro ao ler arquivo", "Tente selecionar o arquivo novamente.");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Send real human message or media via Evolution API (with real upload progress)
   async function handleSendHumanMessage() {
     const text = humanInput.trim();
-    if (!text || !tenant || !current || sendingHumanMsg) return;
+    if ((!text && !pendingMedia) || !tenant || !current || sendingHumanMsg) return;
     setSendingHumanMsg(true);
     try {
-      const res = await fetch("/api/crm/operator/send", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: tenant, conversationId: current.id, message: text })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || json.details || json.error || "Falha ao enviar mensagem.");
-      setHumanInput("");
+      const payload: Record<string, unknown> = {
+        tenantId: tenant,
+        conversationId: current.id,
+        message: text
+      };
+      if (pendingMedia) {
+        payload.media = {
+          mediatype: pendingMedia.mediatype,
+          mimetype: pendingMedia.mimetype,
+          fileName: pendingMedia.fileName,
+          base64: pendingMedia.base64
+        };
+      }
+
+      if (pendingMedia) {
+        setUploadProgress(5);
+        const result = await new Promise<{ ok: boolean; json: Record<string, string> }>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/crm/operator/send");
+          xhr.withCredentials = true;
+          xhr.setRequestHeader("Content-Type", "application/json");
+          xhr.upload.onprogress = evt => {
+            if (evt.lengthComputable && evt.total > 0) {
+              const pct = Math.min(95, Math.round((evt.loaded / evt.total) * 100));
+              setUploadProgress(pct);
+            }
+          };
+          xhr.onload = () => {
+            setUploadProgress(100);
+            try {
+              const parsed = JSON.parse(xhr.responseText || "{}");
+              resolve({ ok: xhr.status >= 200 && xhr.status < 300, json: parsed });
+            } catch {
+              resolve({ ok: xhr.status >= 200 && xhr.status < 300, json: {} });
+            }
+          };
+          xhr.onerror = () => reject(new Error("Falha de rede durante o envio da mídia."));
+          xhr.send(JSON.stringify(payload));
+        });
+        if (!result.ok) {
+          throw new Error(result.json.message || result.json.details || result.json.error || "Falha ao enviar mídia.");
+        }
+        clearPendingMedia();
+        setHumanInput("");
+        pushClientToast("success", "Mídia enviada no WhatsApp", "O arquivo foi entregue na conversa.");
+      } else {
+        const res = await fetch("/api/crm/operator/send", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.message || json.details || json.error || "Falha ao enviar mensagem.");
+        setHumanInput("");
+      }
       await fetchData(tenant, true);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erro ao enviar mensagem pelo WhatsApp.");
+      pushClientToast("error", "Falha no envio", e instanceof Error ? e.message : "Erro ao enviar mensagem pelo WhatsApp.");
     } finally {
       setSendingHumanMsg(false);
+      setUploadProgress(null);
     }
   }
 
@@ -1677,9 +1798,10 @@ export default function ClientWorkspace({
         body: JSON.stringify({ tenantId: tenant, conversationId, action: "set_status", status })
       });
       if (!res.ok) throw new Error("Falha ao atualizar etapa do funil.");
+      pushClientToast("success", "Etapa atualizada", "O status da conversa foi alterado com sucesso.");
       await fetchData(tenant, true);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erro ao atualizar etapa.");
+      pushClientToast("error", "Erro ao atualizar etapa", e instanceof Error ? e.message : "Tente novamente.");
     }
   }
 
@@ -2052,16 +2174,19 @@ export default function ClientWorkspace({
     }
   };
 
-  const handleRunMiniSimulator = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!miniSimQuestion.trim() || miniSimLoading) return;
-    const q = miniSimQuestion.trim();
+  const handleRunMiniSimulator = async (e?: React.FormEvent, overrideQuestion?: string) => {
+    if (e) e.preventDefault();
+    const rawQ = typeof overrideQuestion === "string" ? overrideQuestion : miniSimQuestion;
+    if (!rawQ.trim() || miniSimLoading) return;
+    const q = rawQ.trim();
     setMiniSimQuestion("");
     setMiniSimLoading(true);
     setMiniSimHistory(prev => [...prev, { role: "user", text: q }]);
     try {
       const draftInstructions = instructions || "";
-      const draftStoreInfo = `Empresa: ${currentTenantObj?.name || ""}
+      const draftStoreInfo = storeInfo.trim()
+        ? storeInfo.trim()
+        : `Empresa: ${currentTenantObj?.name || ""}
 Preços e Produtos: ${wizardData.productsPrices || ""}
 Horários: ${wizardData.hoursDelivery || ""}
 Endereço: ${wizardData.address || ""}
@@ -2076,6 +2201,7 @@ Perguntas Frequentes: ${wizardData.faqs || ""}`;
           question: q,
           context: {
             storeName: currentTenantObj?.name,
+            agentLabel: agentLabel.trim() || "Assistente Virtual",
             instructions: draftInstructions,
             storeInfo: draftStoreInfo,
             history: miniSimHistory.map(m => ({ role: m.role, content: m.text }))
@@ -3693,12 +3819,39 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
               <section className={`op-card ${styles.primaryPanel}`} style={{display: "flex", flexDirection: "column", gap: "22px"}}>
                 <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #372f4d", paddingBottom: "16px", flexWrap: "wrap", gap: "12px"}}>
                   <div style={{display: "flex", alignItems: "center", gap: "14px"}}>
-                    
                     <div>
                       <h2 style={{margin: 0, fontSize: "20px", color: "#fff"}}>Configurar Minha IA: O que ela vai falar e responder</h2>
-                      <small style={{color: "#c2bed4"}}>Você define o nome, a simpatia, os preços e todas as regras do atendimento.</small>
+                      <small style={{color: "#c2bed4"}}>Você define o nome, a simpatia, os preços e todas as regras do atendimento em linguagem simples.</small>
                     </div>
                   </div>
+                  <div>
+                    {savingAi ? (
+                      <span className="nw-save-badge saving">⏳ Salvando configurações...</span>
+                    ) : isAiDirtyRef.current ? (
+                      <span className="nw-save-badge unsaved">● Alterações não salvas</span>
+                    ) : (
+                      <span className="nw-save-badge saved">
+                        ✓ {aiSavedAt ? `Salvo às ${aiSavedAt}` : "Configurações salvas"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* GUIA SIMPLES DE 3 PASSOS */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                  gap: "10px",
+                  padding: "12px 14px",
+                  borderRadius: "12px",
+                  background: "rgba(255, 255, 255, 0.025)",
+                  border: "1px solid rgba(255, 255, 255, 0.08)",
+                  fontSize: "12.5px",
+                  color: "#cbd5e1"
+                }}>
+                  <div><strong style={{color: "#f472b6"}}>Passo 1:</strong> Escolha o nome da assistente e escreva preços, horários e endereço.</div>
+                  <div><strong style={{color: "#a855f7"}}>Passo 2:</strong> Selecione o tom de voz e teste uma pergunta no simulador abaixo.</div>
+                  <div><strong style={{color: "#34d399"}}>Passo 3:</strong> Gostou da resposta? Clique em <strong>Salvar Configurações</strong> para ativar no WhatsApp.</div>
                 </div>
 
                 <div>
@@ -3963,6 +4116,36 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <label style={{fontSize: "13px", color: "#d1c8e6", display: "block", marginBottom: "6px", fontWeight: 600}}>
                       3. Comportamento da IA · tom de voz e regras
                     </label>
+                    <div style={{display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "8px"}}>
+                      {[
+                        {
+                          label: "🤝 Amigável e Consultivo",
+                          text: "Atenda com simpatia, clareza e acolhimento. Use mensagens curtas, tire dúvidas sobre preços e serviços com base nas informações da empresa e convide o cliente a agendar ou fechar pedido."
+                        },
+                        {
+                          label: "⚡ Direto e Objetivo",
+                          text: "Seja ágil, educado e objetivo. Responda direto ao ponto sem textos longos, apresente valores reais cadastrados e passe para um atendente humano se o cliente pedir."
+                        },
+                        {
+                          label: "🏥 Formal e Acolhedor",
+                          text: "Mantenha postura profissional, respeitosa e acolhedora. Evite gírias, confirme os dados necessários com calma e encaminhe casos urgentes imediatamente para atendimento humano."
+                        }
+                      ].map(preset => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          className="nw-chip-btn"
+                          style={{fontSize: "12px", padding: "5px 11px"}}
+                          onClick={() => {
+                            isAiDirtyRef.current = true;
+                            setInstructions(preset.text);
+                            pushClientToast("info", "Tom de voz aplicado", `Estilo "${preset.label}" preenchido. Teste abaixo e clique em Salvar.`);
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
                     <textarea
                       style={{width: "100%", padding: "12px 14px", borderRadius: "10px", border: "1px solid #443c5e", background: "#121222", color: "white", minHeight: "95px", fontSize: "14px", lineHeight: "1.5"}}
                       id={`${setupFieldId}-instructions`}
@@ -3975,7 +4158,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     <p id={`${setupFieldId}-instructions-count`} className={styles.characterCount}>{instructions.length.toLocaleString("pt-BR")} caracteres nas instruções</p>
                   </div>
 
-                  <div>
+                  <div style={{display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap"}}>
                     <button
                       type="submit"
                       className="op-primary"
@@ -3984,6 +4167,11 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                     >
                       <Save size={18}/> {savingAi ? "Salvando e atualizando IA..." : "Salvar Configurações da Minha IA"}
                     </button>
+                    {isAiDirtyRef.current && !savingAi && (
+                      <span style={{fontSize: "12.5px", color: "#fbbf24", fontWeight: 600}}>
+                        Você tem alterações ainda não salvas. Teste no simulador abaixo ou clique em Salvar.
+                      </span>
+                    )}
                   </div>
                 </form>
 
@@ -4005,20 +4193,45 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                       </div>
                       <div>
                         <strong style={{color: "#fff", fontSize: "15px", display: "block"}}>
-                          Testar Minha IA Agora (Simulador Integrado)
+                          Prévia das Alterações · Testar Minha IA Antes de Ativar
                         </strong>
-                        <small style={{color: "#aba8bf"}}>Faça uma pergunta para ver como sua IA responderá aos clientes com as regras atuais.</small>
+                        <small style={{color: "#aba8bf"}}>Testa instantaneamente o texto que você editou acima, sem enviar mensagens reais no WhatsApp.</small>
                       </div>
                     </div>
-                    {miniSimHistory.length > 0 && (
+                    <div style={{display: "flex", alignItems: "center", gap: "10px"}}>
+                      {isAiDirtyRef.current && (
+                        <span className="nw-save-badge unsaved">Prévia do rascunho atual</span>
+                      )}
+                      {miniSimHistory.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setMiniSimHistory([])}
+                          style={{background: "transparent", border: "none", color: "#a59cb8", fontSize: "12px", cursor: "pointer", textDecoration: "underline"}}
+                        >
+                          Limpar conversa
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Perguntas rápidas de prévia */}
+                  <div style={{display: "flex", flexWrap: "wrap", gap: "8px"}}>
+                    {[
+                      "Olá! Quais são os serviços e valores?",
+                      "Qual o horário de funcionamento?",
+                      "Quero falar com um atendente humano"
+                    ].map(sampleQ => (
                       <button
+                        key={sampleQ}
                         type="button"
-                        onClick={() => setMiniSimHistory([])}
-                        style={{background: "transparent", border: "none", color: "#a59cb8", fontSize: "12px", cursor: "pointer", textDecoration: "underline"}}
+                        disabled={miniSimLoading}
+                        className="nw-chip-btn"
+                        style={{fontSize: "12px", padding: "5px 11px"}}
+                        onClick={() => void handleRunMiniSimulator(undefined, sampleQ)}
                       >
-                        Limpar conversa
+                        💬 {sampleQ}
                       </button>
-                    )}
+                    ))}
                   </div>
 
                   {/* Chat bubbles */}
@@ -5608,8 +5821,41 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           </button>
                         );
                       }) : (
-                        <div className="op-empty" style={{textAlign: "center", padding: "40px 10px", color: "#8c879b"}}>
-                          Nenhuma conversa encontrada neste estabelecimento.
+                        <div style={{padding: "12px 4px"}}>
+                          <CrmEmptyState
+                            icon={<Inbox size={24} />}
+                            title={
+                              search || funnelFilter !== "all" || tagFilter !== "all" || priorityFilter !== "all"
+                                ? "Nenhuma conversa neste filtro"
+                                : !hasConnectedWhatsapp
+                                  ? "Conecte seu WhatsApp para começar"
+                                  : "Aguardando primeiras mensagens"
+                            }
+                            description={
+                              search || funnelFilter !== "all" || tagFilter !== "all" || priorityFilter !== "all"
+                                ? "Não encontramos conversas com os filtros atuais. Limpe a busca para visualizar toda a fila."
+                                : !hasConnectedWhatsapp
+                                  ? "Escaneie o QR Code na aba WhatsApp para receber mensagens dos clientes em tempo real."
+                                  : "Assim que um cliente enviar uma mensagem para o seu WhatsApp conectado, a conversa aparecerá automaticamente aqui."
+                            }
+                            actionLabel={
+                              search || funnelFilter !== "all" || tagFilter !== "all" || priorityFilter !== "all"
+                                ? "Limpar filtros"
+                                : !hasConnectedWhatsapp
+                                  ? "Conectar WhatsApp"
+                                  : undefined
+                            }
+                            onAction={() => {
+                              if (search || funnelFilter !== "all" || tagFilter !== "all" || priorityFilter !== "all") {
+                                setSearch("");
+                                setFunnelFilter("all");
+                                setTagFilter("all");
+                                setPriorityFilter("all");
+                              } else if (!hasConnectedWhatsapp) {
+                                setActiveTab("whatsapp");
+                              }
+                            }}
+                          />
                         </div>
                       )}
                     </div>
@@ -6176,14 +6422,16 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               </small>
                             </div>
                           )) : (
-                            <div className="op-empty" style={{textAlign: "center", padding: "40px", color: "#8c879b"}}>
-                              Nenhuma mensagem registrada nesta conversa ainda.
-                            </div>
+                            <CrmEmptyState
+                              icon={<MessageCircle size={24} />}
+                              title="Conversa sem mensagens registradas"
+                              description="Envie a primeira mensagem, imagem ou áudio abaixo para iniciar o atendimento pelo WhatsApp."
+                            />
                           )}
                           <div ref={messagesEndRef} />
                         </div>
 
-                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + RESPOSTAS RÁPIDAS */}
+                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + MÍDIAS + RESPOSTAS RÁPIDAS */}
                         <form
                           onSubmit={e => {
                             e.preventDefault();
@@ -6207,20 +6455,121 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             onRequestUpgrade={() => openUpgradeRequest("Profissional", "Ativar Respostas Rápidas")}
                           />
                           {current.mode === "ai" && (
-                            <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#aba8bf", background: "rgba(0, 219, 140, 0.06)", border: "1px solid rgba(0, 219, 140, 0.2)", padding: "6px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
+                            <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#cbd5e1", background: "rgba(0, 219, 140, 0.08)", border: "1px solid rgba(0, 219, 140, 0.25)", padding: "7px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
                               <span>🤖 A IA está ativa nesta conversa. Ao enviar uma resposta abaixo ou clicar em <strong>Assumir Atendimento</strong>, a IA será pausada automaticamente.</span>
                             </div>
                           )}
-                          <div style={{display: "flex", gap: "10px", alignItems: "flex-end"}}>
+
+                          {/* PRÉVIA DE MÍDIA ANEXADA (IMAGEM, ÁUDIO OU DOCUMENTO) */}
+                          {pendingMedia && (
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "8px",
+                                padding: "10px 12px",
+                                borderRadius: "12px",
+                                background: "rgba(236, 72, 153, 0.08)",
+                                border: "1px solid rgba(236, 72, 153, 0.35)"
+                              }}
+                            >
+                              <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                                {pendingMedia.mediatype === "image" ? (
+                                  <img
+                                    src={pendingMedia.previewUrl}
+                                    alt="Prévia da imagem selecionada"
+                                    style={{width: "56px", height: "56px", borderRadius: "8px", objectFit: "cover", border: "1px solid rgba(255,255,255,0.16)", flexShrink: 0}}
+                                  />
+                                ) : pendingMedia.mediatype === "audio" ? (
+                                  <div style={{display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0}}>
+                                    <FileAudio size={20} color="#f472b6" style={{flexShrink: 0}} />
+                                    <audio controls src={pendingMedia.previewUrl} style={{height: "34px", maxWidth: "240px", width: "100%"}} />
+                                  </div>
+                                ) : (
+                                  <div style={{width: "42px", height: "42px", borderRadius: "10px", background: "rgba(255,255,255,0.08)", display: "grid", placeItems: "center", flexShrink: 0}}>
+                                    <FileText size={20} color="#f472b6" />
+                                  </div>
+                                )}
+                                <div style={{flex: 1, minWidth: 0}}>
+                                  <strong style={{display: "block", fontSize: "13px", color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"}}>
+                                    {pendingMedia.fileName}
+                                  </strong>
+                                  <small style={{color: "#cbd5e1", fontSize: "11.5px"}}>
+                                    {pendingMedia.mediatype === "image" ? "Imagem pronta para envio" : pendingMedia.mediatype === "audio" ? "Áudio pronto para envio" : "Documento pronto para envio"} · {(pendingMedia.sizeBytes / 1024).toFixed(0)} KB
+                                  </small>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={clearPendingMedia}
+                                  disabled={sendingHumanMsg}
+                                  aria-label="Remover mídia anexada"
+                                  style={{
+                                    width: "36px",
+                                    height: "36px",
+                                    borderRadius: "8px",
+                                    background: "rgba(255,255,255,0.08)",
+                                    border: "1px solid rgba(255,255,255,0.14)",
+                                    color: "#fca5a5",
+                                    display: "grid",
+                                    placeItems: "center",
+                                    cursor: "pointer",
+                                    flexShrink: 0
+                                  }}
+                                >
+                                  <X size={16} />
+                                </button>
+                              </div>
+                              {uploadProgress !== null && (
+                                <div style={{display: "flex", flexDirection: "column", gap: "4px"}}>
+                                  <div style={{display: "flex", justifyContent: "space-between", fontSize: "11.5px", color: "#f5d0fe", fontWeight: 700}}>
+                                    <span>Enviando arquivo para o WhatsApp...</span>
+                                    <span>{uploadProgress}%</span>
+                                  </div>
+                                  <div className="nw-upload-progress" role="progressbar" aria-valuenow={uploadProgress} aria-valuemin={0} aria-valuemax={100}>
+                                    <div className="nw-upload-progress-bar" style={{width: `${uploadProgress}%`}} />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div style={{display: "flex", gap: "8px", alignItems: "flex-end"}}>
+                            <input
+                              ref={mediaFileInputRef}
+                              type="file"
+                              accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+                              onChange={handleSelectMediaFile}
+                              style={{display: "none"}}
+                              aria-hidden="true"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => mediaFileInputRef.current?.click()}
+                              disabled={sendingHumanMsg || !hasConnectedWhatsapp}
+                              aria-label="Anexar imagem, áudio ou documento"
+                              title="Anexar imagem, áudio ou documento (até 6 MB)"
+                              className="nw-btn nw-btn-secondary"
+                              style={{
+                                minWidth: "44px",
+                                width: "44px",
+                                height: "44px",
+                                padding: 0,
+                                borderRadius: "10px",
+                                flexShrink: 0
+                              }}
+                            >
+                              <Paperclip size={18} />
+                            </button>
                             <textarea
                               rows={2}
-                              placeholder="Digite sua resposta para o cliente no WhatsApp... (Enter para enviar, Shift+Enter para quebra de linha)"
+                              aria-label="Mensagem de resposta para o cliente"
+                              placeholder={pendingMedia ? "Adicione uma legenda opcional e pressione Enter..." : "Digite sua resposta para o cliente no WhatsApp... (Enter envia, Shift+Enter quebra linha)"}
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
                               onKeyDown={e => {
                                 if (e.key === "Enter" && !e.shiftKey) {
                                   e.preventDefault();
-                                  if (!sendingHumanMsg && hasConnectedWhatsapp && humanInput.trim()) {
+                                  if (!sendingHumanMsg && hasConnectedWhatsapp && (humanInput.trim() || pendingMedia)) {
                                     void handleSendHumanMessage();
                                   }
                                 }
@@ -6243,31 +6592,31 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             />
                             <button
                               type="submit"
-                              className="op-primary"
-                              disabled={sendingHumanMsg || !hasConnectedWhatsapp || !humanInput.trim()}
+                              className="nw-btn nw-btn-primary"
+                              aria-label="Enviar resposta no WhatsApp"
+                              disabled={sendingHumanMsg || !hasConnectedWhatsapp || (!humanInput.trim() && !pendingMedia)}
                               style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                padding: "12px 20px",
+                                padding: "0 18px",
                                 borderRadius: "10px",
-                                fontWeight: 700,
-                                background: "var(--grad-primary)",
-                                cursor: "pointer",
                                 flexShrink: 0,
                                 height: "44px"
                               }}
                             >
-                              <Send size={15}/> {sendingHumanMsg ? "Enviando..." : "Responder no WhatsApp"}
+                              <Send size={15}/> <span>{sendingHumanMsg ? (uploadProgress !== null ? `${uploadProgress}%` : "Enviando...") : "Enviar"}</span>
                             </button>
                           </div>
                         </form>
                       </>
                     ) : (
-                      <div className="op-centered op-thread-empty" style={{textAlign: "center", padding: "60px 20px", color: "#8c879b"}}>
-                        <MessageSquare size={36} color="#ec4899" style={{margin: "0 auto 12px"}}/>
-                        <h2 style={{fontSize: "18px", color: "#fff"}}>Selecione uma conversa</h2>
-                        <p style={{fontSize: "13px"}}>As mensagens recebidas no WhatsApp do estabelecimento aparecerão aqui automaticamente em tempo real.</p>
+                      <div style={{margin: "auto", width: "100%", padding: "24px"}}>
+                        <CrmEmptyState
+                          icon={<MessageSquare size={26} />}
+                          title="Selecione uma conversa na fila"
+                          description="Clique em um contato à esquerda para visualizar o histórico completo, ouvir áudios, enviar mídias ou assumir o atendimento da IA."
+                          secondaryHint={!hasConnectedWhatsapp ? "Dica: conecte seu WhatsApp na aba WhatsApp para começar a receber clientes." : undefined}
+                          actionLabel={!hasConnectedWhatsapp ? "Ir para Conexão WhatsApp" : undefined}
+                          onAction={!hasConnectedWhatsapp ? () => setActiveTab("whatsapp") : undefined}
+                        />
                       </div>
                     )}
                   </article>
@@ -7252,6 +7601,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           </div>
         </div>
       )}
+      <CrmToastStack toasts={clientToasts} onDismiss={dismissClientToast} />
     </div>
   );
 }

@@ -1,10 +1,13 @@
 "use client";
 import { COMMERCIAL_PLANS } from "@/lib/crm/commercial-catalog";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useDeferredValue, useRef } from "react";
 import dynamic from "next/dynamic";
+import { CrmToastStack, useCrmToast, CrmConfirmModal, type CrmConfirmState, CrmEmptyState, CrmSectionSkeleton } from "@/components/crm/CrmUiKit";
+import { SystemHealthBar } from "@/components/crm/admin/SystemHealthBar";
+import type { SystemHealthPayload } from "@/app/api/crm/admin/health/route";
 
 const ProvidersWorkspace = dynamic(() => import("@/components/crm/ProvidersWorkspace"), {
-  loading: () => <p role="status">Carregando provedores de IA...</p>,
+  loading: () => <CrmSectionSkeleton variant="cards" rows={3} />,
 });
 import { MasterAdminSkeleton, ClientWorkspaceSkeleton } from "@/components/crm/CrmSkeleton";
 import { WhatsAppRadarSection } from "@/components/crm/WhatsAppRadarSection";
@@ -580,10 +583,41 @@ export default function AdminCRM() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const { toasts, pushToast, dismissToast } = useCrmToast();
+  const [confirmModal, setConfirmModal] = useState<CrmConfirmState | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthPayload | null>(null);
+  const [loadingHealth, setLoadingHealth] = useState(false);
+  const lastQualityFetchRef = useRef<number>(0);
+
+  // Sync notice & error changes to floating Toast feedback
+  useEffect(() => {
+    if (notice) pushToast("success", "Ação concluída", notice);
+  }, [notice, pushToast]);
+
+  useEffect(() => {
+    if (error) pushToast("error", "Atenção", error, 6000);
+  }, [error, pushToast]);
+
+  const fetchSystemHealth = useCallback(async () => {
+    setLoadingHealth(true);
+    try {
+      const res = await fetch("/api/crm/admin/health", { credentials: "same-origin", cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as SystemHealthPayload;
+        setSystemHealth(data);
+      }
+    } catch {
+      // keep previous health snapshot silently
+    } finally {
+      setLoadingHealth(false);
+    }
+  }, []);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "overdue" | "suspended">("all");
+  const [filterPlan, setFilterPlan] = useState<string>("all");
   const [currentNav, setCurrentNav] = useState<MasterSection>("clients");
   const [crmActiveTab, setCrmActiveTab] = useState<CrmTab>("atendimentos");
 
@@ -609,7 +643,10 @@ export default function AdminCRM() {
 
   function navigateSection(section: MasterSection) {
     setCurrentNav(section);
-    if (section === "quality") void fetchQuality(qualityPeriod);
+    if (section === "quality" && Date.now() - lastQualityFetchRef.current > 15_000) {
+      lastQualityFetchRef.current = Date.now();
+      void fetchQuality(qualityPeriod);
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("section", section);
     window.history.pushState(null, "", url);
@@ -1171,27 +1208,48 @@ export default function AdminCRM() {
     URL.revokeObjectURL(url);
   };
 
-  // Filtered clients
+  // Real-time Infrastructure & AI Health polling
+  useEffect(() => {
+    if (!authenticated) return;
+    void fetchSystemHealth();
+    const timer = setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void fetchSystemHealth();
+      }
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [authenticated, fetchSystemHealth]);
+
+  // Filtered clients (deferred search + status + plan filter)
   const filteredClients = useMemo(() => {
+    const q = deferredSearchTerm.trim().toLowerCase();
     return clients.filter(c => {
-      const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            c.email.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = !q ||
+                            c.name.toLowerCase().includes(q) ||
+                            c.email.toLowerCase().includes(q) ||
+                            (c.slug || "").toLowerCase().includes(q) ||
+                            (c.plan?.name || "").toLowerCase().includes(q);
       if (!matchesSearch) return false;
+      if (filterPlan !== "all") {
+        const planNorm = (c.plan?.name || "").toLowerCase();
+        if (!planNorm.includes(filterPlan.toLowerCase())) return false;
+      }
       if (filterStatus === "active") return c.status === "active" && !c.plan.isOverdue;
       if (filterStatus === "overdue") return c.plan.isOverdue;
       if (filterStatus === "suspended") return c.status === "suspended";
       return true;
     });
-  }, [clients, searchTerm, filterStatus]);
+  }, [clients, deferredSearchTerm, filterStatus, filterPlan]);
 
   // Etapa 1: Filtered Commercial Customers & Handlers
+  const deferredCustomerSearch = useDeferredValue(customerSearchTerm);
   const filteredCustomers = useMemo(() => {
+    const q = deferredCustomerSearch.trim().toLowerCase();
     return customers.filter(c => {
-      const q = customerSearchTerm.toLowerCase();
-      const matchSearch =
+      const matchSearch = !q ||
         c.name.toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
-        (c.whatsapp || "").includes(customerSearchTerm) ||
+        (c.whatsapp || "").includes(deferredCustomerSearch) ||
         (c.document || "").toLowerCase().includes(q);
       if (!matchSearch) return false;
       if (customerFilterStatus === "with_store") return c.linkedStores.length > 0;
@@ -1199,7 +1257,7 @@ export default function AdminCRM() {
       if (customerFilterStatus === "multi_store") return c.linkedStores.length > 1;
       return true;
     });
-  }, [customers, customerSearchTerm, customerFilterStatus]);
+  }, [customers, deferredCustomerSearch, customerFilterStatus]);
 
   const handleResetCustomerForm = () => {
     setEditingCustomerId(null);
@@ -1261,27 +1319,39 @@ export default function AdminCRM() {
     }
   };
 
-  const handleDeleteCustomer = async (c: MasterCustomerItem) => {
+  const handleDeleteCustomer = (c: MasterCustomerItem) => {
     if (c.linkedStores.length > 0) {
       setError(`O cliente "${c.name}" possui ${c.linkedStores.length} empresa(s) vinculada(s). Exclua a empresa antes de apagar o cadastro do cliente.`);
       return;
     }
-    if (!window.confirm(`Deseja realmente apagar o cadastro comercial do cliente "${c.name}" (${c.email})?`)) return;
-    try {
-      const res = await fetch(`/api/crm/admin/customers?customerId=${encodeURIComponent(c.id)}`, {
-        method: "DELETE",
-        credentials: "same-origin"
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.message || data.error || "Não foi possível excluir o cliente.");
-        return;
+    setConfirmModal({
+      open: true,
+      tone: "danger",
+      title: "Excluir cliente responsável",
+      description: `Deseja realmente apagar o cadastro comercial do cliente "${c.name}" (${c.email})?`,
+      impactHint: "Esta ação remove o cadastro comercial permanentemente e não pode ser desfeita.",
+      confirmLabel: "Excluir Cliente",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch(`/api/crm/admin/customers?customerId=${encodeURIComponent(c.id)}`, {
+            method: "DELETE",
+            credentials: "same-origin"
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setError(data.message || data.error || "Não foi possível excluir o cliente.");
+            return;
+          }
+          setNotice(`Cadastro comercial de "${c.name}" removido com sucesso.`);
+          await fetchCustomers();
+        } catch {
+          setError("Falha ao remover cliente.");
+        } finally {
+          setConfirmModal(null);
+        }
       }
-      setNotice(`Cadastro comercial de "${c.name}" removido com sucesso.`);
-      await fetchCustomers();
-    } catch {
-      setError("Falha ao remover cliente.");
-    }
+    });
   };
 
   const handleStartStoreForCustomer = (customer: MasterCustomerItem) => {
@@ -1504,28 +1574,40 @@ export default function AdminCRM() {
     }
   };
 
-  const handleUnlinkStoreFromUser = async (user: ClientUser, tenantId: string, tenantName: string) => {
-    if (!window.confirm(`Deseja desvincular a empresa "${tenantName}" do login de "${user.name}"?`)) return;
-    try {
-      const res = await fetch("/api/crm/admin/users", {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.id,
-          action: "unlink_tenant",
-          tenantId
-        })
-      });
-      if (!res.ok) {
-        setError("Não foi possível desvincular a empresa.");
-        return;
+  const handleUnlinkStoreFromUser = (user: ClientUser, tenantId: string, tenantName: string) => {
+    setConfirmModal({
+      open: true,
+      tone: "warning",
+      title: "Desvincular empresa do login",
+      description: `Deseja desvincular a empresa "${tenantName}" do login de "${user.name}"?`,
+      impactHint: "O usuário perderá acesso imediato ao painel desta empresa até que seja vinculado novamente.",
+      confirmLabel: "Desvincular Empresa",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch("/api/crm/admin/users", {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              action: "unlink_tenant",
+              tenantId
+            })
+          });
+          if (!res.ok) {
+            setError("Não foi possível desvincular a empresa.");
+            return;
+          }
+          setNotice(`Empresa "${tenantName}" desvinculada de "${user.name}".`);
+          await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
+        } catch {
+          setError("Falha ao desvincular empresa.");
+        } finally {
+          setConfirmModal(null);
+        }
       }
-      setNotice(`Empresa "${tenantName}" desvinculada de "${user.name}".`);
-      await Promise.all([fetchUsers(), fetchClients(), fetchCustomers()]);
-    } catch {
-      setError("Falha ao desvincular empresa.");
-    }
+    });
   };
 
   const handleSaveUserPermissions = async (e: React.FormEvent) => {
@@ -1560,33 +1642,45 @@ export default function AdminCRM() {
     }
   };
 
-  const handleToggleBlockUser = async (user: ClientUser) => {
+  const handleToggleBlockUser = (user: ClientUser) => {
     const nextBlocked = !user.isBlocked;
-    const confirmMsg = nextBlocked
-      ? `Deseja realmente suspender o acesso de "${user.name}"? O cliente não conseguirá fazer login no painel.`
-      : `Deseja reativar o acesso de "${user.name}"?`;
-    if (!confirm(confirmMsg)) return;
-
-    try {
-      const res = await fetch("/api/crm/admin/users", {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.id,
-          action: "toggle_block",
-          blocked: nextBlocked
-        })
-      });
-      if (res.ok) {
-        setNotice(nextBlocked ? `Acesso de ${user.name} bloqueado.` : `Acesso de ${user.name} reativado com sucesso!`);
-        await fetchUsers();
-      } else {
-        setError("Não foi possível alterar o status do usuário.");
+    setConfirmModal({
+      open: true,
+      tone: nextBlocked ? "danger" : "warning",
+      title: nextBlocked ? "Suspender acesso do usuário" : "Reativar acesso do usuário",
+      description: nextBlocked
+        ? `Deseja realmente suspender o acesso de "${user.name}" (${user.email})?`
+        : `Deseja reativar o acesso de "${user.name}" (${user.email})?`,
+      impactHint: nextBlocked
+        ? "O cliente será impedido de fazer login no painel até ser reativado."
+        : "O login voltará a funcionar imediatamente para as empresas vinculadas.",
+      confirmLabel: nextBlocked ? "Suspender Acesso" : "Reativar Acesso",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch("/api/crm/admin/users", {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              action: "toggle_block",
+              blocked: nextBlocked
+            })
+          });
+          if (res.ok) {
+            setNotice(nextBlocked ? `Acesso de ${user.name} bloqueado.` : `Acesso de ${user.name} reativado com sucesso!`);
+            await fetchUsers();
+          } else {
+            setError("Não foi possível alterar o status do usuário.");
+          }
+        } catch {
+          setError("Falha de comunicação ao atualizar status do usuário.");
+        } finally {
+          setConfirmModal(null);
+        }
       }
-    } catch {
-      setError("Falha de comunicação ao atualizar status do usuário.");
-    }
+    });
   };
 
   const handleStartStoreForUser = (user: ClientUser) => {
@@ -1721,21 +1815,32 @@ export default function AdminCRM() {
     setEditPlanModalOpen(true);
   };
 
-  const handleDiscardDraft = async (planId: string) => {
-    if (!window.confirm("Deseja descartar as alterações deste rascunho? O plano publicado voltará a ser o único exibido.")) return;
-    try {
-      const res = await fetch("/api/crm/admin/plans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ action: "discard_draft", planId })
-      });
-      if (!res.ok) throw new Error();
-      setNotice("Rascunho descartado com sucesso.");
-      await fetchPlans();
-    } catch {
-      setError("Falha ao descartar rascunho.");
-    }
+  const handleDiscardDraft = (planId: string) => {
+    setConfirmModal({
+      open: true,
+      tone: "warning",
+      title: "Descartar rascunho do plano",
+      description: "Deseja descartar as alterações deste rascunho? O plano publicado voltará a ser o único exibido.",
+      confirmLabel: "Descartar Rascunho",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch("/api/crm/admin/plans", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ action: "discard_draft", planId })
+          });
+          if (!res.ok) throw new Error();
+          setNotice("Rascunho descartado com sucesso.");
+          await fetchPlans();
+        } catch {
+          setError("Falha ao descartar rascunho.");
+        } finally {
+          setConfirmModal(null);
+        }
+      }
+    });
   };
 
   const handleToggleFeatureInEditor = (featId: FeatureId) => {
@@ -1877,25 +1982,35 @@ export default function AdminCRM() {
       return;
     }
     const enrolled = clientCountsMap[plan.id] ?? 0;
-    const confirmMsg = enrolled > 0
-      ? `ATENÇÃO: Existem ${enrolled} loja(s) vinculada(s) ao plano "${plan.name}". Tem certeza que deseja EXCLUIR permanentemente este plano do catálogo?`
-      : `Tem certeza que deseja excluir permanentemente o plano "${plan.name}" do catálogo? Esta ação não pode ser desfeita.`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      const res = await fetch("/api/crm/admin/plans", {
-        method: "DELETE",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId: plan.id })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Falha ao excluir plano.");
-      setNotice(`Plano "${plan.name}" excluído com sucesso do catálogo.`);
-      await fetchPlans();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao excluir plano.");
-    }
+    setConfirmModal({
+      open: true,
+      tone: "danger",
+      title: `Excluir plano "${plan.name}"`,
+      description: enrolled > 0
+        ? `Existem ${enrolled} loja(s) vinculada(s) ao plano "${plan.name}". Tem certeza que deseja excluir permanentemente este plano do catálogo?`
+        : `Tem certeza que deseja excluir permanentemente o plano "${plan.name}" do catálogo?`,
+      impactHint: "Esta ação não pode ser desfeita e remove o plano do catálogo comercial.",
+      confirmLabel: "Excluir Plano",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch("/api/crm/admin/plans", {
+            method: "DELETE",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ planId: plan.id })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Falha ao excluir plano.");
+          setNotice(`Plano "${plan.name}" excluído com sucesso do catálogo.`);
+          await fetchPlans();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Falha ao excluir plano.");
+        } finally {
+          setConfirmModal(null);
+        }
+      }
+    });
   };
 
   const handleViewEnrolledStores = (plan: PlanItem) => {
@@ -2082,55 +2197,73 @@ export default function AdminCRM() {
     }
   };
 
-  const handleDeleteClient = async (client: Client) => {
-    const typed = window.prompt(`ATENÇÃO: apagar PERMANENTEMENTE a loja "${client.name}" (conversas, configurações, agentes e instância WhatsApp). Esta ação não pode ser desfeita.\n\nDigite o nome da loja para confirmar:`);
-    if (typed === null) return;
-    if (typed.trim().toLowerCase() !== client.name.trim().toLowerCase()) {
-      setError("Nome digitado não confere. Exclusão cancelada.");
-      return;
-    }
-    const deleteLogin = window.confirm(`Apagar também o LOGIN do cliente responsável (se ele não tiver outras lojas)?\n\nOK = apagar loja e login\nCancelar = apagar só a loja (o login continua como "Aguardando Vinculação")`);
-
-    try {
-      const res = await fetch(`/api/crm/admin/clients?tenantId=${encodeURIComponent(client.id)}&deleteLogin=${deleteLogin}`, {
-        method: "DELETE",
-        credentials: "same-origin"
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        setError(errJson.message || "Falha ao apagar cliente.");
-        return;
+  const handleDeleteClient = (client: Client) => {
+    setConfirmModal({
+      open: true,
+      tone: "danger",
+      title: `Excluir empresa "${client.name}"`,
+      description: `Esta ação apagará PERMANENTEMENTE a loja "${client.name}", incluindo conversas, configurações, base de conhecimento, agentes de IA e instância WhatsApp.`,
+      impactHint: "Ação irreversível. Todos os dados da empresa serão removidos.",
+      requireTypedText: client.name,
+      requireTypedLabel: `Digite o nome exato da loja ("${client.name}") para liberar a exclusão:`,
+      checkboxLabel: "Apagar também o LOGIN do cliente responsável (caso ele não possua outras lojas vinculadas)",
+      checkboxDefaultChecked: false,
+      confirmLabel: "Excluir Empresa Permanentemente",
+      onConfirm: async (deleteLogin) => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch(`/api/crm/admin/clients?tenantId=${encodeURIComponent(client.id)}&deleteLogin=${deleteLogin}`, {
+            method: "DELETE",
+            credentials: "same-origin"
+          });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            setError(errJson.message || "Falha ao apagar cliente.");
+            return;
+          }
+          setNotice(`Loja "${client.name}" apagada permanentemente${deleteLogin ? " (login removido quando possível)" : ""}.`);
+          await fetchClients();
+          await fetchUsers();
+        } catch {
+          setError("Falha ao apagar cliente.");
+        } finally {
+          setConfirmModal(null);
+        }
       }
-      setNotice(`Loja "${client.name}" apagada permanentemente${deleteLogin ? " (login removido quando possível)" : ""}.`);
-      await fetchClients();
-      await fetchUsers();
-    } catch {
-      setError("Falha ao apagar cliente.");
-    }
+    });
   };
 
-  const handleDeleteUser = async (user: ClientUser) => {
-    const typed = window.prompt(`ATENÇÃO: apagar PERMANENTEMENTE o login de "${user.name}" (${user.email}). Esta ação não pode ser desfeita.\n\nDigite o e-mail do cliente para confirmar:`);
-    if (typed === null) return;
-    if (typed.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
-      setError("E-mail digitado não confere. Exclusão cancelada.");
-      return;
-    }
-    try {
-      const res = await fetch(`/api/crm/admin/users?userId=${encodeURIComponent(user.id)}`, {
-        method: "DELETE",
-        credentials: "same-origin"
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        setError(errJson.message || "Falha ao apagar o cliente.");
-        return;
+  const handleDeleteUser = (user: ClientUser) => {
+    setConfirmModal({
+      open: true,
+      tone: "danger",
+      title: `Excluir login "${user.name}"`,
+      description: `Deseja apagar PERMANENTEMENTE o login de "${user.name}" (${user.email})?`,
+      impactHint: "Esta ação não pode ser desfeita. O usuário perderá todo o acesso imediatamente.",
+      requireTypedText: user.email,
+      requireTypedLabel: `Digite o e-mail exato ("${user.email}") para confirmar:`,
+      confirmLabel: "Excluir Login",
+      onConfirm: async () => {
+        setConfirmModal(prev => (prev ? { ...prev, busy: true } : null));
+        try {
+          const res = await fetch(`/api/crm/admin/users?userId=${encodeURIComponent(user.id)}`, {
+            method: "DELETE",
+            credentials: "same-origin"
+          });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            setError(errJson.message || "Falha ao apagar o cliente.");
+            return;
+          }
+          setNotice(`Cliente "${user.name}" apagado permanentemente.`);
+          await fetchUsers();
+        } catch {
+          setError("Falha ao apagar o cliente.");
+        } finally {
+          setConfirmModal(null);
+        }
       }
-      setNotice(`Cliente "${user.name}" apagado permanentemente.`);
-      await fetchUsers();
-    } catch {
-      setError("Falha ao apagar o cliente.");
-    }
+    });
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -2617,10 +2750,36 @@ export default function AdminCRM() {
           </div>
 
           <div className="nw-topbar-right">
-            <div className="nw-pill-badge cloud-online" title="Infraestrutura operacional e conectada">
-              <span className="nw-pulse-dot" />
-              <span>Nuvem Ativa</span>
-            </div>
+            <button
+              type="button"
+              onClick={() => void fetchSystemHealth()}
+              className={`nw-pill-badge ${
+                !systemHealth || systemHealth.overall === "ok"
+                  ? "cloud-online"
+                  : systemHealth.overall === "warn"
+                    ? "badge-warning"
+                    : "badge-danger"
+              }`}
+              style={{ cursor: "pointer" }}
+              title={
+                systemHealth
+                  ? `Banco: ${systemHealth.services.database.detail} | WhatsApp: ${systemHealth.services.whatsapp.detail} | IA: ${systemHealth.services.ai.detail}`
+                  : "Verificando estado real dos serviços..."
+              }
+            >
+              <span
+                className={`nw-health-dot ${systemHealth ? systemHealth.overall : "ok"}`}
+              />
+              <span>
+                {loadingHealth && !systemHealth
+                  ? "Verificando..."
+                  : !systemHealth || systemHealth.overall === "ok"
+                    ? "Infraestrutura Online"
+                    : systemHealth.overall === "warn"
+                      ? "Atenção na Infra"
+                      : "Serviço Offline"}
+              </span>
+            </button>
 
             {overdueCount > 0 && (
               <button
@@ -2652,6 +2811,17 @@ export default function AdminCRM() {
             </div>
           </div>
         </header>
+
+        {/* INDICADORES REAIS DE FUNCIONAMENTO (INTEGRAÇÕES & IAs) */}
+        {currentNav !== "crm" && (
+          <SystemHealthBar
+            health={systemHealth}
+            loading={loadingHealth}
+            onRefresh={() => void fetchSystemHealth()}
+            onNavigateRadar={() => navigateSection("radar")}
+            onNavigateProviders={() => navigateSection("providers")}
+          />
+        )}
 
         {/* Top Header */}
         <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px"}}>
@@ -3137,11 +3307,27 @@ export default function AdminCRM() {
 
             {/* LISTA DE CLIENTES RESPONSÁVEIS */}
             <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
-              {filteredCustomers.length === 0 ? (
-                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
-                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
-                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum cliente responsável encontrado.</p>
-                </div>
+              {loadingCustomers && customers.length === 0 ? (
+                <CrmSectionSkeleton rows={4} />
+              ) : filteredCustomers.length === 0 ? (
+                <CrmEmptyState
+                  icon={<Users size={26} />}
+                  title={customerSearchTerm || customerFilterStatus !== "all" ? "Nenhum cliente corresponde aos filtros" : "Nenhum cliente responsável cadastrado"}
+                  description={
+                    customerSearchTerm || customerFilterStatus !== "all"
+                      ? "Tente limpar a busca ou selecionar outro filtro para visualizar todos os clientes cadastrados."
+                      : "Comece cadastrando o primeiro cliente responsável para depois vincular empresas e liberar o acesso ao CRM."
+                  }
+                  actionLabel={customerSearchTerm || customerFilterStatus !== "all" ? "Limpar filtros" : "Cadastrar Primeiro Cliente"}
+                  onAction={() => {
+                    if (customerSearchTerm || customerFilterStatus !== "all") {
+                      setCustomerSearchTerm("");
+                      setCustomerFilterStatus("all");
+                    } else {
+                      setCustomerFormOpen(true);
+                    }
+                  }}
+                />
               ) : (
                 filteredCustomers.map(cust => {
                   const hasStores = cust.linkedStores.length > 0;
@@ -3556,11 +3742,27 @@ export default function AdminCRM() {
 
             {/* LISTA DE USUÁRIOS */}
             <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
-              {filteredUsers.length === 0 ? (
-                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
-                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
-                  <p style={{margin: 0, fontSize: "15px"}}>Nenhum login encontrado com os filtros selecionados.</p>
-                </div>
+              {loadingUsers && users.length === 0 ? (
+                <CrmSectionSkeleton rows={4} />
+              ) : filteredUsers.length === 0 ? (
+                <CrmEmptyState
+                  icon={<UserCheck size={26} />}
+                  title={userSearchTerm || userFilterStatus !== "all" ? "Nenhum login encontrado" : "Nenhum acesso criado ainda"}
+                  description={
+                    userSearchTerm || userFilterStatus !== "all"
+                      ? "Nenhum usuário corresponde à pesquisa ou filtro atual. Limpe os filtros para ver todos os logins."
+                      : "Crie logins de acesso para que seus clientes consigam entrar no Painel do Cliente com e-mail e senha."
+                  }
+                  actionLabel={userSearchTerm || userFilterStatus !== "all" ? "Limpar filtros" : "Criar Primeiro Login"}
+                  onAction={() => {
+                    if (userSearchTerm || userFilterStatus !== "all") {
+                      setUserSearchTerm("");
+                      setUserFilterStatus("all");
+                    } else {
+                      setUserFormOpen(true);
+                    }
+                  }}
+                />
               ) : (
                 filteredUsers.map(user => {
                   const isBlocked = user.isBlocked || user.status === "blocked";
@@ -4125,16 +4327,54 @@ export default function AdminCRM() {
                 >
                   Bloqueados ({clients.filter(c => c.status === "suspended").length})
                 </button>
+                <select
+                  aria-label="Filtrar empresas por plano"
+                  value={filterPlan}
+                  onChange={e => setFilterPlan(e.target.value)}
+                  style={{
+                    padding: "7px 12px",
+                    borderRadius: "10px",
+                    background: "#141124",
+                    border: "1px solid rgba(255, 255, 255, 0.14)",
+                    color: "#e2e8f0",
+                    fontSize: "12.5px",
+                    fontWeight: 600,
+                    minHeight: "36px"
+                  }}
+                >
+                  <option value="all">Todos os Planos</option>
+                  {Array.from(new Set(clients.map(c => c.plan?.name).filter(Boolean))).map(pName => (
+                    <option key={pName} value={pName}>{pName}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
             {/* LISTA DE LOJAS CADASTRADAS */}
             <div style={{display: "flex", flexDirection: "column", gap: "14px"}}>
-              {filteredClients.length === 0 ? (
-                <div className="op-card" style={{padding: "40px", textAlign: "center", color: "#8e87a2"}}>
-                  <Users size={36} style={{margin: "0 auto 12px", opacity: 0.5}}/>
-                  <p style={{margin: 0, fontSize: "15px"}}>Nenhuma loja encontrada com os filtros selecionados.</p>
-                </div>
+              {loading && clients.length === 0 ? (
+                <CrmSectionSkeleton rows={4} />
+              ) : filteredClients.length === 0 ? (
+                <CrmEmptyState
+                  icon={<Building2 size={26} />}
+                  title={searchTerm || filterStatus !== "all" || filterPlan !== "all" ? "Nenhuma empresa encontrada" : "Nenhuma empresa cadastrada"}
+                  description={
+                    searchTerm || filterStatus !== "all" || filterPlan !== "all"
+                      ? "Nenhuma loja corresponde aos filtros de busca, status ou plano aplicados."
+                      : "Crie a primeira empresa para ativar atendimento inteligente no WhatsApp e definir o plano comercial."
+                  }
+                  actionLabel={searchTerm || filterStatus !== "all" || filterPlan !== "all" ? "Limpar todos os filtros" : "Criar Nova Empresa"}
+                  onAction={() => {
+                    if (searchTerm || filterStatus !== "all" || filterPlan !== "all") {
+                      setSearchTerm("");
+                      setGlobalSearchTerm("");
+                      setFilterStatus("all");
+                      setFilterPlan("all");
+                    } else {
+                      setFormOpen(true);
+                    }
+                  }}
+                />
               ) : (
                 filteredClients.map(client => {
                   const isBlocked = client.status === "suspended";
@@ -7202,6 +7442,8 @@ export default function AdminCRM() {
           );
         })()}
       </main>
+      <CrmToastStack toasts={toasts} onDismiss={dismissToast} />
+      <CrmConfirmModal state={confirmModal} onClose={() => setConfirmModal(null)} />
     </div>
   );
 }

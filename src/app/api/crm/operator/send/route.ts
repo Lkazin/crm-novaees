@@ -3,8 +3,9 @@ import crypto from "crypto";
 import { requireTenantFeature, getRedis } from "@/lib/crm/plans";
 import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
-import { sendText, type EvolutionSendConfig } from "@/lib/agent/evolution";
+import { sendMedia, sendText, type EvolutionMediaPayload, type EvolutionSendConfig } from "@/lib/agent/evolution";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
+import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,10 +27,28 @@ export async function POST(request: NextRequest) {
     const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
     const messageText = typeof body.message === "string" ? body.message.trim() : "";
 
+    const rawMedia = body.media && typeof body.media === "object" ? body.media : null;
+    let mediaPayload: EvolutionMediaPayload | null = null;
+    if (rawMedia) {
+      const mediatype = rawMedia.mediatype === "image" || rawMedia.mediatype === "audio" || rawMedia.mediatype === "document"
+        ? rawMedia.mediatype
+        : null;
+      const mimetype = typeof rawMedia.mimetype === "string" ? rawMedia.mimetype.trim() : "";
+      const base64 = typeof rawMedia.base64 === "string" ? rawMedia.base64.trim() : "";
+      const fileName = typeof rawMedia.fileName === "string" ? rawMedia.fileName.trim().slice(0, 140) : undefined;
+      if (!mediatype || !mimetype || !base64) {
+        return privateJson({ error: "invalid_media", message: "Arquivo de mídia inválido." }, 400);
+      }
+      if (base64.length > 8_500_000) {
+        return privateJson({ error: "media_too_large", message: "O arquivo excede o limite de 6 MB." }, 413);
+      }
+      mediaPayload = { mediatype, mimetype, base64, fileName, caption: messageText };
+    }
+
     if (!UUID.test(tenantId) || !UUID.test(conversationId)) {
       return privateJson({ error: "invalid_request_params" }, 400);
     }
-    if (!messageText || messageText.length < 1) {
+    if (!mediaPayload && (!messageText || messageText.length < 1)) {
       return privateJson({ error: "empty_message" }, 400);
     }
     if (messageText.length > 2000) {
@@ -115,7 +134,10 @@ export async function POST(request: NextRequest) {
 
     // 5. Send real WhatsApp message via Evolution API with Idempotency Guard
     const rawIdempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";
-    const textHash = crypto.createHash("sha256").update(messageText).digest("hex").slice(0, 16);
+    const hashSource = mediaPayload
+      ? `${mediaPayload.mediatype}:${mediaPayload.fileName || ""}:${mediaPayload.base64.slice(0, 64)}:${messageText}`
+      : messageText;
+    const textHash = crypto.createHash("sha256").update(hashSource).digest("hex").slice(0, 16);
     const idempotencyKey = rawIdempotencyKey || `crm:idempotency:send:${tenantId}:${conversationId}:${textHash}`;
 
     const redis = getRedis();
@@ -134,7 +156,7 @@ export async function POST(request: NextRequest) {
       }
     } catch {}
 
-    const evolutionUrl = (process.env.EVOLUTION_API_URL ?? "").replace(/\/+$/, "");
+    const evolutionUrl = normalizeLocalServiceUrl(process.env.EVOLUTION_API_URL, "").replace(/\/+$/, "");
     const evolutionKey = process.env.EVOLUTION_API_KEY ?? "";
     if (!evolutionUrl || !evolutionKey) {
       if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
@@ -149,7 +171,11 @@ export async function POST(request: NextRequest) {
 
     let sendOutcome: { messageId?: string } | void;
     try {
-      sendOutcome = await sendText(contactPhone, messageText, cfg, targetInstance);
+      if (mediaPayload) {
+        sendOutcome = await sendMedia(contactPhone, mediaPayload, cfg, targetInstance);
+      } else {
+        sendOutcome = await sendText(contactPhone, messageText, cfg, targetInstance);
+      }
     } catch (sendErr) {
       if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
       console.error("[operator-send-error] Failed to send via Evolution:", sendErr);
@@ -171,6 +197,14 @@ export async function POST(request: NextRequest) {
       ? sendOutcome.messageId
       : null;
 
+    const storedBody = mediaPayload
+      ? mediaPayload.mediatype === "image"
+        ? `[Imagem: ${mediaPayload.fileName || "foto"}]${messageText ? ` ${messageText}` : ""}`
+        : mediaPayload.mediatype === "audio"
+          ? `[Áudio: ${mediaPayload.fileName || "áudio"}]${messageText ? ` ${messageText}` : ""}`
+          : `[Arquivo: ${mediaPayload.fileName || "documento"}]${messageText ? ` ${messageText}` : ""}`
+      : messageText;
+
     // 6. Record message in Supabase crm_messages with provider external_id
     const rMsg = await fetch(url + "/rest/v1/crm_messages", {
       method: "POST",
@@ -185,7 +219,7 @@ export async function POST(request: NextRequest) {
         conversation_id: conversationId,
         direction: "outbound",
         sender_type: "human",
-        body: messageText,
+        body: storedBody,
         delivery_status: "sent",
         external_id: externalId
       })
@@ -229,7 +263,7 @@ export async function POST(request: NextRequest) {
         conversation_id: conversationId,
         direction: "outbound",
         sender_type: "human",
-        body: messageText,
+        body: storedBody,
         created_at: new Date().toISOString()
       }
     });
