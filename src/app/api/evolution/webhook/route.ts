@@ -10,6 +10,7 @@ import { persistIncomingInSupabase, resolveChannelForInstance } from "@/lib/crm/
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 import { outboundAllowed } from "@/lib/crm/outbound-guard";
+import { buildBrPhoneVariants, deleteConversationCascade, deleteSingleMessageCascade } from "@/lib/crm/chat-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,6 +123,101 @@ async function handleConnectionOrQrEvent(payload: ConnectionEvent) {
   }
 }
 
+async function handleWhatsAppDeleteEvent(ev: string, payload: Record<string, unknown>) {
+  const instanceName = String(
+    payload.instance ??
+    payload.instanceName ??
+    (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>).instance
+      : "") ??
+    ""
+  ).trim();
+  if (!instanceName) return;
+
+  const supaUrl = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
+  const supaKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supaUrl || !supaKey) return;
+
+  const channel = await resolveChannelForInstance(instanceName).catch(() => null);
+  if (!channel?.tenant_id) return;
+  const tenantId = channel.tenant_id;
+  const headers = { apikey: supaKey, Authorization: `Bearer ${supaKey}` };
+
+  if (ev === "MESSAGES_DELETE") {
+    const rawData = payload.data;
+    const items = Array.isArray(rawData) ? rawData : rawData ? [rawData] : [];
+    const extIds = new Set<string>();
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const keyObj = rec.key && typeof rec.key === "object" ? (rec.key as Record<string, unknown>) : null;
+      const extId = String(keyObj?.id ?? rec.id ?? "").trim();
+      if (extId) extIds.add(extId);
+    }
+    for (const extId of extIds) {
+      try {
+        const rMsg = await fetch(
+          `${supaUrl}/rest/v1/crm_messages?tenant_id=eq.${encodeURIComponent(tenantId)}&external_id=eq.${encodeURIComponent(extId)}&select=id&limit=5`,
+          { headers, cache: "no-store", signal: AbortSignal.timeout(5000) }
+        );
+        if (!rMsg.ok) continue;
+        const rows = (await rMsg.json()) as Array<{ id: string }>;
+        for (const row of rows) {
+          await deleteSingleMessageCascade(supaUrl, supaKey, tenantId, row.id);
+        }
+      } catch {}
+    }
+    return;
+  }
+
+  if (ev === "CHATS_DELETE") {
+    const rawData = payload.data;
+    const items = Array.isArray(rawData) ? rawData : rawData ? [rawData] : [];
+    const phoneSet = new Set<string>();
+    for (const item of items) {
+      let jid = "";
+      if (typeof item === "string") jid = item;
+      else if (item && typeof item === "object") {
+        const rec = item as Record<string, unknown>;
+        jid = String(rec.remoteJid ?? rec.id ?? rec.chatId ?? "").trim();
+      }
+      if (!jid || jid.endsWith("@g.us")) continue;
+      for (const variant of buildBrPhoneVariants(jid)) {
+        phoneSet.add(variant);
+      }
+    }
+    const phones = Array.from(phoneSet);
+    if (phones.length === 0) return;
+
+    try {
+      const phoneQuery = phones.length > 1
+        ? `phone=in.(${phones.map(p => encodeURIComponent(p)).join(",")})`
+        : `phone=eq.${encodeURIComponent(phones[0])}`;
+      const rContacts = await fetch(
+        `${supaUrl}/rest/v1/crm_contacts?tenant_id=eq.${encodeURIComponent(tenantId)}&${phoneQuery}&select=id`,
+        { headers, cache: "no-store", signal: AbortSignal.timeout(5000) }
+      );
+      if (!rContacts.ok) return;
+      const contacts = (await rContacts.json()) as Array<{ id: string }>;
+      if (contacts.length === 0) return;
+
+      const contactFilter = contacts.length > 1
+        ? `contact_id=in.(${contacts.map(c => encodeURIComponent(c.id)).join(",")})`
+        : `contact_id=eq.${encodeURIComponent(contacts[0].id)}`;
+      const channelFilter = channel.id ? `&channel_id=eq.${encodeURIComponent(channel.id)}` : "";
+      const rConvs = await fetch(
+        `${supaUrl}/rest/v1/crm_conversations?tenant_id=eq.${encodeURIComponent(tenantId)}&${contactFilter}${channelFilter}&select=id`,
+        { headers, cache: "no-store", signal: AbortSignal.timeout(5000) }
+      );
+      if (!rConvs.ok) return;
+      const convs = (await rConvs.json()) as Array<{ id: string }>;
+      for (const conv of convs) {
+        await deleteConversationCascade(supaUrl, supaKey, tenantId, conv.id);
+      }
+    } catch {}
+  }
+}
+
 export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ error: "json_required" }, 415);
   const raw = await request.text();
@@ -152,6 +248,10 @@ export async function POST(request: NextRequest) {
       if (ev === "CONNECTION_UPDATE" || ev === "QRCODE_UPDATED") {
         await handleConnectionOrQrEvent(payload as ConnectionEvent);
         return json({ status: "ignored", reason: "connection_event_handled" });
+      }
+      if (ev === "MESSAGES_DELETE" || ev === "CHATS_DELETE") {
+        await handleWhatsAppDeleteEvent(ev, payload as Record<string, unknown>);
+        return json({ status: "ignored", reason: "delete_event_synced" });
       }
     }
 

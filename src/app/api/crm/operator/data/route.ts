@@ -6,11 +6,12 @@ import { detectCustomerEscalation } from "@/lib/agent/escalation";
 import { getEffectiveTenantPlan, getMasterPlans } from "@/lib/crm/plans";
 import { getBrazilMonthKey } from "@/lib/agent/processor";
 import { buildTenantWhatsappSlots, extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
+import { fetchWhatsAppProfilePictures } from "@/lib/crm/chat-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
+type Contact = { id: string; phone: string; display_name: string | null; created_at: string; avatar_url?: string | null };
 type Conversation = {
   id: string;
   contact_id: string;
@@ -307,6 +308,27 @@ export async function GET(request: NextRequest) {
       effectivePlan
     );
 
+    // Enrich contacts with real WhatsApp profile pictures (cached 6h in Redis/memory)
+    const activeChannelInstance =
+      channels.find(ch => ch.status === "connected" && ch.instance_name)?.instance_name ||
+      channels.find(ch => ch.instance_name)?.instance_name ||
+      "";
+    let enrichedContacts: Contact[] = contacts;
+    if (activeChannelInstance && contacts.length > 0) {
+      try {
+        const avatarMap = await fetchWhatsAppProfilePictures(
+          activeChannelInstance,
+          contacts.map(c => c.phone)
+        );
+        enrichedContacts = contacts.map(c => ({
+          ...c,
+          avatar_url: avatarMap[c.phone] ?? null
+        }));
+      } catch {
+        enrichedContacts = contacts;
+      }
+    }
+
     return privateJson({
       tenants,
       selectedTenant: selected,
@@ -323,7 +345,7 @@ export async function GET(request: NextRequest) {
         features: p.features, isTrial: p.id === "crm-trial"
       })),
       dataHealth: (contactsRes.status === "rejected" || conversationsRes.status === "rejected") ? "degraded" : "healthy",
-      contacts,
+      contacts: enrichedContacts,
       conversations,
       messages,
       escalations,

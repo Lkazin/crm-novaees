@@ -15,7 +15,7 @@ function handler() {
   "@/lib/agent/parse":{parseIncoming:()=>null},
   "@/lib/agent/media":{resolveIncomingMediaMessage:async()=>null},
   "@/lib/crm/inbox":{}, "@/lib/crm/supabase-ingest":{}, "@/lib/crm/outbound-guard":{},
-  "@/lib/crm/plans":{}, "@/lib/crm/whatsapp-slots":{},
+  "@/lib/crm/plans":{}, "@/lib/crm/whatsapp-slots":{}, "@/lib/crm/chat-sync":{},
  };
  const fixtureModule={exports:{} as {POST:(r:NextRequest)=>Promise<Response>}};
  const code=ts.transpileModule(fs.readFileSync("src/app/api/evolution/webhook/route.ts","utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;

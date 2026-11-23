@@ -5,7 +5,7 @@ import { UserPlus, Sparkles, CheckCircle2, Download } from "lucide-react";
 // Secao de contatos do painel do cliente, extraida de ClientWorkspace.tsx.
 // Recebe apenas o que usa, em vez de depender do estado gigante do workspace.
 export type ContactsSectionProps = {
-  contacts: Array<{ id: string; display_name?: string | null; phone?: string | null; created_at?: string | null }>;
+  contacts: Array<{ id: string; display_name?: string | null; phone?: string | null; created_at?: string | null; avatar_url?: string | null }>;
   contactName: string;
   contactPhone: string;
   contactNotice: string | null;
@@ -220,8 +220,19 @@ export default function ContactsSection(props: ContactsSectionProps) {
                       }}
                     >
                       <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
-                        <div style={{width: "38px", height: "38px", borderRadius: "50%", background: "var(--grad-primary)", display: "grid", placeItems: "center", fontWeight: 700, fontSize: "14px", color: "white"}}>
-                          {(c.display_name || c.phone || "?").charAt(0).toUpperCase()}
+                        <div style={{width: "40px", height: "40px", borderRadius: "50%", background: "var(--grad-primary)", display: "grid", placeItems: "center", fontWeight: 700, fontSize: "14px", color: "white", overflow: "hidden", flexShrink: 0}}>
+                          {c.avatar_url ? (
+                            <img
+                              src={c.avatar_url}
+                              alt={c.display_name || c.phone || "Foto do contato"}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                              onError={e => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            (c.display_name || c.phone || "?").charAt(0).toUpperCase()
+                          )}
                         </div>
                         <div>
                           <strong style={{color: "white", fontSize: "15px", display: "block"}}>{c.display_name || "Sem nome"}</strong>

@@ -60,7 +60,7 @@ function setupSignature(value: SavedSetup): string {
 }
 
 type Tenant = { id: string; name: string; status: string };
-type Contact = { id: string; phone: string; display_name: string | null; created_at: string };
+type Contact = { id: string; phone: string; display_name: string | null; created_at: string; avatar_url?: string | null };
 type Conversation = {
   id: string;
   contact_id: string;
@@ -546,6 +546,7 @@ export default function ClientWorkspace({
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
   const [aiSavedAt, setAiSavedAt] = useState<string | null>(null);
+  const [failedAvatars, setFailedAvatars] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const consecutiveCloseRef = useRef(0);
 
@@ -1883,12 +1884,20 @@ export default function ClientWorkspace({
         method: "DELETE",
         credentials: "same-origin"
       });
+      const json = await res.json().catch(() => ({}));
       if (res.ok) {
         if (type === "message") {
           setData(prev => prev ? {
             ...prev,
             messages: prev.messages.filter(m => m.id !== id)
           } : prev);
+          pushClientToast(
+            "success",
+            "Mensagem apagada",
+            json.whatsappSynced
+              ? "A mensagem foi removida do CRM e apagada no WhatsApp."
+              : "A mensagem foi removida do histórico do CRM."
+          );
         } else {
           setData(prev => prev ? {
             ...prev,
@@ -1898,14 +1907,20 @@ export default function ClientWorkspace({
           if (selected === id) {
             setSelected("");
           }
+          pushClientToast(
+            "success",
+            "Conversa excluída",
+            json.whatsappSynced
+              ? "Conversa apagada no CRM e sincronizada no WhatsApp (mensagens revogadas e chat arquivado)."
+              : "Toda a conversa e o histórico foram apagados do CRM."
+          );
         }
         setDeleteConfirmModal(null);
       } else {
-        const err = await res.json().catch(() => ({}));
-        alert(err.message || "Não foi possível concluir a exclusão.");
+        pushClientToast("error", "Erro ao excluir", json.message || "Não foi possível concluir a exclusão.");
       }
     } catch {
-      alert("Erro ao conectar com o servidor para apagar.");
+      pushClientToast("error", "Falha de conexão", "Erro ao conectar com o servidor para apagar.");
     } finally {
       setIsDeletingChat(false);
     }
@@ -5672,7 +5687,22 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               position: "relative",
                               boxShadow: isUrgent ? "0 0 12px rgba(239, 68, 68, 0.6)" : "none"
                             }}>
-                              {(contact?.display_name || contact?.phone || "C").charAt(0).toUpperCase()}
+                              {contact?.avatar_url && !failedAvatars[contact.id] ? (
+                                <img
+                                  src={contact.avatar_url}
+                                  alt={contact.display_name || contact.phone || "Foto do contato"}
+                                  onError={() => setFailedAvatars(prev => ({ ...prev, [contact.id]: true }))}
+                                  style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    borderRadius: "50%",
+                                    objectFit: "cover",
+                                    display: "block"
+                                  }}
+                                />
+                              ) : (
+                                (contact?.display_name || contact?.phone || "C").charAt(0).toUpperCase()
+                              )}
                               {hasUnread && (
                                 <span style={{
                                   position: "absolute",
@@ -5889,6 +5919,37 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                                 <ArrowLeft size={15}/>
                                 <span>Conversas</span>
                               </button>
+
+                              {(() => {
+                                const activeContact = byContact.get(current.contact_id);
+                                return (
+                                  <div style={{
+                                    width: "44px",
+                                    height: "44px",
+                                    borderRadius: "50%",
+                                    background: "var(--grad-primary)",
+                                    display: "grid",
+                                    placeItems: "center",
+                                    fontWeight: 800,
+                                    fontSize: "16px",
+                                    color: "#fff",
+                                    flexShrink: 0,
+                                    overflow: "hidden",
+                                    border: "2px solid rgba(236, 72, 153, 0.4)"
+                                  }}>
+                                    {activeContact?.avatar_url && !failedAvatars[activeContact.id] ? (
+                                      <img
+                                        src={activeContact.avatar_url}
+                                        alt={activeContact.display_name || activeContact.phone || "Foto do contato"}
+                                        onError={() => setFailedAvatars(prev => ({ ...prev, [activeContact.id]: true }))}
+                                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                                      />
+                                    ) : (
+                                      (activeContact?.display_name || activeContact?.phone || "C").charAt(0).toUpperCase()
+                                    )}
+                                  </div>
+                                );
+                              })()}
 
                               <div style={{minWidth: 0}}>
                                 <strong style={{fontSize: "16px", color: "#fff", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>
