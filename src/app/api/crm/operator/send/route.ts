@@ -231,16 +231,22 @@ export async function POST(request: NextRequest) {
     const savedMsg = rMsg.ok ? (await rMsg.json())?.[0] : null;
 
     // 7. Update conversation: ensure mode is human, assigned to this operator, and status is pending (maps to waiting_client)
+    const validOpId = operator.id && UUID.test(operator.id) ? operator.id : null;
     await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversationId}&tenant_id=eq.${tenantId}`, {
       method: "PATCH",
       headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
       body: JSON.stringify({
         mode: "human",
-        assigned_to: operator.id,
+        ...(validOpId ? { assigned_to: validOpId } : {}),
         status: "pending",
         last_message_at: new Date().toISOString()
       })
     });
+    try {
+      if (redis.status === "ready" && conv.contact_id) {
+        await redis.set(`crm:human_lock:${tenantId}:${conv.contact_id}`, "1");
+      }
+    } catch {}
 
     // Mark any pending handoffs as accepted by this operator
     await fetch(

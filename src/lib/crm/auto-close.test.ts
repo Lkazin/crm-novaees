@@ -212,3 +212,36 @@ test("Etapa 6: runAutoCloseForTenant envia pesquisa de satisfação sem duplicar
   assert.equal(sentMessages2.length, 1); // apenas a mensagem de encerramento, SEM pesquisa duplicada
   assert.equal(sentMessages2[0], "Atendimento encerrado por inatividade.");
 });
+
+test("runAutoCloseForTenant: NUNCA encerra nem envia mensagem de bot em conversas assumidas por humano (mode=human)", async () => {
+  const sentMessages: string[] = [];
+  const statusUpdates: Array<{ id: string; status: string; mode: string }> = [];
+
+  const deps: AutoCloseDeps = {
+    now: () => new Date("2026-11-23T15:00:00Z"),
+    fetchTenantSettings: async () => ({
+      enabled: true,
+      timeoutMinutes: 30,
+      message: DEFAULT_AUTOCLOSE_MESSAGE,
+      includeWaitingClient: true
+    }),
+    fetchActiveChannels: async () => [{ id: "ch1", instance_name: "inst-novaes" }],
+    fetchExpiredConversations: async () => [
+      { id: "conv-human-locked", contact_id: "ct-human", channel_id: "ch1", mode: "human", status: "open", last_message_at: "2026-11-23T12:00:00Z" }
+    ],
+    fetchContactPhone: async () => "555189770181",
+    sendWhatsappMessage: async (_p, text) => {
+      sentMessages.push(text);
+      return { ok: true };
+    },
+    updateConversationStatus: async (id, status, mode) => {
+      statusUpdates.push({ id, status, mode });
+    },
+    closeHandoffs: async () => {}
+  };
+
+  const res = await runAutoCloseForTenant("tenant-human", deps);
+  assert.equal(res.closedCount, 0);
+  assert.equal(sentMessages.length, 0);
+  assert.equal(statusUpdates.length, 0);
+});

@@ -41,14 +41,51 @@ export async function POST(request: NextRequest) {
     const secret = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY ?? "";
     if (secret.length < 30) return privateJson({ error: "service_not_configured" }, 503);
 
-    const conversationCheck = await fetch(url + `/rest/v1/crm_conversations?select=id&id=eq.${conversation}&tenant_id=eq.${tenant}&limit=1`, {
+    const conversationCheck = await fetch(url + `/rest/v1/crm_conversations?select=id,contact_id&id=eq.${conversation}&tenant_id=eq.${tenant}&limit=1`, {
       headers: { apikey: secret, Authorization: `Bearer ${secret}` }, cache: "no-store", signal: AbortSignal.timeout(7000)
     });
     if (!conversationCheck.ok) return privateJson({ error: "conversation_lookup_failed" }, 503);
-    const ownedConversations = await conversationCheck.json() as Array<{ id: string }>;
+    const ownedConversations = await conversationCheck.json() as Array<{ id: string; contact_id?: string | null }>;
     if (ownedConversations.length !== 1) return privateJson({ error: "conversation_not_found" }, 404);
+    const contactId = ownedConversations[0].contact_id ?? null;
 
     const redisUrl = process.env.CRM_REDIS_URL;
+
+    const setContactHumanLock = async (locked: boolean) => {
+      if (!redisUrl || !contactId) return;
+      try {
+        const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+        await redis.connect();
+        const lockKey = `crm:human_lock:${tenant}:${contactId}`;
+        if (locked) {
+          await redis.set(lockKey, "1");
+        } else {
+          await redis.del(lockKey);
+        }
+        redis.disconnect();
+      } catch {}
+    };
+
+    const syncAllContactConversationsToHuman = async (assignedTo: string | null) => {
+      if (!contactId) return;
+      const bodyPayload: Record<string, unknown> = {
+        mode: "human",
+        updated_at: new Date().toISOString()
+      };
+      if (assignedTo && UUID.test(assignedTo)) {
+        bodyPayload.assigned_to = assignedTo;
+      }
+      await fetch(
+        url + `/rest/v1/crm_conversations?tenant_id=eq.${tenant}&contact_id=eq.${contactId}&id=neq.${conversation}`,
+        {
+          method: "PATCH",
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+          headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
+          body: JSON.stringify(bodyPayload)
+        }
+      ).catch(() => {});
+    };
 
     // Action: Set Funnel Status
     if (action === "set_status") {
@@ -70,11 +107,11 @@ export async function POST(request: NextRequest) {
       } else if (newStatus === "human") {
         patchData.mode = "human";
         patchData.status = "open";
-        patchData.assigned_to = operator.id;
+        patchData.assigned_to = operator.id && UUID.test(operator.id) ? operator.id : null;
       } else if (newStatus === "waiting_client") {
         patchData.mode = "human";
         patchData.status = "pending";
-        patchData.assigned_to = operator.id;
+        patchData.assigned_to = operator.id && UUID.test(operator.id) ? operator.id : null;
       } else if (newStatus === "closed") {
         patchData.mode = "paused";
         patchData.status = "resolved";
@@ -87,6 +124,15 @@ export async function POST(request: NextRequest) {
       });
       if (!rPatch.ok) {
         return privateJson({ error: "failed_to_update_status" }, 500);
+      }
+
+      if (patchData.mode === "human") {
+        await Promise.all([
+          setContactHumanLock(true),
+          syncAllContactConversationsToHuman(operator.id)
+        ]);
+      } else if (patchData.mode === "ai") {
+        await setContactHumanLock(false);
       }
 
       // Synchronize crm_handoffs table
@@ -147,11 +193,17 @@ export async function POST(request: NextRequest) {
 
     // Action: Resolve Urgency / Claim Urgent Conversation
     if (action === "resolve_urgency") {
-      await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
+      const validOpId = operator.id && UUID.test(operator.id) ? operator.id : null;
+      const rResolve = await fetch(url + "/rest/v1/crm_conversations?id=eq." + conversation + "&tenant_id=eq." + tenant, {
         method: "PATCH",
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "human", status: "open", assigned_to: operator.id })
+        body: JSON.stringify({ mode: "human", status: "open", ...(validOpId ? { assigned_to: validOpId } : {}) })
       });
+      if (!rResolve.ok) return privateJson({ error: "failed_to_resolve_urgency" }, 500);
+      await Promise.all([
+        setContactHumanLock(true),
+        syncAllContactConversationsToHuman(validOpId)
+      ]);
       await fetch(
         `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=eq.pending`,
         {
@@ -180,6 +232,7 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({ mode: "ai", status: "open", assigned_to: null })
       });
       if (!r.ok) return privateJson({ error: "failed_to_resume_ai" }, 500);
+      await setContactHumanLock(false);
 
       await fetch(
         `${url}/rest/v1/crm_handoffs?tenant_id=eq.${tenant}&conversation_id=eq.${conversation}&status=in.(pending,accepted)`,
@@ -215,15 +268,24 @@ export async function POST(request: NextRequest) {
         patchData.assigned_to = validOperatorId;
       }
 
-      await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversation}&tenant_id=eq.${tenant}`, {
+      const rClaim = await fetch(url + `/rest/v1/crm_conversations?id=eq.${conversation}&tenant_id=eq.${tenant}`, {
         method: "PATCH",
         cache: "no-store",
         signal: AbortSignal.timeout(6000),
         headers: { apikey: secret, Authorization: "Bearer " + secret, "Content-Type": "application/json" },
         body: JSON.stringify(patchData)
-      }).catch(err => {
-        console.warn("[handoff-patch-conv-warn]", err);
       });
+      if (!rClaim.ok) {
+        const errText = await rClaim.text().catch(() => "");
+        console.error("[handoff-patch-conv-error]", rClaim.status, errText);
+        return privateJson({ error: "failed_to_claim_human", message: "Não foi possível pausar a IA nesta conversa." }, 500);
+      }
+
+      // Lock this contact's WhatsApp number permanently in human mode until operator explicitly resumes AI
+      await Promise.all([
+        setContactHumanLock(true),
+        syncAllContactConversationsToHuman(validOperatorId)
+      ]);
 
       // 2. Try atomic RPC claim as audit enhancement without failing if unavailable
       if (!access.isMaster && validOperatorId) {

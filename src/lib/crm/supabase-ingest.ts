@@ -134,13 +134,31 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
     if (!contacts.length) return "off";
     const contact = contacts[0];
 
+    // Check if this contact's WhatsApp number is explicitly locked in human-only mode
+    let isContactHumanLocked = false;
+    try {
+      const redisUrl = process.env.CRM_REDIS_URL;
+      if (redisUrl) {
+        const { default: Redis } = await import("ioredis");
+        const r = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 800 });
+        try {
+          await r.connect();
+          isContactHumanLocked = (await r.exists(`crm:human_lock:${t}:${contact.id}`)) === 1;
+        } finally {
+          r.disconnect();
+        }
+      }
+    } catch {}
+
     // 3. Find or create conversation (scoped to tenant_id + contact_id + channel_id so each WhatsApp channel is separated)
     const conversationQuery = "?select=id,mode,status,assigned_to&tenant_id=eq." + t +
       "&contact_id=eq." + contact.id + "&channel_id=eq." + channel.id + "&limit=1";
     let threads = await db<Array<{ id: string; mode: string; status: string; assigned_to: string | null }>>("crm_conversations", conversationQuery, "GET");
     if (!threads.length) {
       await db<RecordId[]>("crm_conversations", "?on_conflict=tenant_id,contact_id,channel_id", "POST", {
-        tenant_id: t, contact_id: contact.id, channel_id: channel.id, mode: "ai", status: "open",
+        tenant_id: t, contact_id: contact.id, channel_id: channel.id,
+        mode: isContactHumanLocked ? "human" : "ai",
+        status: "open",
         last_message_at: new Date().toISOString()
       });
       threads = await db<Array<{ id: string; mode: string; status: string; assigned_to: string | null }>>("crm_conversations", conversationQuery, "GET");
@@ -170,7 +188,13 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
       updated_at: new Date().toISOString()
     };
     const wasClosed = conversation.status === "resolved" || conversation.status === "closed";
-    if (wasClosed) {
+    if (isContactHumanLocked || conversation.mode === "human") {
+      // Never re-enable AI when contact is locked to human mode
+      patchPayload.mode = "human";
+      if (wasClosed || (conversation.assigned_to && conversation.status === "pending")) {
+        patchPayload.status = "open";
+      }
+    } else if (wasClosed) {
       patchPayload.status = "open";
       patchPayload.mode = "ai";
       patchPayload.assigned_to = null;
@@ -187,8 +211,6 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
           }
         }
       } catch {}
-    } else if (conversation.mode === "human" && conversation.assigned_to && conversation.status === "pending") {
-      patchPayload.status = "open";
     }
     await db("crm_conversations", "?id=eq." + conversation.id, "PATCH", patchPayload);
 

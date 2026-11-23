@@ -114,8 +114,10 @@ export const defaultAutoCloseDeps: AutoCloseDeps = {
     }
   },
 
-  fetchExpiredConversations: async (tenantId: string, cutoffIso: string, includeWaitingClient: boolean) => {
-    const modeFilter = includeWaitingClient ? "mode=in.(ai,human)" : "mode=eq.ai";
+  fetchExpiredConversations: async (tenantId: string, cutoffIso: string, _includeWaitingClient: boolean) => {
+    // Nunca encerrar automaticamente conversas assumidas por atendimento humano (mode=human).
+    // Evita enviar mensagem automática de robô para contatos humanos e impede a IA de voltar a responder.
+    const modeFilter = "mode=eq.ai";
     return await supabaseFetch<
       Array<{ id: string; contact_id: string; channel_id: string; mode: string; status: string; last_message_at: string }>
     >(
@@ -275,6 +277,8 @@ export async function runAutoCloseForTenant(
   const items: AutoCloseItemResult[] = [];
 
   for (const conv of expiredConversations) {
+    // Nunca encerrar automaticamente nem disparar mensagem de bot em conversas assumidas por humano
+    if (conv.mode === "human") continue;
     const phone = await getPhone(conv.contact_id);
     let messageSent = false;
     let sendError: string | undefined;
