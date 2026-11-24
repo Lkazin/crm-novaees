@@ -11,13 +11,30 @@ export class EvolutionSendError extends Error {
 
 export type SendResult = { messageId?: string };
 
-export async function sendText(number: string, text: string, cfg: EvolutionSendConfig, targetInstance?: string): Promise<SendResult> {
+export type EvolutionQuotedMessage = {
+  key: {
+    id: string;
+    remoteJid?: string;
+    fromMe?: boolean;
+  };
+  message?: {
+    conversation?: string;
+  };
+};
+
+export async function sendText(
+  number: string,
+  text: string,
+  cfg: EvolutionSendConfig,
+  targetInstance?: string,
+  quoted?: EvolutionQuotedMessage
+): Promise<SendResult> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const endpoint = `${cfg.evolutionUrl}/message/sendText/${instance}`;
   // Evolution v2 commonly accepts flat `text`; legacy installations can use textMessage.
   const body = cfg.sendFormat === "legacy"
-    ? { number, textMessage: { text } }
-    : { number, text };
+    ? { number, textMessage: { text }, ...(quoted ? { options: { quoted } } : {}) }
+    : { number, text, ...(quoted ? { quoted } : {}) };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
@@ -142,7 +159,8 @@ export async function sendMedia(
   number: string,
   media: EvolutionMediaPayload,
   cfg: EvolutionSendConfig,
-  targetInstance?: string
+  targetInstance?: string,
+  quoted?: EvolutionQuotedMessage
 ): Promise<SendResult> {
   const instance = encodeURIComponent(targetInstance || cfg.instance);
   const cleanBase64 = media.base64.replace(/^data:[^;]+;base64,/, "").trim();
@@ -154,7 +172,8 @@ export async function sendMedia(
   const body = isAudio
     ? {
         number,
-        audio: cleanBase64
+        audio: cleanBase64,
+        ...(quoted ? { quoted } : {})
       }
     : {
         number,
@@ -162,7 +181,8 @@ export async function sendMedia(
         mimetype: media.mimetype,
         caption: media.caption || "",
         media: cleanBase64,
-        fileName: media.fileName || (media.mediatype === "image" ? "imagem.png" : "arquivo")
+        fileName: media.fileName || (media.mediatype === "image" ? "imagem.png" : "arquivo"),
+        ...(quoted ? { quoted } : {})
       };
 
   const controller = new AbortController();

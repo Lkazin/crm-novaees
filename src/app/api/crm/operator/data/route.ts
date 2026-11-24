@@ -26,7 +26,8 @@ type Conversation = {
   channelSlot?: number;
   satisfaction?: { rating: number; comment: string; createdAt: string } | null;
 };
-type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string };
+type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string; delivery_status?: string | null; external_id?: string | null };
+type InternalNoteRow = { id: string; conversation_id: string; author_id?: string | null; body: string; created_at: string };
 type HandoffRow = { id: string; conversation_id: string; requested_by: string; status: string; reason: string | null; created_at: string };
 type ChannelRow = { id: string; instance_name: string | null; status: string };
 
@@ -101,15 +102,17 @@ export async function GET(request: NextRequest) {
       handoffsRes,
       channelsRes,
       settingsRes,
+      notesRes,
     ] = await Promise.allSettled([
       serviceQuery<Contact[]>(url, serviceKey, "crm_contacts?select=id,phone,display_name,created_at&" + query + "&order=created_at.desc&limit=100", user.token),
       serviceQuery<Conversation[]>(url, serviceKey, "crm_conversations?select=id,contact_id,channel_id,status,mode,last_message_at,assigned_to&" + query + "&order=last_message_at.desc.nullslast&limit=100", user.token),
-      serviceQuery<Message[]>(url, serviceKey, "crm_messages?select=id,conversation_id,direction,sender_type,body,created_at&" + query + "&order=created_at.desc&limit=300", user.token),
+      serviceQuery<Message[]>(url, serviceKey, "crm_messages?select=id,conversation_id,direction,sender_type,body,created_at,delivery_status,external_id&" + query + "&order=created_at.desc&limit=300", user.token),
       serviceQuery<Array<{ id: string; name: string; color: string }>>(url, serviceKey, "crm_tags?select=id,name,color&" + query, user.token),
       serviceQuery<Array<{ contact_id: string; tag_id: string }>>(url, serviceKey, "crm_contact_tags?select=contact_id,tag_id&" + query, user.token),
       serviceQuery<HandoffRow[]>(url, serviceKey, "crm_handoffs?select=id,conversation_id,requested_by,status,reason,created_at&" + query + "&order=created_at.desc&limit=100", user.token),
       serviceQuery<ChannelRow[]>(url, serviceKey, "crm_channels?select=id,instance_name,status&" + query, user.token),
       serviceQuery<Array<TenantSettingsRow>>(url, serviceKey, "crm_tenant_settings?select=business_description&" + query + "&limit=1", user.token),
+      serviceQuery<InternalNoteRow[]>(url, serviceKey, "crm_internal_notes?select=id,conversation_id,author_id,body,created_at&" + query + "&order=created_at.asc&limit=200", user.token),
     ]);
 
     // If core tables both failed to respond due to DB or network outage, fail-safe with 503 instead of pretending tenant is empty
@@ -126,6 +129,7 @@ export async function GET(request: NextRequest) {
     const handoffs = handoffsRes.status === "fulfilled" ? handoffsRes.value : [];
     const channels = channelsRes.status === "fulfilled" ? channelsRes.value : [];
     const settingsRows = settingsRes.status === "fulfilled" ? settingsRes.value : [];
+    const internalNotes = notesRes.status === "fulfilled" ? notesRes.value : [];
 
     const channelSlotMap = new Map<string, number>();
     for (const ch of channels) {
@@ -348,6 +352,7 @@ export async function GET(request: NextRequest) {
       contacts: enrichedContacts,
       conversations,
       messages,
+      internalNotes,
       escalations,
       tags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? tags : [],
       contactTags: crmFeatureAllowed(effectivePlan, "commercial_tags") ? contactTags : [],

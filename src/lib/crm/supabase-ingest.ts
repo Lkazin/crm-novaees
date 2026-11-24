@@ -222,6 +222,12 @@ export async function persistIncomingInSupabase(incoming: Incoming): Promise<"of
 }
 
 export async function persistOutboundInSupabase(instance: string, phone: string, text: string, externalId?: string): Promise<void> {
+  if (externalId) {
+    try {
+      const { markOutboundEcho } = await import("./chat-sync");
+      await markOutboundEcho(externalId);
+    } catch {}
+  }
   if (!isIngestEnabled(instance)) return;
   try {
     const channel = await resolveChannelForInstance(instance);

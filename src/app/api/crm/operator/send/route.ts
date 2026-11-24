@@ -3,9 +3,10 @@ import crypto from "crypto";
 import { requireTenantFeature, getRedis } from "@/lib/crm/plans";
 import { authorizeCrmTenant } from "@/lib/crm/tenant-access";
 import { isAllowedOrigin, privateJson, supabaseSettings } from "@/lib/crm/supabase-server";
-import { sendMedia, sendText, type EvolutionMediaPayload, type EvolutionSendConfig } from "@/lib/agent/evolution";
+import { sendMedia, sendText, type EvolutionMediaPayload, type EvolutionQuotedMessage, type EvolutionSendConfig } from "@/lib/agent/evolution";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 import { normalizeLocalServiceUrl } from "@/lib/runtime-url";
+import { markOutboundEcho } from "@/lib/crm/chat-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,16 @@ export async function POST(request: NextRequest) {
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
     const messageText = typeof body.message === "string" ? body.message.trim() : "";
+
+    const rawReply = body.replyTo && typeof body.replyTo === "object" ? body.replyTo : null;
+    const replyTo = rawReply
+      ? {
+          externalId: typeof rawReply.externalId === "string" ? rawReply.externalId.trim() : "",
+          body: typeof rawReply.body === "string" ? rawReply.body.trim().slice(0, 220) : "",
+          direction: rawReply.direction === "outbound" ? "outbound" : "inbound",
+          senderLabel: typeof rawReply.senderLabel === "string" ? rawReply.senderLabel.trim().slice(0, 60) : ""
+        }
+      : null;
 
     const rawMedia = body.media && typeof body.media === "object" ? body.media : null;
     let mediaPayload: EvolutionMediaPayload | null = null;
@@ -169,12 +180,24 @@ export async function POST(request: NextRequest) {
       sendFormat: process.env.EVOLUTION_SEND_FORMAT === "legacy" ? "legacy" : "v2",
     };
 
+    const quotedPayload: EvolutionQuotedMessage | undefined =
+      replyTo?.externalId
+        ? {
+            key: {
+              id: replyTo.externalId,
+              remoteJid: contactPhone.includes("@") ? contactPhone : `${contactPhone.replace(/\D/g, "")}@s.whatsapp.net`,
+              fromMe: replyTo.direction === "outbound"
+            },
+            ...(replyTo.body ? { message: { conversation: replyTo.body } } : {})
+          }
+        : undefined;
+
     let sendOutcome: { messageId?: string } | void;
     try {
       if (mediaPayload) {
-        sendOutcome = await sendMedia(contactPhone, mediaPayload, cfg, targetInstance);
+        sendOutcome = await sendMedia(contactPhone, mediaPayload, cfg, targetInstance, quotedPayload);
       } else {
-        sendOutcome = await sendText(contactPhone, messageText, cfg, targetInstance);
+        sendOutcome = await sendText(contactPhone, messageText, cfg, targetInstance, quotedPayload);
       }
     } catch (sendErr) {
       if (acquiredLock) { try { await redis.del(idempotencyKey); } catch {} }
@@ -196,14 +219,22 @@ export async function POST(request: NextRequest) {
     const externalId = (sendOutcome && typeof sendOutcome === "object" && "messageId" in sendOutcome)
       ? sendOutcome.messageId
       : null;
+    if (externalId) {
+      await markOutboundEcho(externalId);
+    }
 
-    const storedBody = mediaPayload
+    const baseBody = mediaPayload
       ? mediaPayload.mediatype === "image"
         ? `[Imagem: ${mediaPayload.fileName || "foto"}]${messageText ? ` ${messageText}` : ""}`
         : mediaPayload.mediatype === "audio"
           ? `[Áudio: ${mediaPayload.fileName || "áudio"}]${messageText ? ` ${messageText}` : ""}`
           : `[Arquivo: ${mediaPayload.fileName || "documento"}]${messageText ? ` ${messageText}` : ""}`
       : messageText;
+
+    const quotePrefix = replyTo?.body
+      ? `> [${replyTo.senderLabel || "Respondendo"}]: ${replyTo.body.replace(/\s+/g, " ").slice(0, 140)}\n`
+      : "";
+    const storedBody = `${quotePrefix}${baseBody}`;
 
     // 6. Record message in Supabase crm_messages with provider external_id
     const rMsg = await fetch(url + "/rest/v1/crm_messages", {

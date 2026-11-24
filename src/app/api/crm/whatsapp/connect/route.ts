@@ -75,7 +75,7 @@ async function configureEvolutionWebhook(url: string, key: string, secret: strin
     const targetWebhookUrl = secret
       ? `${webhookBase.replace(/\/$/, "")}?secret=${encodeURIComponent(secret)}`
       : webhookBase.replace(/\/$/, "");
-    const events = ["MESSAGES_UPSERT", "MESSAGES_DELETE", "CHATS_DELETE", "CONNECTION_UPDATE", "QRCODE_UPDATED"];
+    const events = ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "MESSAGES_DELETE", "CHATS_DELETE", "CONNECTION_UPDATE", "QRCODE_UPDATED"];
 
     const res = await fetch(`${url}/webhook/set/${encodeURIComponent(instanceName)}`, {
       method: "POST",

@@ -332,3 +332,304 @@ export async function fetchWhatsAppProfilePictures(
 
   return result;
 }
+
+// Track recently sent AI/CRM outbound message IDs so fromMe webhooks never mistake bot replies for manual phone replies
+const recentOutboundEchoes = new Map<string, number>();
+
+export async function markOutboundEcho(externalId?: string | null): Promise<void> {
+  const id = (externalId || "").trim();
+  if (!id) return;
+  const now = Date.now();
+  recentOutboundEchoes.set(id, now + 90_000);
+  // Prune expired entries occasionally
+  if (recentOutboundEchoes.size > 500) {
+    for (const [k, exp] of recentOutboundEchoes.entries()) {
+      if (exp < now) recentOutboundEchoes.delete(k);
+    }
+  }
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      await redis.set(`crm:outbound_echo:${id}`, "1", "EX", 90);
+    }
+  } catch {}
+}
+
+async function isOutboundEcho(externalId: string): Promise<boolean> {
+  const exp = recentOutboundEchoes.get(externalId);
+  if (exp && exp > Date.now()) return true;
+  try {
+    const redis = getRedis();
+    if (redis.status === "ready") {
+      const exists = await redis.exists(`crm:outbound_echo:${externalId}`);
+      if (exists === 1) return true;
+    }
+  } catch {}
+  return false;
+}
+
+const DELIVERY_RANK: Record<string, number> = {
+  pending: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3
+};
+
+export function mapEvolutionAckToDeliveryStatus(rawStatus: unknown): "sent" | "delivered" | "read" | null {
+  if (typeof rawStatus === "number") {
+    if (rawStatus >= 4) return "read";
+    if (rawStatus === 3) return "delivered";
+    if (rawStatus === 2) return "sent";
+    return null;
+  }
+  const s = String(rawStatus ?? "").trim().toUpperCase();
+  if (!s) return null;
+  if (s === "READ" || s === "PLAYED" || s === "4" || s === "5") return "read";
+  if (s === "DELIVERY_ACK" || s === "DELIVERED" || s === "3") return "delivered";
+  if (s === "SERVER_ACK" || s === "SENT" || s === "2") return "sent";
+  return null;
+}
+
+export async function handleWhatsAppMessageUpdate(
+  supaUrl: string,
+  supaKey: string,
+  tenantId: string,
+  payload: Record<string, unknown>
+): Promise<number> {
+  const rawData = payload.data;
+  const items = Array.isArray(rawData) ? rawData : rawData ? [rawData] : [];
+  if (items.length === 0) return 0;
+
+  const headers = {
+    apikey: supaKey,
+    Authorization: `Bearer ${supaKey}`,
+    "Content-Type": "application/json"
+  };
+  let updated = 0;
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const keyObj = rec.key && typeof rec.key === "object" ? (rec.key as Record<string, unknown>) : null;
+    const updateObj = rec.update && typeof rec.update === "object" ? (rec.update as Record<string, unknown>) : null;
+    const extId = String(rec.keyId ?? keyObj?.id ?? rec.id ?? "").trim();
+    const nextStatus = mapEvolutionAckToDeliveryStatus(rec.status ?? updateObj?.status);
+    if (!extId || !nextStatus) continue;
+
+    try {
+      const rCheck = await fetch(
+        `${supaUrl}/rest/v1/crm_messages?tenant_id=eq.${encodeURIComponent(tenantId)}&external_id=eq.${encodeURIComponent(extId)}&select=id,delivery_status&limit=2`,
+        { headers, cache: "no-store", signal: AbortSignal.timeout(4000) }
+      );
+      if (!rCheck.ok) continue;
+      const rows = (await rCheck.json()) as Array<{ id: string; delivery_status?: string | null }>;
+      for (const row of rows) {
+        const curRank = DELIVERY_RANK[String(row.delivery_status || "sent").toLowerCase()] ?? 1;
+        const nextRank = DELIVERY_RANK[nextStatus] ?? 1;
+        if (nextRank <= curRank) continue;
+        const rPatch = await fetch(
+          `${supaUrl}/rest/v1/crm_messages?id=eq.${encodeURIComponent(row.id)}&tenant_id=eq.${encodeURIComponent(tenantId)}`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ delivery_status: nextStatus }),
+            cache: "no-store",
+            signal: AbortSignal.timeout(4000)
+          }
+        );
+        if (rPatch.ok) updated += 1;
+      }
+    } catch {}
+  }
+
+  return updated;
+}
+
+function extractFromMeText(msg: Record<string, unknown> | null): string {
+  if (!msg) return "";
+  if (typeof msg.conversation === "string" && msg.conversation.trim()) return msg.conversation.trim();
+  const ext = msg.extendedTextMessage as Record<string, unknown> | undefined;
+  if (typeof ext?.text === "string" && ext.text.trim()) return ext.text.trim();
+  const img = msg.imageMessage as Record<string, unknown> | undefined;
+  if (img) return typeof img.caption === "string" && img.caption.trim() ? `[Imagem] ${img.caption.trim()}` : "[Imagem enviada pelo celular]";
+  const aud = msg.audioMessage as Record<string, unknown> | undefined;
+  if (aud) return "[Áudio enviado pelo celular]";
+  const vid = msg.videoMessage as Record<string, unknown> | undefined;
+  if (vid) return typeof vid.caption === "string" && vid.caption.trim() ? `[Vídeo] ${vid.caption.trim()}` : "[Vídeo enviado pelo celular]";
+  const doc = msg.documentMessage as Record<string, unknown> | undefined;
+  if (doc) return `[Documento: ${String(doc.fileName || "arquivo")}]`;
+  const stk = msg.stickerMessage as Record<string, unknown> | undefined;
+  if (stk) return "[Figurinha]";
+  return "";
+}
+
+export async function handleWhatsAppFromMeMessage(
+  supaUrl: string,
+  supaKey: string,
+  tenantId: string,
+  channelId: string,
+  payload: Record<string, unknown>
+): Promise<"ignored" | "echo" | "mirrored_and_paused"> {
+  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+    ? (payload.data as Record<string, unknown>)
+    : null;
+  if (!data) return "ignored";
+  const keyObj = data.key && typeof data.key === "object" ? (data.key as Record<string, unknown>) : null;
+  if (keyObj?.fromMe !== true) return "ignored";
+
+  const remoteJid = String(keyObj.remoteJid ?? "").trim();
+  const externalId = String(keyObj.id ?? "").trim();
+  if (!remoteJid || !externalId || remoteJid.endsWith("@g.us") || remoteJid === "status@broadcast") {
+    return "ignored";
+  }
+
+  // Ignore protocol/reaction/delete control packets
+  const msgObj = data.message && typeof data.message === "object" ? (data.message as Record<string, unknown>) : null;
+  if (!msgObj || msgObj.protocolMessage || msgObj.reactionMessage) return "ignored";
+
+  // 1. Check fast echo cache so AI/CRM replies are NEVER mistaken for manual phone replies
+  if (await isOutboundEcho(externalId)) {
+    return "echo";
+  }
+
+  const headers = {
+    apikey: supaKey,
+    Authorization: `Bearer ${supaKey}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation"
+  };
+
+  // 2. Also verify against Supabase crm_messages (in case Redis missed or container restarted)
+  try {
+    const rExists = await fetch(
+      `${supaUrl}/rest/v1/crm_messages?tenant_id=eq.${encodeURIComponent(tenantId)}&external_id=eq.${encodeURIComponent(externalId)}&select=id&limit=1`,
+      { headers, cache: "no-store", signal: AbortSignal.timeout(4000) }
+    );
+    if (rExists.ok) {
+      const existing = (await rExists.json()) as Array<{ id: string }>;
+      if (existing.length > 0) return "echo";
+    }
+  } catch {}
+
+  const bodyText = extractFromMeText(msgObj);
+  if (!bodyText) return "ignored";
+
+  // 3. Resolve phone (supporting BR 9th-digit variants)
+  const phoneClean = remoteJid.replace(/@.*$/, "").replace(/\D/g, "");
+  if (phoneClean.length < 8) return "ignored";
+  const variants = buildBrPhoneVariants(phoneClean);
+  const phoneQuery = variants.length > 1
+    ? `phone=in.(${variants.map(v => encodeURIComponent(v)).join(",")})`
+    : `phone=eq.${encodeURIComponent(phoneClean)}`;
+
+  let contactId = "";
+  try {
+    const rContact = await fetch(
+      `${supaUrl}/rest/v1/crm_contacts?tenant_id=eq.${encodeURIComponent(tenantId)}&${phoneQuery}&select=id&limit=1`,
+      { headers, cache: "no-store", signal: AbortSignal.timeout(5000) }
+    );
+    const contacts = rContact.ok ? ((await rContact.json()) as Array<{ id: string }>) : [];
+    if (contacts[0]?.id) {
+      contactId = contacts[0].id;
+    } else {
+      const rNewContact = await fetch(
+        `${supaUrl}/rest/v1/crm_contacts?on_conflict=tenant_id,phone`,
+        {
+          method: "POST",
+          headers: { ...headers, Prefer: "return=representation,resolution=merge-duplicates" },
+          body: JSON.stringify({ tenant_id: tenantId, phone: phoneClean, display_name: phoneClean }),
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+      if (rNewContact.ok) {
+        const created = (await rNewContact.json()) as Array<{ id: string }>;
+        contactId = created[0]?.id || "";
+      }
+    }
+  } catch {}
+
+  if (!contactId) return "ignored";
+
+  // 4. Find or create conversation in HUMAN mode immediately
+  let conversationId = "";
+  const nowIso = new Date().toISOString();
+  try {
+    const rConv = await fetch(
+      `${supaUrl}/rest/v1/crm_conversations?tenant_id=eq.${encodeURIComponent(tenantId)}&contact_id=eq.${encodeURIComponent(contactId)}&channel_id=eq.${encodeURIComponent(channelId)}&select=id&limit=1`,
+      { headers, cache: "no-store", signal: AbortSignal.timeout(5000) }
+    );
+    const convs = rConv.ok ? ((await rConv.json()) as Array<{ id: string }>) : [];
+    if (convs[0]?.id) {
+      conversationId = convs[0].id;
+    } else {
+      const rNewConv = await fetch(
+        `${supaUrl}/rest/v1/crm_conversations?on_conflict=tenant_id,contact_id,channel_id`,
+        {
+          method: "POST",
+          headers: { ...headers, Prefer: "return=representation,resolution=merge-duplicates" },
+          body: JSON.stringify({
+            tenant_id: tenantId,
+            contact_id: contactId,
+            channel_id: channelId,
+            mode: "human",
+            status: "pending",
+            last_message_at: nowIso
+          }),
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+      if (rNewConv.ok) {
+        const created = (await rNewConv.json()) as Array<{ id: string }>;
+        conversationId = created[0]?.id || "";
+      }
+    }
+  } catch {}
+
+  if (!conversationId) return "ignored";
+
+  // 5. Mirror manual phone message into crm_messages + pause AI permanently for this contact
+  await Promise.allSettled([
+    fetch(`${supaUrl}/rest/v1/crm_messages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        tenant_id: tenantId,
+        conversation_id: conversationId,
+        external_id: externalId,
+        direction: "outbound",
+        sender_type: "human",
+        body: bodyText,
+        delivery_status: "sent"
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000)
+    }),
+    fetch(
+      `${supaUrl}/rest/v1/crm_conversations?tenant_id=eq.${encodeURIComponent(tenantId)}&contact_id=eq.${encodeURIComponent(contactId)}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          mode: "human",
+          status: "pending",
+          last_message_at: nowIso,
+          updated_at: nowIso
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000)
+      }
+    ),
+    (async () => {
+      try {
+        const redis = getRedis();
+        if (redis.status === "ready") {
+          await redis.set(`crm:human_lock:${tenantId}:${contactId}`, "1");
+        }
+      } catch {}
+    })()
+  ]);
+
+  return "mirrored_and_paused";
+}

@@ -21,7 +21,8 @@ import {
   Smartphone, QrCode, BookOpen, Bot, Sparkles, HelpCircle, ShieldAlert, Save, Trash2, Ban,
   Calendar, CreditCard, Crown, ChevronRight, ChevronLeft, LayoutGrid, HelpCircle as InfoIcon, Play, Clock, Zap, Send,
   Trash, Bell, Volume2, VolumeX, Tag, Filter, Check, Copy, MessageCircle, ArrowRight, ArrowLeft, Wand2, BarChart3, Star, Plus, Power, CheckCircle,
-  KeyRound, Lock, AlertTriangle, X, Paperclip, FileAudio, FileText
+  KeyRound, Lock, AlertTriangle, X, Paperclip, FileAudio, FileText,
+  CheckCheck, Reply, Pin, PinOff, StickyNote, ZoomIn, ZoomOut, Download, ChevronUp, ChevronDown
 } from "lucide-react";
 import {
   WhatsappFiveSlotsGrid,
@@ -75,7 +76,8 @@ type Conversation = {
   channelSlot?: number;
   satisfaction?: { rating: number; comment: string; createdAt: string } | null;
 };
-type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string };
+type Message = { id: string; conversation_id: string; direction: string; sender_type: string; body: string; created_at: string; delivery_status?: string | null; external_id?: string | null };
+type InternalNote = { id: string; conversation_id: string; author_id?: string | null; body: string; created_at: string };
 type EscalationItem = { category: string; reason: string; text?: string; timestamp?: string };
 type TagItem = { id: string; name: string; color: string };
 type ContactTagItem = { contact_id: string; tag_id: string };
@@ -138,6 +140,7 @@ type Data = {
   contacts: Contact[];
   conversations: Conversation[];
   messages: Message[];
+  internalNotes?: InternalNote[];
   escalations?: Record<string, EscalationItem>;
   tags?: TagItem[];
   contactTags?: ContactTagItem[];
@@ -151,6 +154,45 @@ function dateTime(s: string | null) {
   if (!s) return "—";
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function dateDayKey(s: string | null): string {
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateDividerLabel(s: string | null): string {
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const todayKey = dateDayKey(now.toISOString());
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  const yesterdayKey = dateDayKey(yest.toISOString());
+  const key = dateDayKey(s);
+  if (key === todayKey) return "Hoje";
+  if (key === yesterdayKey) return "Ontem";
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function renderHighlightedText(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark key={i} style={{ background: "#fde047", color: "#111827", borderRadius: "3px", padding: "0 2px" }}>
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
 }
 
 const INDUSTRY_PRESETS = [
@@ -547,8 +589,48 @@ export default function ClientWorkspace({
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
   const [aiSavedAt, setAiSavedAt] = useState<string | null>(null);
   const [failedAvatars, setFailedAvatars] = useState<Record<string, boolean>>({});
+  const [replyingTo, setReplyingTo] = useState<{
+    id: string;
+    externalId?: string | null;
+    body: string;
+    direction: string;
+    senderLabel: string;
+  } | null>(null);
+  const [composerMode, setComposerMode] = useState<"whatsapp" | "note">("whatsapp");
+  const [savingNote, setSavingNote] = useState(false);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [chatSearchIdx, setChatSearchIdx] = useState(0);
+  const [pinnedConvs, setPinnedConvs] = useState<Record<string, boolean>>({});
+  const [manualUnreadConvs, setManualUnreadConvs] = useState<Record<string, boolean>>({});
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; alt?: string } | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const consecutiveCloseRef = useRef(0);
+
+  // Persist pinned & manually-unread conversations per tenant in localStorage
+  useEffect(() => {
+    if (!tenant || typeof window === "undefined") return;
+    try {
+      const rawPinned = window.localStorage.getItem(`crm_pinned_convs_${tenant}`);
+      setPinnedConvs(rawPinned ? JSON.parse(rawPinned) : {});
+      const rawUnread = window.localStorage.getItem(`crm_manual_unread_${tenant}`);
+      setManualUnreadConvs(rawUnread ? JSON.parse(rawUnread) : {});
+    } catch {
+      setPinnedConvs({});
+      setManualUnreadConvs({});
+    }
+  }, [tenant]);
+
+  // Close image lightbox on Escape
+  useEffect(() => {
+    if (!lightboxImage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxImage(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxImage]);
 
   // Funnel & Tags filtering state
   const [funnelFilter, setFunnelFilter] = useState<"all" | "novo" | "ai" | "waiting_human" | "human" | "waiting_client" | "closed">("all");
@@ -1718,8 +1800,98 @@ export default function ClientWorkspace({
     reader.readAsDataURL(file);
   }
 
-  // Send real human message or media via Evolution API (with real upload progress)
+  function togglePinConversation(conversationId: string) {
+    if (!tenant) return;
+    setPinnedConvs(prev => {
+      const next = { ...prev };
+      const willPin = !next[conversationId];
+      if (willPin) next[conversationId] = true;
+      else delete next[conversationId];
+      try {
+        window.localStorage.setItem(`crm_pinned_convs_${tenant}`, JSON.stringify(next));
+      } catch {}
+      pushClientToast("info", willPin ? "Conversa fixada no topo" : "Conversa desafixada", willPin ? "Este contato permanecerá no topo da sua fila." : "Ordem normal restaurada.");
+      return next;
+    });
+  }
+
+  function markConversationAsUnread(conversationId: string) {
+    if (!tenant) return;
+    setManualUnreadConvs(prev => {
+      const next = { ...prev, [conversationId]: true };
+      try {
+        window.localStorage.setItem(`crm_manual_unread_${tenant}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    pushClientToast("info", "Marcada como não lida", "A conversa ficará destacada na fila até você abri-la novamente.");
+  }
+
+  function clearManualUnread(conversationId: string) {
+    if (!tenant || !manualUnreadConvs[conversationId]) return;
+    setManualUnreadConvs(prev => {
+      if (!prev[conversationId]) return prev;
+      const next = { ...prev };
+      delete next[conversationId];
+      try {
+        window.localStorage.setItem(`crm_manual_unread_${tenant}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  async function handleSaveInternalNote() {
+    const text = humanInput.trim();
+    if (!text || !tenant || !current || savingNote) return;
+    setSavingNote(true);
+    try {
+      const res = await fetch("/api/crm/operator/notes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant, conversationId: current.id, body: text })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || "Não foi possível salvar a nota interna.");
+      setHumanInput("");
+      if (json.note) {
+        setData(prev => prev ? {
+          ...prev,
+          internalNotes: [...(prev.internalNotes ?? []), json.note as InternalNote]
+        } : prev);
+      }
+      pushClientToast("success", "Nota interna salva", "Visível apenas para sua equipe (invisível para o cliente).");
+    } catch (e) {
+      pushClientToast("error", "Erro na nota interna", e instanceof Error ? e.message : "Tente novamente.");
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+  async function handleDeleteInternalNote(noteId: string) {
+    if (!tenant) return;
+    try {
+      const res = await fetch(`/api/crm/operator/notes?tenant=${encodeURIComponent(tenant)}&noteId=${encodeURIComponent(noteId)}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      if (!res.ok) throw new Error("Não foi possível excluir a nota.");
+      setData(prev => prev ? {
+        ...prev,
+        internalNotes: (prev.internalNotes ?? []).filter(n => n.id !== noteId)
+      } : prev);
+      pushClientToast("success", "Nota interna removida", "A observação foi apagada.");
+    } catch (e) {
+      pushClientToast("error", "Erro ao excluir nota", e instanceof Error ? e.message : "Tente novamente.");
+    }
+  }
+
+  // Send real human message, quoted reply, media, or private internal note
   async function handleSendHumanMessage() {
+    if (composerMode === "note") {
+      await handleSaveInternalNote();
+      return;
+    }
     const text = humanInput.trim();
     if ((!text && !pendingMedia) || !tenant || !current || sendingHumanMsg) return;
     setSendingHumanMsg(true);
@@ -1729,6 +1901,14 @@ export default function ClientWorkspace({
         conversationId: current.id,
         message: text
       };
+      if (replyingTo) {
+        payload.replyTo = {
+          externalId: replyingTo.externalId || "",
+          body: replyingTo.body,
+          direction: replyingTo.direction,
+          senderLabel: replyingTo.senderLabel
+        };
+      }
       if (pendingMedia) {
         payload.media = {
           mediatype: pendingMedia.mediatype,
@@ -1768,6 +1948,7 @@ export default function ClientWorkspace({
         }
         clearPendingMedia();
         setHumanInput("");
+        setReplyingTo(null);
         pushClientToast("success", "Mídia enviada no WhatsApp", "O arquivo foi entregue na conversa.");
       } else {
         const res = await fetch("/api/crm/operator/send", {
@@ -1779,6 +1960,7 @@ export default function ClientWorkspace({
         const json = await res.json();
         if (!res.ok) throw new Error(json.message || json.details || json.error || "Falha ao enviar mensagem.");
         setHumanInput("");
+        setReplyingTo(null);
       }
       await fetchData(tenant, true);
     } catch (e) {
@@ -2420,6 +2602,11 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     });
 
     return list.sort((a, b) => {
+      const aPinned = Boolean(pinnedConvs[a.id]);
+      const bPinned = Boolean(pinnedConvs[b.id]);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+
       const aStage = getEffectiveStage(a);
       const bStage = getEffectiveStage(b);
       const aUrgent = aStage === "waiting_human" || a.status === "urgent";
@@ -2433,7 +2620,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
       const bLatest = bMsgs?.[0]?.created_at ? Date.parse(bMsgs[0].created_at) : (b.last_message_at ? Date.parse(b.last_message_at) : 0);
       return bLatest - aLatest;
     });
-  }, [conversations, byContact, search, funnelFilter, tagFilter, priorityFilter, contactTagMap, getEffectiveStage, messagesByConversation]);
+  }, [conversations, byContact, search, funnelFilter, tagFilter, priorityFilter, contactTagMap, getEffectiveStage, messagesByConversation, pinnedConvs]);
 
   // List of pending human requests for the Bell Notification Dropdown
   const pendingHumanList = useMemo(() => {
@@ -2447,15 +2634,59 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
     return [...list].reverse();
   }, [current, messagesByConversation]);
 
+  const currentNotes = useMemo(() => {
+    if (!current) return [];
+    return (data?.internalNotes ?? [])
+      .filter(n => n.conversation_id === current.id)
+      .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  }, [current, data?.internalNotes]);
+
+  const timelineItems = useMemo(() => {
+    const items: Array<
+      | { kind: "message"; id: string; created_at: string; msg: Message }
+      | { kind: "note"; id: string; created_at: string; note: InternalNote }
+    > = [
+      ...thread.map(msg => ({ kind: "message" as const, id: msg.id, created_at: msg.created_at, msg })),
+      ...currentNotes.map(note => ({ kind: "note" as const, id: note.id, created_at: note.created_at, note }))
+    ];
+    items.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+    return items;
+  }, [thread, currentNotes]);
+
+  const chatSearchMatches = useMemo(() => {
+    const q = chatSearchQuery.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return timelineItems
+      .filter(it => (it.kind === "message" ? it.msg.body : it.note.body).toLowerCase().includes(q))
+      .map(it => it.id);
+  }, [timelineItems, chatSearchQuery]);
+
+  // Reset reply & search when changing active conversation
+  useEffect(() => {
+    setReplyingTo(null);
+    setChatSearchOpen(false);
+    setChatSearchQuery("");
+    setChatSearchIdx(0);
+  }, [current?.id]);
+
+  // Jump to active in-chat search match
+  useEffect(() => {
+    if (!chatSearchOpen || chatSearchMatches.length === 0) return;
+    const safeIdx = Math.min(chatSearchIdx, chatSearchMatches.length - 1);
+    const targetId = chatSearchMatches[safeIdx];
+    const el = document.getElementById(`chat-item-${targetId}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [chatSearchOpen, chatSearchMatches, chatSearchIdx]);
+
   // Auto-scroll para a última mensagem e limpeza inteligente de mensagens não lidas
   useEffect(() => {
-    if (activeTab === "atendimentos" && current) {
+    if (activeTab === "atendimentos" && current && !chatSearchOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         setReadTimestamps(prev => ({ ...prev, [current.id]: Date.now() }));
       }
     }
-  }, [current?.id, thread.length, activeTab]);
+  }, [current?.id, timelineItems.length, activeTab, chatSearchOpen]);
 
   // Quota percentage
   const quotaPercent = quotaData.quotaLimit > 0 ? Math.min(100, Math.round((quotaData.quotaUsed / quotaData.quotaLimit) * 100)) : 0;
@@ -5636,7 +5867,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                         const unreadCount = convMsgs.filter(
                           m => (m.direction === "inbound" || m.sender_type === "customer") && Date.parse(m.created_at) > lastReadTs
                         ).length;
-                        const hasUnread = !isSelected && (isUrgent || (lastMsg?.direction === "inbound" && unreadCount > 0));
+                        const isPinned = Boolean(pinnedConvs[c.id]);
+                        const isManualUnread = Boolean(manualUnreadConvs[c.id]);
+                        const hasUnread = isManualUnread || (!isSelected && (isUrgent || (lastMsg?.direction === "inbound" && unreadCount > 0)));
 
                         return (
                           <button
@@ -5645,6 +5878,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             onClick={() => {
                               setSelected(c.id);
                               setReadTimestamps(prev => ({ ...prev, [c.id]: Date.now() }));
+                              clearManualUnread(c.id);
                               setMobileChatOpen(true);
                             }}
                             style={{
@@ -5726,8 +5960,9 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             </div>
                             <div style={{minWidth: 0, flex: 1}}>
                               <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px"}}>
-                                <strong style={{fontSize: "14px", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>
-                                  {contact?.display_name || contact?.phone || "Contato"}
+                                <strong style={{fontSize: "14px", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "5px"}}>
+                                  {isPinned && <Pin size={12} color="#f472b6" style={{flexShrink: 0}} />}
+                                  <span>{contact?.display_name || contact?.phone || "Contato"}</span>
                                 </strong>
                                 <span style={{fontSize: "11px", color: "#9ca3af", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap"}}>
                                   {dateTime(lastMsg?.created_at || c.last_message_at)}
@@ -6069,6 +6304,78 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                               >
                                 <Sparkles size={15}/> {summaryLoading ? "Resumindo..." : "⚡ Resumir com IA"}
                               </button>
+
+                              {/* Buscar dentro da conversa */}
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                aria-label="Buscar mensagens nesta conversa"
+                                title="Buscar palavra, valor ou endereço dentro desta conversa"
+                                onClick={() => {
+                                  setChatSearchOpen(prev => !prev);
+                                  setChatSearchIdx(0);
+                                }}
+                                style={{
+                                  padding: "7px 10px",
+                                  borderRadius: "9px",
+                                  background: chatSearchOpen ? "rgba(236, 72, 153, 0.22)" : "rgba(255, 255, 255, 0.05)",
+                                  borderColor: chatSearchOpen ? "#ec4899" : "rgba(255, 255, 255, 0.14)",
+                                  color: chatSearchOpen ? "#f472b6" : "#e2e8f0",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  fontSize: "12px",
+                                  fontWeight: 700
+                                }}
+                              >
+                                <Search size={14} />
+                              </button>
+
+                              {/* Fixar conversa no topo */}
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                aria-label={pinnedConvs[current.id] ? "Desafixar conversa do topo" : "Fixar conversa no topo"}
+                                title={pinnedConvs[current.id] ? "Desafixar conversa do topo" : "Fixar conversa no topo da fila"}
+                                onClick={() => togglePinConversation(current.id)}
+                                style={{
+                                  padding: "7px 10px",
+                                  borderRadius: "9px",
+                                  background: pinnedConvs[current.id] ? "rgba(236, 72, 153, 0.22)" : "rgba(255, 255, 255, 0.05)",
+                                  borderColor: pinnedConvs[current.id] ? "#ec4899" : "rgba(255, 255, 255, 0.14)",
+                                  color: pinnedConvs[current.id] ? "#f472b6" : "#e2e8f0",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  fontSize: "12px",
+                                  fontWeight: 700
+                                }}
+                              >
+                                {pinnedConvs[current.id] ? <PinOff size={14} /> : <Pin size={14} />}
+                              </button>
+
+                              {/* Marcar como não lida */}
+                              <button
+                                type="button"
+                                className="op-refresh"
+                                aria-label="Marcar conversa como não lida"
+                                title="Marcar esta conversa como não lida para retomar depois"
+                                onClick={() => markConversationAsUnread(current.id)}
+                                style={{
+                                  padding: "7px 10px",
+                                  borderRadius: "9px",
+                                  background: manualUnreadConvs[current.id] ? "rgba(245, 158, 11, 0.2)" : "rgba(255, 255, 255, 0.05)",
+                                  borderColor: manualUnreadConvs[current.id] ? "#f59e0b" : "rgba(255, 255, 255, 0.14)",
+                                  color: manualUnreadConvs[current.id] ? "#fcd34d" : "#e2e8f0",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  fontSize: "12px",
+                                  fontWeight: 700
+                                }}
+                              >
+                                <Mail size={14} />
+                              </button>
                             </div>
                           </div>
 
@@ -6396,93 +6703,335 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           </div>
                         )}
 
-                        <div className="op-bubbles">
-                          {thread.length ? thread.map(m => (
-                            <div
-                              key={m.id}
-                              className={m.direction === "outbound" ? "op-message sent" : "op-message"}
-                              style={{
-                                maxWidth: "80%",
-                                alignSelf: m.direction === "outbound" ? "flex-end" : "flex-start",
-                                padding: "11px 15px",
-                                borderRadius: m.direction === "outbound" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                                background: m.direction === "outbound"
-                                  ? (m.sender_type === "human"
-                                      ? "linear-gradient(135deg, #26173a, #3e1b52)"
-                                      : "var(--grad-primary)")
-                                  : "#181427",
-                                border: "1px solid",
-                                borderColor: m.direction === "outbound"
-                                  ? (m.sender_type === "human" ? "rgba(168, 85, 247, 0.45)" : "#ec4899")
-                                  : "rgba(255, 255, 255, 0.08)",
-                                boxShadow: m.direction === "outbound" ? "0 4px 12px rgba(0, 0, 0, 0.25)" : "none"
+                        {/* BARRA DE BUSCA DENTRO DA CONVERSA ABERTA */}
+                        {chatSearchOpen && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 12px",
+                              marginTop: "10px",
+                              borderRadius: "10px",
+                              background: "rgba(20, 16, 36, 0.96)",
+                              border: "1px solid rgba(236, 72, 153, 0.4)"
+                            }}
+                          >
+                            <Search size={15} color="#f472b6" />
+                            <input
+                              type="text"
+                              autoFocus
+                              aria-label="Pesquisar texto nesta conversa"
+                              placeholder="Buscar palavra, endereço, valor ou comprovante nesta conversa..."
+                              value={chatSearchQuery}
+                              onChange={e => {
+                                setChatSearchQuery(e.target.value);
+                                setChatSearchIdx(0);
                               }}
+                              onKeyDown={e => {
+                                if (e.key === "Enter" && chatSearchMatches.length > 0) {
+                                  e.preventDefault();
+                                  setChatSearchIdx(prev => (prev + 1) % chatSearchMatches.length);
+                                }
+                                if (e.key === "Escape") {
+                                  setChatSearchOpen(false);
+                                  setChatSearchQuery("");
+                                }
+                              }}
+                              style={{
+                                flex: 1,
+                                background: "transparent",
+                                border: "none",
+                                outline: "none",
+                                color: "#fff",
+                                fontSize: "13px"
+                              }}
+                            />
+                            {chatSearchQuery.trim() && (
+                              <span style={{fontSize: "11.5px", color: "#cbd5e1", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums"}}>
+                                {chatSearchMatches.length > 0
+                                  ? `${Math.min(chatSearchIdx + 1, chatSearchMatches.length)} / ${chatSearchMatches.length}`
+                                  : "0 resultados"}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              aria-label="Ocorrência anterior"
+                              disabled={chatSearchMatches.length === 0}
+                              onClick={() => setChatSearchIdx(prev => (prev - 1 + chatSearchMatches.length) % chatSearchMatches.length)}
+                              style={{background: "rgba(255,255,255,0.06)", border: "none", borderRadius: "6px", color: "#fff", padding: "4px", display: "grid", placeItems: "center", cursor: "pointer"}}
                             >
-                              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", gap: "8px"}}>
-                                <span style={{
-                                  fontSize: "11px",
-                                  fontWeight: 700,
-                                  color: m.direction === "outbound" ? "#fff" : "#9ca3af"
-                                }}>
-                                  {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "📱 Cliente"}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void handleDeleteMessage(m.id);
-                                  }}
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Próxima ocorrência"
+                              disabled={chatSearchMatches.length === 0}
+                              onClick={() => setChatSearchIdx(prev => (prev + 1) % chatSearchMatches.length)}
+                              style={{background: "rgba(255,255,255,0.06)", border: "none", borderRadius: "6px", color: "#fff", padding: "4px", display: "grid", placeItems: "center", cursor: "pointer"}}
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Fechar busca na conversa"
+                              onClick={() => {
+                                setChatSearchOpen(false);
+                                setChatSearchQuery("");
+                              }}
+                              style={{background: "transparent", border: "none", color: "#94a3b8", padding: "4px", display: "grid", placeItems: "center", cursor: "pointer"}}
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="op-bubbles">
+                          {timelineItems.length ? timelineItems.map((item, idx) => {
+                            const prevDayKey = idx > 0 ? dateDayKey(timelineItems[idx - 1].created_at) : "";
+                            const curDayKey = dateDayKey(item.created_at);
+                            const showDateDivider = Boolean(curDayKey && curDayKey !== prevDayKey);
+                            const isActiveSearchMatch =
+                              chatSearchOpen &&
+                              chatSearchMatches.length > 0 &&
+                              chatSearchMatches[Math.min(chatSearchIdx, chatSearchMatches.length - 1)] === item.id;
+
+                            if (item.kind === "note") {
+                              const n = item.note;
+                              return (
+                                <div key={`note-${n.id}`} id={`chat-item-${n.id}`} style={{display: "flex", flexDirection: "column", gap: "10px", width: "100%"}}>
+                                  {showDateDivider && (
+                                    <div style={{display: "flex", justifyContent: "center", margin: "6px 0"}}>
+                                      <span style={{padding: "4px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: 700, background: "rgba(255, 255, 255, 0.07)", border: "1px solid rgba(255, 255, 255, 0.1)", color: "#cbd5e1"}}>
+                                        {formatDateDividerLabel(n.created_at)}
+                                      </span>
+                                    </div>
+                                  )}
+                                  <div
+                                    style={{
+                                      alignSelf: "center",
+                                      width: "min(92%, 520px)",
+                                      padding: "10px 14px",
+                                      borderRadius: "12px",
+                                      background: "linear-gradient(135deg, rgba(245, 158, 11, 0.18), rgba(180, 83, 9, 0.14))",
+                                      border: isActiveSearchMatch ? "2px solid #fde047" : "1px solid rgba(251, 191, 36, 0.45)",
+                                      color: "#fef3c7",
+                                      boxShadow: "0 4px 14px rgba(0, 0, 0, 0.2)"
+                                    }}
+                                  >
+                                    <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "5px"}}>
+                                      <span style={{display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "11px", fontWeight: 800, color: "#fcd34d", textTransform: "uppercase", letterSpacing: "0.3px"}}>
+                                        <StickyNote size={13} /> Nota Interna da Equipe · Invisível para o cliente
+                                      </span>
+                                      <button
+                                        type="button"
+                                        aria-label="Apagar nota interna"
+                                        title="Apagar nota interna"
+                                        onClick={() => void handleDeleteInternalNote(n.id)}
+                                        style={{background: "transparent", border: "none", color: "rgba(254, 243, 199, 0.6)", cursor: "pointer", padding: "2px 4px", display: "inline-flex", alignItems: "center"}}
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                    <p style={{margin: 0, fontSize: "13.5px", lineHeight: "1.5", whiteSpace: "pre-wrap", color: "#fffbeb"}}>
+                                      {renderHighlightedText(n.body, chatSearchOpen ? chatSearchQuery : "")}
+                                    </p>
+                                    <small style={{display: "block", fontSize: "10px", color: "rgba(254, 243, 199, 0.72)", textAlign: "right", marginTop: "5px", fontVariantNumeric: "tabular-nums"}}>
+                                      {dateTime(n.created_at)}
+                                    </small>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            const m = item.msg;
+                            const senderLabel = m.sender_type === "human" ? "Atendente Humano" : m.sender_type === "agent" ? "Novaes CRM IA" : (byContact.get(current.contact_id)?.display_name || "Cliente");
+                            const deliveryStatus = String(m.delivery_status || "sent").toLowerCase();
+
+                            return (
+                              <div key={m.id} id={`chat-item-${m.id}`} style={{display: "flex", flexDirection: "column", gap: "10px", width: "100%"}}>
+                                {showDateDivider && (
+                                  <div style={{display: "flex", justifyContent: "center", margin: "6px 0"}}>
+                                    <span style={{padding: "4px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: 700, background: "rgba(255, 255, 255, 0.07)", border: "1px solid rgba(255, 255, 255, 0.1)", color: "#cbd5e1"}}>
+                                      {formatDateDividerLabel(m.created_at)}
+                                    </span>
+                                  </div>
+                                )}
+                                <div
+                                  className={m.direction === "outbound" ? "op-message sent" : "op-message"}
                                   style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    color: "rgba(255, 255, 255, 0.35)",
-                                    cursor: "pointer",
-                                    padding: "2px 4px",
-                                    display: "inline-flex",
-                                    alignItems: "center"
+                                    maxWidth: "80%",
+                                    alignSelf: m.direction === "outbound" ? "flex-end" : "flex-start",
+                                    padding: "11px 15px",
+                                    borderRadius: m.direction === "outbound" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                                    background: m.direction === "outbound"
+                                      ? (m.sender_type === "human"
+                                          ? "linear-gradient(135deg, #26173a, #3e1b52)"
+                                          : "var(--grad-primary)")
+                                      : "#181427",
+                                    border: isActiveSearchMatch ? "2px solid #fde047" : "1px solid",
+                                    borderColor: isActiveSearchMatch
+                                      ? "#fde047"
+                                      : m.direction === "outbound"
+                                        ? (m.sender_type === "human" ? "rgba(168, 85, 247, 0.45)" : "#ec4899")
+                                        : "rgba(255, 255, 255, 0.08)",
+                                    boxShadow: m.direction === "outbound" ? "0 4px 12px rgba(0, 0, 0, 0.25)" : "none"
                                   }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.color = "#f87171")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255, 255, 255, 0.35)")}
-                                  title="Apagar esta mensagem"
                                 >
-                                  <Trash2 size={11} />
-                                </button>
+                                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px", gap: "8px"}}>
+                                    <span style={{
+                                      fontSize: "11px",
+                                      fontWeight: 700,
+                                      color: m.direction === "outbound" ? "#fff" : "#9ca3af"
+                                    }}>
+                                      {m.sender_type === "human" ? "👤 Atendente Humano" : m.sender_type === "agent" ? "🤖 Novaes CRM IA" : "📱 Cliente"}
+                                    </span>
+                                    <div style={{display: "inline-flex", alignItems: "center", gap: "4px"}}>
+                                      <button
+                                        type="button"
+                                        aria-label="Responder citando esta mensagem"
+                                        title="Responder citando esta mensagem no WhatsApp"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setComposerMode("whatsapp");
+                                          setReplyingTo({
+                                            id: m.id,
+                                            externalId: m.external_id ?? null,
+                                            body: m.body,
+                                            direction: m.direction,
+                                            senderLabel
+                                          });
+                                        }}
+                                        style={{
+                                          background: "transparent",
+                                          border: "none",
+                                          color: "rgba(255, 255, 255, 0.45)",
+                                          cursor: "pointer",
+                                          padding: "2px 4px",
+                                          display: "inline-flex",
+                                          alignItems: "center"
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.color = "#f472b6")}
+                                        onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255, 255, 255, 0.45)")}
+                                      >
+                                        <Reply size={12} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label="Apagar esta mensagem"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleDeleteMessage(m.id);
+                                        }}
+                                        style={{
+                                          background: "transparent",
+                                          border: "none",
+                                          color: "rgba(255, 255, 255, 0.35)",
+                                          cursor: "pointer",
+                                          padding: "2px 4px",
+                                          display: "inline-flex",
+                                          alignItems: "center"
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.color = "#f87171")}
+                                        onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255, 255, 255, 0.35)")}
+                                        title="Apagar esta mensagem"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {(() => {
+                                    const rawBody = (m.body || "").trim();
+                                    const searchQ = chatSearchOpen ? chatSearchQuery : "";
+
+                                    // Render quoted reply header if message starts with `> [label]: text\n`
+                                    let quoteHeader: { label: string; text: string } | null = null;
+                                    let trimmed = rawBody;
+                                    const quoteMatch = rawBody.match(/^>\s*\[([^\]]+)\]:\s*([^\n]+)\n?([\s\S]*)$/);
+                                    if (quoteMatch) {
+                                      quoteHeader = { label: quoteMatch[1], text: quoteMatch[2] };
+                                      trimmed = (quoteMatch[3] || "").trim();
+                                    }
+
+                                    const quoteBlock = quoteHeader ? (
+                                      <div style={{
+                                        marginBottom: "7px",
+                                        padding: "6px 10px",
+                                        borderRadius: "8px",
+                                        background: "rgba(0, 0, 0, 0.28)",
+                                        borderLeft: "3px solid #f472b6",
+                                        fontSize: "12px",
+                                        color: "#e2e8f0"
+                                      }}>
+                                        <strong style={{display: "block", fontSize: "11px", color: "#f9a8d4", marginBottom: "2px"}}>
+                                          {quoteHeader.label}
+                                        </strong>
+                                        <span style={{opacity: 0.9}}>{renderHighlightedText(quoteHeader.text, searchQ)}</span>
+                                      </div>
+                                    ) : null;
+
+                                    const audioMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:mp3|ogg|wav|m4a|aac)(?:\?[^\s]*)?)/i) ||
+                                                       trimmed.match(/^\[(?:Áudio|Audio)\]\s*(https?:\/\/[^\s]+)/i);
+                                    if (audioMatch) {
+                                      const audioUrl = audioMatch[1];
+                                      const textPart = trimmed.replace(audioMatch[0], "").trim();
+                                      return (
+                                        <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                                          {quoteBlock}
+                                          <audio controls src={audioUrl} style={{width: "100%", maxWidth: "260px", height: "36px"}} />
+                                          {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{renderHighlightedText(textPart, searchQ)}</p>}
+                                        </div>
+                                      );
+                                    }
+                                    const imageMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s]*)?)/i) ||
+                                                       trimmed.match(/^\[(?:Imagem|Image)\]\s*(https?:\/\/[^\s]+)/i);
+                                    if (imageMatch) {
+                                      const imgUrl = imageMatch[1];
+                                      const textPart = trimmed.replace(imageMatch[0], "").trim();
+                                      return (
+                                        <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
+                                          {quoteBlock}
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setLightboxZoom(1);
+                                              setLightboxImage({ url: imgUrl, alt: textPart || "Imagem do atendimento" });
+                                            }}
+                                            title="Clique para abrir em tela cheia com zoom e download"
+                                            style={{padding: 0, border: "none", background: "transparent", cursor: "zoom-in", textAlign: "left"}}
+                                          >
+                                            <img src={imgUrl} alt="Mídia recebida" style={{maxWidth: "100%", maxHeight: "240px", borderRadius: "8px", objectFit: "cover", border: "1px solid rgba(255,255,255,0.12)", display: "block"}} />
+                                          </button>
+                                          {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{renderHighlightedText(textPart, searchQ)}</p>}
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <>
+                                        {quoteBlock}
+                                        <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{renderHighlightedText(trimmed, searchQ)}</p>
+                                      </>
+                                    );
+                                  })()}
+                                  <small style={{display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", fontSize: "10px", color: "rgba(255,255,255,0.68)", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
+                                    <span>{dateTime(m.created_at)}</span>
+                                    {m.direction === "outbound" && (
+                                      <span
+                                        title={deliveryStatus === "read" ? "Lida pelo cliente" : deliveryStatus === "delivered" ? "Entregue no WhatsApp" : "Enviada"}
+                                        style={{display: "inline-flex", alignItems: "center", color: deliveryStatus === "read" ? "#38bdf8" : "rgba(255, 255, 255, 0.72)"}}
+                                      >
+                                        {deliveryStatus === "read" || deliveryStatus === "delivered" ? (
+                                          <CheckCheck size={13} />
+                                        ) : (
+                                          <Check size={12} />
+                                        )}
+                                      </span>
+                                    )}
+                                  </small>
+                                </div>
                               </div>
-                              {(() => {
-                                const trimmed = (m.body || "").trim();
-                                const audioMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:mp3|ogg|wav|m4a|aac)(?:\?[^\s]*)?)/i) ||
-                                                   trimmed.match(/^\[(?:Áudio|Audio)\]\s*(https?:\/\/[^\s]+)/i);
-                                if (audioMatch) {
-                                  const audioUrl = audioMatch[1];
-                                  const textPart = trimmed.replace(audioMatch[0], "").trim();
-                                  return (
-                                    <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
-                                      <audio controls src={audioUrl} style={{width: "100%", maxWidth: "260px", height: "36px"}} />
-                                      {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{textPart}</p>}
-                                    </div>
-                                  );
-                                }
-                                const imageMatch = trimmed.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s]*)?)/i) ||
-                                                   trimmed.match(/^\[(?:Imagem|Image)\]\s*(https?:\/\/[^\s]+)/i);
-                                if (imageMatch) {
-                                  const imgUrl = imageMatch[1];
-                                  const textPart = trimmed.replace(imageMatch[0], "").trim();
-                                  return (
-                                    <div style={{display: "flex", flexDirection: "column", gap: "6px"}}>
-                                      <a href={imgUrl} target="_blank" rel="noopener noreferrer" title="Clique para abrir imagem em tamanho original">
-                                        <img src={imgUrl} alt="Mídia recebida" style={{maxWidth: "100%", maxHeight: "240px", borderRadius: "8px", objectFit: "cover", border: "1px solid rgba(255,255,255,0.1)"}} />
-                                      </a>
-                                      {textPart && <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{textPart}</p>}
-                                    </div>
-                                  );
-                                }
-                                return <p style={{margin: 0, fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap"}}>{m.body}</p>;
-                              })()}
-                              <small style={{display: "block", fontSize: "10px", color: "rgba(255,255,255,0.6)", textAlign: "right", marginTop: "6px", fontVariantNumeric: "tabular-nums"}}>
-                                {dateTime(m.created_at)}
-                              </small>
-                            </div>
-                          )) : (
+                            );
+                          }) : (
                             <CrmEmptyState
                               icon={<MessageCircle size={24} />}
                               title="Conversa sem mensagens registradas"
@@ -6492,7 +7041,7 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           <div ref={messagesEndRef} />
                         </div>
 
-                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + MÍDIAS + RESPOSTAS RÁPIDAS */}
+                        {/* CAMPO DE RESPOSTA DIRETA DO ATENDENTE HUMANO + NOTA INTERNA + REPLY + MÍDIAS */}
                         <form
                           onSubmit={e => {
                             e.preventDefault();
@@ -6500,24 +7049,110 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           }}
                           style={{
                             borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                            paddingTop: "12px",
+                            paddingTop: "10px",
                             marginTop: "8px",
                             display: "flex",
                             flexDirection: "column",
                             gap: "8px"
                           }}
                         >
-                          <QuickRepliesSection
-                            quickReplies={quickReplies}
-                            allowed={canUseFeature("quick_replies")}
-                            onSelectReply={bodyText => setHumanInput(bodyText)}
-                            onSaveReply={handleSaveQuickReply}
-                            onDeleteReply={handleDeleteQuickReply}
-                            onRequestUpgrade={() => openUpgradeRequest("Profissional", "Ativar Respostas Rápidas")}
-                          />
-                          {current.mode === "ai" && (
+                          {/* SELETOR: RESPONDER NO WHATSAPP vs NOTA INTERNA PRIVADA */}
+                          <div style={{display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap"}}>
+                            <button
+                              type="button"
+                              onClick={() => setComposerMode("whatsapp")}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "5px 11px",
+                                borderRadius: "8px",
+                                fontSize: "12px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                background: composerMode === "whatsapp" ? "rgba(236, 72, 153, 0.2)" : "rgba(255, 255, 255, 0.04)",
+                                border: composerMode === "whatsapp" ? "1px solid rgba(236, 72, 153, 0.55)" : "1px solid rgba(255, 255, 255, 0.1)",
+                                color: composerMode === "whatsapp" ? "#fff" : "#94a3b8"
+                              }}
+                            >
+                              <MessageCircle size={13} /> Responder no WhatsApp
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setComposerMode("note");
+                                setReplyingTo(null);
+                              }}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "5px 11px",
+                                borderRadius: "8px",
+                                fontSize: "12px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                background: composerMode === "note" ? "rgba(245, 158, 11, 0.22)" : "rgba(255, 255, 255, 0.04)",
+                                border: composerMode === "note" ? "1px solid rgba(251, 191, 36, 0.6)" : "1px solid rgba(255, 255, 255, 0.1)",
+                                color: composerMode === "note" ? "#fde68a" : "#94a3b8"
+                              }}
+                            >
+                              <StickyNote size={13} /> Nota Interna (Equipe)
+                            </button>
+                            {composerMode === "note" && (
+                              <span style={{fontSize: "11.5px", color: "#fcd34d"}}>
+                                🔒 Invisível para o cliente — salva apenas no histórico interno.
+                              </span>
+                            )}
+                          </div>
+
+                          {composerMode === "whatsapp" && (
+                            <QuickRepliesSection
+                              quickReplies={quickReplies}
+                              allowed={canUseFeature("quick_replies")}
+                              onSelectReply={bodyText => setHumanInput(bodyText)}
+                              onSaveReply={handleSaveQuickReply}
+                              onDeleteReply={handleDeleteQuickReply}
+                              onRequestUpgrade={() => openUpgradeRequest("Profissional", "Ativar Respostas Rápidas")}
+                            />
+                          )}
+                          {composerMode === "whatsapp" && current.mode === "ai" && (
                             <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "#cbd5e1", background: "rgba(0, 219, 140, 0.08)", border: "1px solid rgba(0, 219, 140, 0.25)", padding: "7px 12px", borderRadius: "8px", flexWrap: "wrap", gap: "8px"}}>
                               <span>🤖 A IA está ativa nesta conversa. Ao enviar uma resposta abaixo ou clicar em <strong>Assumir Atendimento</strong>, a IA será pausada automaticamente.</span>
+                            </div>
+                          )}
+
+                          {/* PRÉVIA DA MENSAGEM CITADA (REPLY) */}
+                          {composerMode === "whatsapp" && replyingTo && (
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "10px",
+                                padding: "8px 12px",
+                                borderRadius: "10px",
+                                background: "rgba(236, 72, 153, 0.1)",
+                                borderLeft: "3px solid #ec4899",
+                                border: "1px solid rgba(236, 72, 153, 0.3)"
+                              }}
+                            >
+                              <div style={{minWidth: 0, flex: 1}}>
+                                <strong style={{display: "flex", alignItems: "center", gap: "5px", fontSize: "11.5px", color: "#f9a8d4"}}>
+                                  <Reply size={12} /> Respondendo a {replyingTo.senderLabel}
+                                </strong>
+                                <p style={{margin: "2px 0 0", fontSize: "12.5px", color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"}}>
+                                  {replyingTo.body}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label="Cancelar resposta citada"
+                                onClick={() => setReplyingTo(null)}
+                                style={{background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer", padding: "4px", display: "grid", placeItems: "center"}}
+                              >
+                                <X size={15} />
+                              </button>
                             </div>
                           )}
 
@@ -6595,54 +7230,66 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                           )}
 
                           <div style={{display: "flex", gap: "8px", alignItems: "flex-end"}}>
-                            <input
-                              ref={mediaFileInputRef}
-                              type="file"
-                              accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
-                              onChange={handleSelectMediaFile}
-                              style={{display: "none"}}
-                              aria-hidden="true"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => mediaFileInputRef.current?.click()}
-                              disabled={sendingHumanMsg || !hasConnectedWhatsapp}
-                              aria-label="Anexar imagem, áudio ou documento"
-                              title="Anexar imagem, áudio ou documento (até 6 MB)"
-                              className="nw-btn nw-btn-secondary"
-                              style={{
-                                minWidth: "44px",
-                                width: "44px",
-                                height: "44px",
-                                padding: 0,
-                                borderRadius: "10px",
-                                flexShrink: 0
-                              }}
-                            >
-                              <Paperclip size={18} />
-                            </button>
+                            {composerMode === "whatsapp" && (
+                              <>
+                                <input
+                                  ref={mediaFileInputRef}
+                                  type="file"
+                                  accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+                                  onChange={handleSelectMediaFile}
+                                  style={{display: "none"}}
+                                  aria-hidden="true"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => mediaFileInputRef.current?.click()}
+                                  disabled={sendingHumanMsg || !hasConnectedWhatsapp}
+                                  aria-label="Anexar imagem, áudio ou documento"
+                                  title="Anexar imagem, áudio ou documento (até 6 MB)"
+                                  className="nw-btn nw-btn-secondary"
+                                  style={{
+                                    minWidth: "44px",
+                                    width: "44px",
+                                    height: "44px",
+                                    padding: 0,
+                                    borderRadius: "10px",
+                                    flexShrink: 0
+                                  }}
+                                >
+                                  <Paperclip size={18} />
+                                </button>
+                              </>
+                            )}
                             <textarea
                               rows={2}
-                              aria-label="Mensagem de resposta para o cliente"
-                              placeholder={pendingMedia ? "Adicione uma legenda opcional e pressione Enter..." : "Digite sua resposta para o cliente no WhatsApp... (Enter envia, Shift+Enter quebra linha)"}
+                              aria-label={composerMode === "note" ? "Nota interna privada da equipe" : "Mensagem de resposta para o cliente"}
+                              placeholder={
+                                composerMode === "note"
+                                  ? "Escreva uma nota interna amarela para sua equipe... (Enter salva · o cliente NÃO vê)"
+                                  : pendingMedia
+                                    ? "Adicione uma legenda opcional e pressione Enter..."
+                                    : "Digite sua resposta para o cliente no WhatsApp... (Enter envia, Shift+Enter quebra linha)"
+                              }
                               value={humanInput}
                               onChange={e => setHumanInput(e.target.value)}
                               onKeyDown={e => {
                                 if (e.key === "Enter" && !e.shiftKey) {
                                   e.preventDefault();
-                                  if (!sendingHumanMsg && hasConnectedWhatsapp && (humanInput.trim() || pendingMedia)) {
+                                  if (composerMode === "note") {
+                                    if (!savingNote && humanInput.trim()) void handleSendHumanMessage();
+                                  } else if (!sendingHumanMsg && hasConnectedWhatsapp && (humanInput.trim() || pendingMedia)) {
                                     void handleSendHumanMessage();
                                   }
                                 }
                               }}
-                              disabled={sendingHumanMsg || !hasConnectedWhatsapp}
+                              disabled={composerMode === "note" ? savingNote : (sendingHumanMsg || !hasConnectedWhatsapp)}
                               style={{
                                 flex: 1,
                                 padding: "10px 14px",
                                 borderRadius: "10px",
-                                background: "#141124",
-                                border: "1px solid rgba(236, 72, 153, 0.35)",
-                                color: "#fff",
+                                background: composerMode === "note" ? "rgba(245, 158, 11, 0.1)" : "#141124",
+                                border: composerMode === "note" ? "1px solid rgba(251, 191, 36, 0.55)" : "1px solid rgba(236, 72, 153, 0.35)",
+                                color: composerMode === "note" ? "#fef3c7" : "#fff",
                                 fontSize: "14px",
                                 lineHeight: "1.4",
                                 resize: "none",
@@ -6654,16 +7301,29 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
                             <button
                               type="submit"
                               className="nw-btn nw-btn-primary"
-                              aria-label="Enviar resposta no WhatsApp"
-                              disabled={sendingHumanMsg || !hasConnectedWhatsapp || (!humanInput.trim() && !pendingMedia)}
+                              aria-label={composerMode === "note" ? "Salvar nota interna" : "Enviar resposta no WhatsApp"}
+                              disabled={
+                                composerMode === "note"
+                                  ? (savingNote || !humanInput.trim())
+                                  : (sendingHumanMsg || !hasConnectedWhatsapp || (!humanInput.trim() && !pendingMedia))
+                              }
                               style={{
                                 padding: "0 18px",
                                 borderRadius: "10px",
                                 flexShrink: 0,
-                                height: "44px"
+                                height: "44px",
+                                background: composerMode === "note" ? "linear-gradient(135deg, #d97706, #b45309)" : undefined
                               }}
                             >
-                              <Send size={15}/> <span>{sendingHumanMsg ? (uploadProgress !== null ? `${uploadProgress}%` : "Enviando...") : "Enviar"}</span>
+                              {composerMode === "note" ? (
+                                <>
+                                  <StickyNote size={15}/> <span>{savingNote ? "Salvando..." : "Salvar Nota"}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Send size={15}/> <span>{sendingHumanMsg ? (uploadProgress !== null ? `${uploadProgress}%` : "Enviando...") : "Enviar"}</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </form>
@@ -7662,6 +8322,110 @@ ${wizardData.faqs.trim() || "Tire dúvidas rápidas diretamente por aqui."}`;
           </div>
         </div>
       )}
+
+      {/* VISUALIZADOR DE FOTOS EM TELA CHEIA (LIGHTBOX COM ZOOM E DOWNLOAD) */}
+      {lightboxImage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Visualizador de imagem em tela cheia"
+          onClick={e => {
+            if (e.target === e.currentTarget) setLightboxImage(null);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2300,
+            background: "rgba(5, 3, 12, 0.9)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "flex",
+            flexDirection: "column",
+            padding: "18px"
+          }}
+        >
+          <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", paddingBottom: "14px", borderBottom: "1px solid rgba(255,255,255,0.1)"}}>
+            <span style={{fontSize: "13.5px", fontWeight: 700, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "45vw"}}>
+              {lightboxImage.alt || "Imagem do atendimento"}
+            </span>
+            <div style={{display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap"}}>
+              <button
+                type="button"
+                className="nw-btn nw-btn-secondary"
+                aria-label="Diminuir zoom"
+                onClick={() => setLightboxZoom(z => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                style={{minHeight: "36px", padding: "6px 10px"}}
+              >
+                <ZoomOut size={16} />
+              </button>
+              <button
+                type="button"
+                className="nw-btn nw-btn-secondary"
+                onClick={() => setLightboxZoom(1)}
+                title="Redefinir zoom para 100%"
+                style={{minHeight: "36px", padding: "6px 10px", fontVariantNumeric: "tabular-nums"}}
+              >
+                {Math.round(lightboxZoom * 100)}%
+              </button>
+              <button
+                type="button"
+                className="nw-btn nw-btn-secondary"
+                aria-label="Aumentar zoom"
+                onClick={() => setLightboxZoom(z => Math.min(2.5, Number((z + 0.25).toFixed(2))))}
+                style={{minHeight: "36px", padding: "6px 10px"}}
+              >
+                <ZoomIn size={16} />
+              </button>
+              <a
+                href={lightboxImage.url}
+                download
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nw-btn nw-btn-primary"
+                style={{minHeight: "36px", padding: "6px 14px"}}
+              >
+                <Download size={15} /> Baixar
+              </a>
+              <button
+                type="button"
+                className="nw-btn nw-btn-secondary"
+                aria-label="Fechar visualizador"
+                onClick={() => setLightboxImage(null)}
+                style={{minHeight: "36px", padding: "6px 10px"}}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+          <div
+            onClick={e => {
+              if (e.target === e.currentTarget) setLightboxImage(null);
+            }}
+            style={{
+              flex: 1,
+              overflow: "auto",
+              display: "grid",
+              placeItems: "center",
+              padding: "20px"
+            }}
+          >
+            <img
+              src={lightboxImage.url}
+              alt={lightboxImage.alt || "Imagem ampliada"}
+              style={{
+                maxWidth: lightboxZoom === 1 ? "92vw" : "none",
+                maxHeight: lightboxZoom === 1 ? "78vh" : "none",
+                transform: `scale(${lightboxZoom})`,
+                transformOrigin: "center center",
+                transition: "transform 0.15s ease",
+                borderRadius: "12px",
+                boxShadow: "0 20px 60px rgba(0, 0, 0, 0.7)"
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       <CrmToastStack toasts={clientToasts} onDismiss={dismissClientToast} />
     </div>
   );

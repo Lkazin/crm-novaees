@@ -10,7 +10,13 @@ import { persistIncomingInSupabase, resolveChannelForInstance } from "@/lib/crm/
 import { getEffectiveTenantPlan } from "@/lib/crm/plans";
 import { extractSlotFromInstanceName } from "@/lib/crm/whatsapp-slots";
 import { outboundAllowed } from "@/lib/crm/outbound-guard";
-import { buildBrPhoneVariants, deleteConversationCascade, deleteSingleMessageCascade } from "@/lib/crm/chat-sync";
+import {
+  buildBrPhoneVariants,
+  deleteConversationCascade,
+  deleteSingleMessageCascade,
+  handleWhatsAppFromMeMessage,
+  handleWhatsAppMessageUpdate
+} from "@/lib/crm/chat-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -242,16 +248,48 @@ export async function POST(request: NextRequest) {
   if (!isAuthorized) return json({ error: "unauthorized" }, 401);
 
   try {
-    // 1. Handle connection & QR code update events first
+    // 1. Handle connection, QR, delete, delivery-tick update & manual phone (fromMe) events first
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const payloadRec = payload as Record<string, unknown>;
       const ev = String((payload as ConnectionEvent).event ?? "").toUpperCase().replace(/\./g, "_");
       if (ev === "CONNECTION_UPDATE" || ev === "QRCODE_UPDATED") {
         await handleConnectionOrQrEvent(payload as ConnectionEvent);
         return json({ status: "ignored", reason: "connection_event_handled" });
       }
       if (ev === "MESSAGES_DELETE" || ev === "CHATS_DELETE") {
-        await handleWhatsAppDeleteEvent(ev, payload as Record<string, unknown>);
+        await handleWhatsAppDeleteEvent(ev, payloadRec);
         return json({ status: "ignored", reason: "delete_event_synced" });
+      }
+      if (ev === "MESSAGES_UPDATE") {
+        const inst = String(payloadRec.instance ?? payloadRec.instanceName ?? "").trim();
+        const supaUrl = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
+        const supaKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
+        if (inst && supaUrl && supaKey) {
+          const ch = await resolveChannelForInstance(inst).catch(() => null);
+          if (ch?.tenant_id) {
+            await handleWhatsAppMessageUpdate(supaUrl, supaKey, ch.tenant_id, payloadRec);
+          }
+        }
+        return json({ status: "ignored", reason: "message_update_synced" });
+      }
+      if (ev === "MESSAGES_UPSERT") {
+        const rawData = payloadRec.data && typeof payloadRec.data === "object" && !Array.isArray(payloadRec.data)
+          ? (payloadRec.data as Record<string, unknown>)
+          : null;
+        const keyObj = rawData?.key && typeof rawData.key === "object" ? (rawData.key as Record<string, unknown>) : null;
+        if (keyObj?.fromMe === true) {
+          const inst = String(payloadRec.instance ?? payloadRec.instanceName ?? rawData?.instance ?? "").trim();
+          const supaUrl = process.env.CRM_SUPABASE_URL?.trim().replace(/\/$/, "");
+          const supaKey = process.env.CRM_SUPABASE_SERVICE_ROLE_KEY?.trim();
+          if (inst && supaUrl && supaKey) {
+            const ch = await resolveChannelForInstance(inst).catch(() => null);
+            if (ch?.tenant_id && ch?.id) {
+              const outcome = await handleWhatsAppFromMeMessage(supaUrl, supaKey, ch.tenant_id, ch.id, payloadRec);
+              return json({ status: "ignored", reason: `from_me_${outcome}` });
+            }
+          }
+          return json({ status: "ignored", reason: "from_me_ignored" });
+        }
       }
     }
 
